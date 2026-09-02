@@ -20,6 +20,7 @@ import enum
 
 import numpy as np
 import uipc
+import uipc.unit
 import warp as wp
 
 import newton
@@ -33,8 +34,9 @@ BRICK_HEIGHT = 0.0096
 
 BRICK_SCALE = 1.0
 BRICK_DENSITY = 565.0  # ABS plastic [kg/m³]
-BRICK_ABD_KAPPA = 10.0 * uipc.unit.GPa
-ADAPTIVE_CONTACT_KAPPA = -1.0
+BRICK_ABD_KAPPA = 10.0 * uipc.unit.GPa  # 5x the baseline ABD stiffness
+# Fixed minimum resistance keeps this interlock scene out of adaptive contact.
+ADAPTIVE_CONTACT_KAPPA = newton.solvers.SolverUIPC.ADAPTIVE_KAPPA_MIN
 UIPC_GAP = 0.0005
 
 
@@ -696,6 +698,21 @@ class Example:
             self.brick_bodies.append(body)
 
     def _configure_contact_tabular(self, contact_tabular, _world_index, ground_elem, env_elem, robo_elem, actor_elem):
+        # Replace every default row so no negative resistance enables adaptation.
+        default_pairs = (
+            (env_elem, env_elem, False),
+            (env_elem, robo_elem, True),
+            (env_elem, actor_elem, True),
+            (ground_elem, env_elem, False),
+            (ground_elem, robo_elem, True),
+            (ground_elem, actor_elem, True),
+            (robo_elem, robo_elem, False),
+            (robo_elem, actor_elem, True),
+            (actor_elem, actor_elem, True),
+        )
+        for left, right, enabled in default_pairs:
+            contact_tabular.insert(left, right, 0.5, ADAPTIVE_CONTACT_KAPPA, enabled)
+
         floor_elem = contact_tabular.create("board_floor")
         contact_tabular.insert(floor_elem, actor_elem, 0.5, ADAPTIVE_CONTACT_KAPPA, True)
         contact_tabular.insert(floor_elem, robo_elem, 0.5, ADAPTIVE_CONTACT_KAPPA, True)
@@ -716,27 +733,23 @@ class Example:
         bh = 0.5 * self.brick_height_scaled
         sqrt2_2 = np.sqrt(2.0) / 2.0
 
-        red_pos = np.array(
-            [
-                float(self.table_top_center[0]),
-                float(self.table_top_center[1]) + 0.06,
-                float(self.table_top_center[2]) + bh,
-            ]
-        )
+        red_pos = np.array([
+            float(self.table_top_center[0]),
+            float(self.table_top_center[1]) + 0.06,
+            float(self.table_top_center[2]) + bh,
+        ])
         target_pos = red_pos + np.array([0.0, 0.0, float(self.offset_approach[2])])
 
         down = np.array([1.0, 0.0, 0.0, 0.0])
         inv_pick = np.array([0.0, 0.0, -sqrt2_2, sqrt2_2])
         x1, y1, z1, w1 = down
         x2, y2, z2, w2 = inv_pick
-        target_quat = np.array(
-            [
-                w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-                w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-                w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-                w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-            ]
-        )
+        target_quat = np.array([
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+        ])
 
         ik_dofs = self.model_ik.joint_coord_count
         seed = np.zeros(ik_dofs, dtype=np.float32)

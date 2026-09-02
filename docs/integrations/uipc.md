@@ -375,6 +375,16 @@ the scene mass, scale, `d_hat`, and time step:
 | `robot` ↔ `actor` | Yes |
 | `actor` ↔ `actor` | Yes |
 
+`SolverUIPC.ADAPTIVE_KAPPA_MIN` and `SolverUIPC.ADAPTIVE_KAPPA_MAX` expose the
+measured UIPC 0.9.0 corridor for the brick-stacking scene
+(`[9.538500988573645e9, 9.538500988573645e11]` Pa). The corridor is derived
+from scene mass, scale, `d_hat`, and time step, so changing those inputs or the
+UIPC build can change it. A callback can pass the lower value for a fixed
+contact workload that should use the least stiff accepted resistance; this
+also avoids registering the adaptive reporter for that scene. The
+`uipc_brick_stacking` example uses this fixed-minimum policy because its
+stud/tube interlock is a persistent, friction-dominated contact.
+
 Use `configure_contact_tabular` before initialization to insert additional
 elements, override friction / stiffness, or change which pairs are enabled. The
 callback may also return a `{body_index: contact_element}` mapping to override

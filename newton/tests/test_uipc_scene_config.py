@@ -71,3 +71,8 @@ class TestUIPCSceneConfig(unittest.TestCase):
         solver.initialize()
 
         self.assertEqual(observed_kappas, [-1.0] * 9)
+
+    def test_adaptive_kappa_bounds_are_public(self):
+        """Expose the measured UIPC adaptive contact corridor on SolverUIPC."""
+        self.assertEqual(newton.solvers.SolverUIPC.ADAPTIVE_KAPPA_MIN, 9538500988.573645)
+        self.assertEqual(newton.solvers.SolverUIPC.ADAPTIVE_KAPPA_MAX, 953850098857.3645)

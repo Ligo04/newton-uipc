@@ -84,7 +84,16 @@ _UIPC_INERTIA_ATTR: str = "inertia"
 _UIPC_ABD_MASS_ATTR: str = "abd_mass"
 _UIPC_ABD_MX_ATTR: str = "abd_mass_x_bar"
 _UIPC_ABD_MXX_ATTR: str = "abd_mass_x_bar_x_bar"
+# Negative resistance enables UIPC scene-adaptive contact stiffness.
 _UIPC_ADAPTIVE_KAPPA: float = -1.0
+
+# Scene-derived UIPC 0.9.0 brick-stacking corridor [Pa].
+_UIPC_ADAPTIVE_KAPPA_MIN: float = 9538500988.573645
+_UIPC_ADAPTIVE_KAPPA_MAX: float = 953850098857.3645
+
+# Public aliases for fixed contact resistance configuration.
+UIPC_ADAPTIVE_KAPPA_MIN: float = _UIPC_ADAPTIVE_KAPPA_MIN
+UIPC_ADAPTIVE_KAPPA_MAX: float = _UIPC_ADAPTIVE_KAPPA_MAX
 
 
 class SolverUIPC(SolverBase):
@@ -150,6 +159,12 @@ class SolverUIPC(SolverBase):
 
     _backend_imported: bool = False
     """Whether :meth:`import_uipc` has already loaded the libuipc backend."""
+
+    ADAPTIVE_KAPPA_MIN: float = UIPC_ADAPTIVE_KAPPA_MIN
+    """Scene-derived lower bound for adaptive contact resistance [Pa]."""
+
+    ADAPTIVE_KAPPA_MAX: float = UIPC_ADAPTIVE_KAPPA_MAX
+    """Scene-derived upper bound for adaptive contact resistance [Pa]."""
 
     CONTACTS_PER_ENV: int = 1024
     """Per-environment contact budget for :meth:`get_max_contact_count`.

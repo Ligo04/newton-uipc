@@ -1435,7 +1435,7 @@ class TestUIPCSoftbodyExamples(unittest.TestCase):
         self.assertTrue(default_args.enable_contact)
         self.assertFalse(disabled_args.enable_contact)
 
-    def test_uipc_brick_stacking_custom_contact_pairs_use_adaptive_kappa(self):
+    def test_uipc_brick_stacking_custom_contact_pairs_use_min_kappa(self):
         if not _HAS_UIPC:
             self.skipTest("Requires uipc")
 
@@ -1465,12 +1465,32 @@ class TestUIPCSoftbodyExamples(unittest.TestCase):
         )
 
         self.assertEqual(contact_tabular.created_name, "board_floor")
-        self.assertEqual(len(contact_tabular.inserts), 6)
+        self.assertEqual(len(contact_tabular.inserts), 15)
         self.assertEqual(
             {(min(left, right), max(left, right)) for left, right, *_ in contact_tabular.inserts},
-            {(0, 1), (0, 4), (1, 4), (2, 4), (3, 4), (4, 4)},
+            {
+                (0, 1),
+                (0, 2),
+                (0, 3),
+                (0, 4),
+                (1, 1),
+                (1, 2),
+                (1, 3),
+                (1, 4),
+                (2, 2),
+                (2, 3),
+                (2, 4),
+                (3, 3),
+                (3, 4),
+                (4, 4),
+            },
         )
-        self.assertTrue(all(resistance == -1.0 for _, _, _, resistance, _ in contact_tabular.inserts))
+        self.assertTrue(
+            all(
+                resistance == newton.solvers.SolverUIPC.ADAPTIVE_KAPPA_MIN
+                for _, _, _, resistance, _ in contact_tabular.inserts
+            )
+        )
         self.assertEqual(body_contact_elements, {10: 4, 11: 4})
 
     def test_uipc_brick_stacking_initial_pose_is_red_approach(self):
