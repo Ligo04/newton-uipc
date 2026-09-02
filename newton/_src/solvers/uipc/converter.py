@@ -19,9 +19,7 @@ from uipc.geometry import trimesh as uipc_trimesh
 
 from newton import Axis, GeoType, Mesh, Model, ShapeFlags
 
-# ---------------------------------------------------------------------------
 # Warp kernels for batch transform conversion
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel(enable_backward=False)
@@ -119,10 +117,7 @@ def _spatial_to_vel_mat44_kernel(
     r21 = two * (ry * rz + rx * rw)
     r22 = one - two * (rx * rx + ry * ry)
 
-    # Ȧ = [ωx] · R in (i, j) row-major. Skew matrix:
-    #   [ωx] = [[ 0, -wz,  wy],
-    #           [ wz,   0, -wx],
-    #           [-wy,  wx,   0]]
+    # Compute the affine rate with a row-major skew matrix.
     a00 = -wz * r10 + wy * r20
     a01 = -wz * r11 + wy * r21
     a02 = -wz * r12 + wy * r22
@@ -133,8 +128,7 @@ def _spatial_to_vel_mat44_kernel(
     a21 = -wy * r01 + wx * r11
     a22 = -wy * r02 + wx * r12
 
-    # Pack into Eigen column-major mat44d. Warp ``mat44d(...)`` is row-major,
-    # so each Warp row equals one Eigen column — ``warp[r,c] = eigen[c,r]``.
+    # Pack the matrix into Eigen column-major mat44d.
     zero = wp.float64(0.0)
     m = wp.mat44d(
         # Warp row 0 = Eigen column 0
@@ -210,7 +204,6 @@ def _read_from_backend_kernel(
     pz = wp.float32(m[3, 2])
 
     # Extract quaternion from rotation matrix (Shepperd's method)
-    # Eigen M[i,j] → Warp m[j,i]
     r00 = m[0, 0]
     r11 = m[1, 1]
     r22 = m[2, 2]
@@ -265,28 +258,13 @@ def _read_from_backend_kernel(
         wp.quat(wp.float32(qx), wp.float32(qy), wp.float32(qz), wp.float32(qw)),
     )
 
-    # The affine velocity matrix stores ``Ȧ`` (rate of the affine matrix)
-    # in the upper 3x3 and ``ṫ`` (rate of translation) in column 3, in
-    # Eigen column-major layout — Warp ``v[i,j]`` reads Eigen ``v[j,i]``.
-    #
-    # UIPC's affine body parameterization already references velocity at
-    # the COM (the mass matrix couples ṫ and Ȧ to COM via the first
-    # moment ``m·x̄``), so ``ṫ`` is already ``v_com_world`` — no
-    # ``ω x com`` shift is needed.
-    #
-    # The angular velocity follows from the rigid constraint ``Ȧ = [ωx] R``:
-    #     [ωx] = Ȧ · R^T
-    # Reading the skew components of ``Ȧ`` directly is only correct when
-    # ``R = I``; we project through ``R^T`` to get true spatial ``ω``.
+    # Convert the affine velocity matrix to angular velocity.
     v = src_velocities[backend_idx]
 
     # ṫ = v_com (Eigen column 3 → Warp row 3).
     v_com = wp.vec3(wp.float32(v[3, 0]), wp.float32(v[3, 1]), wp.float32(v[3, 2]))
 
-    # [ωx] = Ȧ · A^T. With Eigen ``A[i,j]`` = Warp ``m[j,i]`` (rotation
-    # only, so A = R), ``(Ȧ · A^T)_eigen[i,k]`` = Σ_j v[j,i] · m[j,k].
-    # We only need three components: ω_x = [ωx][2,1], ω_y = [ωx][0,2],
-    # ω_z = [ωx][1,0].
+    # Recover angular velocity using the Eigen/Warp transpose convention.
     m01 = wp.float32(m[0, 1])
     m02 = wp.float32(m[0, 2])
     m00 = wp.float32(m[0, 0])
@@ -384,9 +362,7 @@ def _read_fem_particle_positions_from_backend_kernel(
     out_particle_q[particle_idx] = wp.vec3(wp.float32(q[0]), wp.float32(q[1]), wp.float32(q[2]))  # ty:ignore[invalid-assignment]
 
 
-# ---------------------------------------------------------------------------
 # Numpy-level helpers (used only during scene construction, not per-step)
-# ---------------------------------------------------------------------------
 
 
 def newton_transform_to_mat4(tf: wp.transform) -> np.ndarray:  # pyright: ignore[reportArgumentType]
@@ -406,9 +382,7 @@ def newton_transform_to_mat4(tf: wp.transform) -> np.ndarray:  # pyright: ignore
     return tran.matrix()
 
 
-# ---------------------------------------------------------------------------
 # Mapping data structure
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -454,9 +428,7 @@ class UIpcMappingInfo:
     max_global_vertex: int = 0
 
 
-# ---------------------------------------------------------------------------
 # Build mesh for a Newton body
-# ---------------------------------------------------------------------------
 
 
 def _transform_points(points: np.ndarray, tf: wp.transform, scale: np.ndarray) -> np.ndarray:  # pyright: ignore[reportArgumentType]
@@ -607,8 +579,7 @@ def build_body_mesh(model: Model, body_idx: int) -> tuple[SimplicialComplex, flo
     shape_scale_np = model.shape_scale.numpy()
     shape_flags_np = model.shape_flags.numpy() if model.shape_flags is not None else None
 
-    # Only use collision shapes (not visual-only shapes) to avoid duplicate
-    # overlapping meshes that break the watertight topology after welding.
+    # Use collision shapes only to avoid duplicate geometry.
     shape_indices = [
         s
         for s in range(model.shape_count)
@@ -623,9 +594,7 @@ def build_body_mesh(model: Model, body_idx: int) -> tuple[SimplicialComplex, flo
 
     all_verts: list[np.ndarray] = []
     all_faces: list[np.ndarray] = []
-    # (shape_index, GeoType) for each shape that actually contributed a mesh;
-    # surfaced in the non-watertight error message so users can pinpoint which
-    # shapes to pass through ``ModelBuilder.approximate_meshes``.
+    # Track shapes that contributed mesh data.
     contributed_shapes: list[tuple[int, GeoType]] = []
     vert_offset = 0
 
@@ -703,12 +672,6 @@ def build_body_mesh(model: Model, body_idx: int) -> tuple[SimplicialComplex, flo
     faces = np.vstack(all_faces).astype(np.int32)
 
     # UIPC ABD's ``AffineBodyConstitution`` asserts ``volume > 0`` per body.
-    # Two failure modes arise from real USD assets:
-    #   (1) merged mesh is non-watertight (e.g. mixed mesh + primitive)
-    #   (2) the closed mesh has near-zero signed volume (nearly coplanar
-    #       vertices, or convex-hull fallback of a thin/flat link)
-    # In both cases we need a positive-volume substitute or UIPC aborts.
-    # Minimum absolute volume accepted before we fall back to an AABB box.
     _vol_eps = 1e-12
     body_name = model.body_label[body_idx] if body_idx < len(model.body_label) else "?"
 

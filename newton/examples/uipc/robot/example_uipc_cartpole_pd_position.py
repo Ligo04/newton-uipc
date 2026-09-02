@@ -1,24 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Cartpole PD — Position Control
-#
-# Drives the cart (prismatic DOF) with UIPC's built-in position-control PD:
-# ``JointTargetMode.POSITION`` sets up an aim constraint whose strength comes
-# from the solver's ``drive_strength_ratio`` (default 100), not from
-# ``joint_target_ke`` / ``joint_target_kd`` on the builder.
-# The user just writes a scalar target into ``control.joint_target_q``
-# every step and UIPC takes care of the PD law internally. The poles stay
-# passive so they swing as the cart accelerates.
-#
-# Compare with ``example_uipc_cartpole_pd_force`` which keeps the same task
-# but implements the PD law in user space via ``newton.actuators.ControllerPD``
-# and feeds the computed torque into ``JointTargetMode.EFFORT``.
-#
-# Command: python -m newton.examples uipc_cartpole_pd_position --world-count 1
-#
-###########################################################################
 
 import math
 
@@ -45,9 +28,7 @@ class Example:
         self.cart_amplitude = 0.8  # [m]
         self.cart_frequency = 0.5  # [Hz]
 
-        # joint_target_ke/kd are cross-solver metadata only: UIPC's aim
-        # drive strength comes from the solver's drive_strength_ratio
-        # (default 100) and has no damping channel, independent of kp/kd.
+        # Keep joint gains as cross-solver metadata; UIPC uses aim drive.
         self.kp = 2000.0
         self.kd = 200.0
 
@@ -62,23 +43,16 @@ class Example:
             collapse_fixed_joints=True,
         )
 
-        # DOF layout after collapse_fixed_joints:
-        #   d=0 : prismatic cart slider
-        #   d=1 : revolute pole1
-        #   d=2 : revolute pole2
-        # Initial state — cart at origin, pole1 tilted, pole2 upright.
+        # DOF layout: cart slider, pole1, pole2.
         cartpole.joint_q[-3:] = [0.0, 0.3, 0.0]
 
-        # Configure the cart DOF as a position-driven actuator. Poles stay
-        # passive (JointTargetMode.NONE — no constraint written).
+        # Drive the cart by position; leave poles passive.
         cart_dof = len(cartpole.joint_target_mode) - 3
         cartpole.joint_target_mode[cart_dof] = int(JointTargetMode.POSITION)
         cartpole.joint_target_mode[cart_dof + 1] = int(JointTargetMode.NONE)
         cartpole.joint_target_mode[cart_dof + 2] = int(JointTargetMode.NONE)
 
-        # PD gains on the cart drive. UIPC tracks the target via its own aim
-        # constraint; the same gains are read by EFFORT-consuming solvers
-        # (MuJoCo, etc.) so the model stays portable across backends.
+        # Set the cart's UIPC aim-drive gains.
         cartpole.joint_target_ke[cart_dof] = self.kp
         cartpole.joint_target_kd[cart_dof] = self.kd
 
@@ -124,8 +98,7 @@ class Example:
     def _update_cart_target(self):
         """Write a sinusoidal cart position target into the control buffer."""
         target = self.cart_amplitude * math.sin(2.0 * math.pi * self.cart_frequency * self.sim_time)
-        # Copy into host-side numpy first so we hit one H→D transfer per step
-        # instead of one per world.
+        # Update host arrays once per step before copying to the device.
         target_np = self.control.joint_target_q.numpy()
         for idx in self.cart_dof_indices:
             target_np[idx] = target
@@ -154,9 +127,7 @@ class Example:
         self.viewer.end_frame()
 
     def test_final(self):
-        # After simulation the cart should be tracking the commanded sine
-        # within a tolerance determined by the drive stiffness, and both
-        # poles should still be above the ground.
+        # Verify cart tracking after simulation.
         num_bodies_per_world = self.model.body_count // self.world_count
 
         joint_q = self.state_0.joint_q.numpy()

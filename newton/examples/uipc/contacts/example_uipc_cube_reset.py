@@ -1,18 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Cube Reset
-#
-# Several cubes are dropped onto a static table in each of several parallel
-# worlds, with random per-world layouts. Every reset interval a subset of
-# worlds is re-randomized and pushed back into the live UIPC scene via
-# SolverUIPC.reset(state, world_mask) -- without rebuilding the solver --
-# while the remaining worlds keep simulating.
-#
-# Command: python -m newton.examples uipc_cube_reset
-#
-###########################################################################
 
 import numpy as np
 import warp as wp
@@ -69,10 +58,7 @@ class Example:
         self.body_world = self.model.body_world.numpy()
         self.body_flags = self.model.body_flags.numpy()
 
-        # body_q is in the global frame: builder.replicate offsets each world by
-        # a per-world translation. Recover each world's offset from its static
-        # table (authored local origin (0, 0, TABLE_HZ)) so reset() can place
-        # cubes in the correct world rather than at the local origin.
+        # Recover each replicated world's body_q offset from its table.
         init_body_q = self.state_0.body_q.numpy()
         kinematic = int(newton.BodyFlags.KINEMATIC)
         table_local = np.array([0.0, 0.0, TABLE_HZ])
@@ -179,9 +165,7 @@ class Example:
         q = body_q[dyn]
         if not np.all(np.isfinite(q)):
             raise ValueError("Non-finite cube transform after simulation")
-        # Cubes must rest on the static table (center ~TABLE_TOP_Z + CUBE_HALF),
-        # not collapse with the table to the ground (~CUBE_HALF). The threshold
-        # below the tabletop catches both fall-through and a non-static table.
+        # Check that cubes remain on the static table.
         min_resting_z = TABLE_TOP_Z - CUBE_HALF
         if np.any(q[:, 2] < min_resting_z):
             raise ValueError(

@@ -107,8 +107,7 @@ class RigidBodyBuilder:
         self._mapping = mapping
         self._kappa = kappa
         self._default_mass_density = default_mass_density
-        # Gates which prismatic joints absorb armature via the aim drive
-        # (VELOCITY-mode joints only drive under implicit PD).
+        # Track whether prismatic joints absorb armature through aim drive.
         self._implicit_pd = implicit_pd
 
         # Body world transforms — populated by init_body_transforms()
@@ -349,11 +348,10 @@ class RigidBodyBuilder:
         body_inertia_np = model.body_inertia.numpy() if model.body_inertia is not None else None
         no_inst = set(no_instance_bodies) if no_instance_bodies is not None else set()
         custom_inertia = set(custom_inertia_bodies) if custom_inertia_bodies else set()
-        # Custom-inertia bodies each need their own SimplicialComplex: ABD meta
-        # is per-geometry, so instancing would share one (mass, COM, inertia).
+        # Give custom-inertia bodies separate SimplicialComplex objects.
         no_inst |= custom_inertia
 
-        # --- Phase A: Collect per-body data ---------------------------------
+        # Phase A: Collect per-body data
         body_infos: list[_BodyInfo] = []
         for b in range(body_range[0], body_range[1]):
             sk = _compute_shape_key(model, b)
@@ -376,7 +374,7 @@ class RigidBodyBuilder:
                 kappa = float(body_kappa[b])
             body_infos.append(_BodyInfo(b, sk, tf, 0.0, elem, is_kin, kappa))
 
-        # --- Phase B: Group by (shape_key, contact element, kappa) ----------
+        # Phase B: Group by (shape_key, contact element, kappa)
         from collections import OrderedDict  # noqa: PLC0415
 
         groups: OrderedDict[tuple[Any, ...], list[_BodyInfo]] = OrderedDict()
@@ -388,7 +386,7 @@ class RigidBodyBuilder:
                 key = (info.shape_key, id(info.contact_elem), info.kappa)
             groups.setdefault(key, []).append(info)
 
-        # --- Phase C: Create instanced geometries ---------------------------
+        # Phase C: Create instanced geometries
         for group_bodies in groups.values():
             n = len(group_bodies)
             ref = group_bodies[0]
@@ -437,8 +435,7 @@ class RigidBodyBuilder:
                 # UIPC needs a symmetric inertia tensor; guard against roundoff drift.
                 inertia_cm = 0.5 * (inertia_cm + inertia_cm.T)
                 mass_matrix = uipc_affine_body.from_rigid_body(mass, com, inertia_cm)
-                # ``volume`` feeds UIPC's energy scaling; mesh volume matches the
-                # default density path when mass/com/inertia coincide.
+                # Use mesh volume for UIPC energy scaling.
                 AffineBodyConstitution().apply_to(
                     sc,
                     ref.kappa,

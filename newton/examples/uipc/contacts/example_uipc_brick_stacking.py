@@ -1,19 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Brick Stacking
-#
-# UIPC port of ``example_brick_stacking``. A Franka FR3 arm picks up
-# colored LEGO bricks from a table and stacks them using IPC-based
-# contact. Bricks use the full LEGO mesh geometry (shell + studs +
-# interior tubes). The arm is controlled with IK and a Warp-kernel
-# finite-state machine that sequences approach, grasp, lift, move, place
-# and release for each brick.
-#
-# Command: python -m newton.examples uipc_brick_stacking
-#
-###########################################################################
 
 import argparse
 import enum
@@ -52,13 +40,7 @@ TUBE_OUTER_RADIUS = 0.002755
 TUBE_HEIGHT = BRICK_HEIGHT - TOP_THICKNESS
 CYLINDER_SEGMENTS = 48
 
-# Gain scale applied to the physical Franka gains under --implicit-pd so the
-# drive is stiff enough for reliable stacking (see _configure_franka). A
-# sweep of the first APPROACH settled error vs the 6 mm task-advance
-# threshold puts the minimum stable scale at ~5 (4.6 mm); 20 keeps ample
-# margin for the contact/grip loads later in the stack. ke_arm = 8000,
-# kd ~= 179 — a stiff but still physical robot gain, not the near-rigid
-# default clamp.
+# Gain scale for reliable implicit-PD stacking.
 IMPLICIT_PD_KE_SCALE = 20.0
 
 # Gripper finger positions [m]
@@ -424,9 +406,7 @@ class Example:
         self.interlock_tube_outer_radius = self._compute_interlock_tube_outer_radius(self.uipc_gap)
         if self.interlock_tube_outer_radius <= 0.0:
             raise ValueError("--uipc-gap leaves no positive-radius underside tube for interlocking brick geometry")
-        # Targets are specified at the Franka hand link. The finger pads sit
-        # roughly 58 mm below that link, so the UIPC port uses taller hand-link
-        # offsets than the MuJoCo example to keep the initial pose intersection-free.
+        # Targets use the Franka hand link; finger pads are handled separately.
         self.offset_approach = wp.vec3(0.0, 0.0, 0.025)
         self.offset_lift = wp.vec3(0.0, -0.001, 0.042)
         self.grasp_z_offset = wp.vec3(0.0, 0.0, 0.012)
@@ -434,8 +414,7 @@ class Example:
 
         self._setup_brick_layout()
 
-        # Build an arm-only IK model first so the simulation starts with the
-        # gripper already above the red brick, matching the original example.
+        # Build an arm-only IK model for the initial pose.
         ik_builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
         self._build_franka(ik_builder)
         self.model_ik = ik_builder.finalize()
@@ -459,14 +438,7 @@ class Example:
         self.control = self.model.control()
         self.contacts = newton.CollisionPipeline(self.model).contacts()
 
-        # Pure position-domain gravity compensation for --implicit-pd:
-        # without it the arm sags by tau_g/ke at each joint (the original
-        # MuJoCo example relies on jnt_actgravcomp, which UIPC has no
-        # equivalent for). Each step the RNEA bias is turned into an aim
-        # offset tau_g/ke — no coexisting force control.
-        # Bias-force output buffers (gravity + Coriolis); the single Franka
-        # articulation's DOFs are the buffers' whole length, so
-        # gravity_force/coriolis_force index the arm DOFs directly.
+        # Compensate gravity in the implicit-PD aim target.
         self._id_gravity_force = wp.zeros(self.model.joint_dof_count, dtype=wp.float32, device=self.model.device)
         self._id_coriolis_force = wp.zeros(self.model.joint_dof_count, dtype=wp.float32, device=self.model.device)
         ke = self.model.joint_target_ke.numpy()[:9]
@@ -554,9 +526,6 @@ class Example:
         self.board_floor_z = self.table_top_center[2] - 0.8 * self.brick_height_scaled
 
         # Match the original example's XY layout and position expressions.
-        # UIPC attaches the bottom-origin mesh at ``-bh`` so body transforms
-        # remain brick centers; add ``bh`` plus ``uipc_gap`` where needed to
-        # preserve the original bottom-origin placement.
         self.brick_positions = [
             self.table_top_center + wp.vec3(0.0, 0.06, bh + self.uipc_gap),
             self.table_top_center + wp.vec3(0.05, -0.04, bh + self.uipc_gap),
@@ -585,19 +554,7 @@ class Example:
     def _configure_franka(self, builder: newton.ModelBuilder, arm_q: np.ndarray | list[float]) -> None:
         builder.joint_q[:9] = [*np.asarray(arm_q, dtype=np.float32)[:7].tolist(), GRIPPER_OPEN, GRIPPER_OPEN]
         builder.joint_target_q[:9] = builder.joint_q[:9]
-        # Gains match the original example_brick_stacking (MuJoCo PD). Under
-        # UIPC's default aim drive they are cross-solver metadata only (drive
-        # strength = drive_strength_ratio, default 100, near-rigid); under
-        # --implicit-pd they become physical gains [N·m/rad]: kd damps
-        # transients, the aim offset in set_joint_targets cancels the static
-        # sag, and grip forces deflect the fingers by tau_grip/ke.
-        #
-        # The physical Franka gains (~400 N·m/rad) make the implicit-PD drive
-        # much softer than the near-rigid default clamp, so the arm complies
-        # and the ~0.15 N finger grip slips during fast moves. Under
-        # --implicit-pd the gains are scaled by IMPLICIT_PD_KE_SCALE (ke*s,
-        # kd*sqrt(s) to hold the damping ratio) to stiffen the drive enough
-        # for reliable stacking; s=1 keeps the bare physical gains.
+        # Use the original brick-stacking PD gains.
         ke = np.array([400.0] * 7 + [100.0] * 2, dtype=np.float64)
         kd = np.array([40.0] * 7 + [10.0] * 2, dtype=np.float64)
         if self.implicit_pd:
@@ -651,10 +608,7 @@ class Example:
         """Add eight gray kinematic bricks as a board floor under the stack."""
         board_center = self.brick_positions[2]
         floor_z = self.board_floor_z
-        # ``board_floor_z`` follows the original example and denotes the mesh
-        # bottom. UIPC bricks attach the bottom-origin mesh with ``-BRICK_HZ``
-        # so dynamic body poses stay centered; lift the board body by BRICK_HZ
-        # to keep the visible board top and studs above the table.
+        # ``board_floor_z`` denotes the floor mesh height.
         floor_center_z = floor_z + BRICK_HZ
         floor_rot = self.rot_90z
         bw = self.brick_width_scaled
@@ -904,8 +858,7 @@ class Example:
         wp.copy(dest=self.control.joint_target_q[:7], src=self.joint_q_ik.flatten()[:7])
         wp.copy(dest=self.control.joint_target_q[7:9], src=self.gripper_target.flatten()[:2])
 
-        # Pure position-domain gravity compensation: offset the aim by
-        # tau_g/ke so implicit PD holds the commanded pose instead of sagging.
+        # Offset the implicit-PD aim for gravity compensation.
         if self.implicit_pd:
             # eval_inverse_dynamics_passive reads state_0.body_q, kept consistent by the UIPC readback.
             newton.eval_inverse_dynamics_passive(

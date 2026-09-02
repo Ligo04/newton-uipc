@@ -1,17 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Joints
-#
-# Demonstrates REVOLUTE, PRISMATIC, and BALL joints using the SolverUIPC
-# backend.  Each joint type uses a fixed-to-world anchor link with a
-# swinging, sliding, or freely-rotating child link, mirroring the layout
-# in example_basic_joints.
-#
-# Command: python -m newton.examples uipc_joints
-#
-###########################################################################
 
 import uipc
 import warp as wp
@@ -46,9 +36,7 @@ class Example:
         # float64 identity quaternion reused across all transforms (UIPC uses double precision)
         q_id = wp.quat_identity(dtype=wp.float64)  # pyright: ignore[reportArgumentType]
 
-        # ---------------------------------------------------------
         # REVOLUTE (hinge) joint
-        # ---------------------------------------------------------
         y = rows[0]
 
         a_rev = builder.add_link(
@@ -101,9 +89,7 @@ class Example:
         self._revolute_joint = j_revolute
         builder.joint_q[-1] = wp.pi * 0.5
 
-        # ---------------------------------------------------------
         # PRISMATIC (slider) joint
-        # ---------------------------------------------------------
         y = rows[1]
         a_pri = builder.add_link(
             xform=wp.transform(
@@ -156,9 +142,7 @@ class Example:
         )
         self._prismatic_joint = j_prismatic
 
-        # ---------------------------------------------------------
         # BALL (spherical) joint — sphere + cuboid
-        # ---------------------------------------------------------
         y = rows[2]
         radius = 0.3
         z_offset = -1.0  # shift down so the ball hangs lower
@@ -216,7 +200,7 @@ class Example:
             label="ball_articulation",
         )
 
-        # # Set initial joint orientation
+        # Set initial joint orientation
         builder.joint_q[-4:] = wp.quat_rpy(0.5, 0.6, 0.7)  # ty:ignore[invalid-assignment]  # pyright: ignore[reportArgumentType]
 
         # Finalize
@@ -256,7 +240,6 @@ class Example:
         self.sim_time += self.frame_dt
 
         # UIPC writes curr_angle / curr_distance back to state.joint_q
-        # via the animator callback, so read directly — no eval_ik needed.
         joint_q_np = self.state_0.joint_q.numpy()  # pyright: ignore[reportOptionalMemberAccess]  # ty:ignore[unresolved-attribute]
         q_start = self.model.joint_q_start.numpy()  # ty:ignore[unresolved-attribute]  # pyright: ignore[reportOptionalMemberAccess]
         rev_angle = joint_q_np[q_start[self._revolute_joint]]
@@ -265,7 +248,6 @@ class Example:
 
     def test_final(self):
         # Bodies: 0=a_rev, 1=b_rev, 2=a_pri, 3=b_pri, 4=a_ball, 5=b_ball
-        # Fixed anchor links should barely move
         newton.examples.test_body_state(
             self.model,
             self.state_0,

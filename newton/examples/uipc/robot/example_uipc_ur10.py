@@ -1,28 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC UR10
-#
-# Shows how to set up a simulation of a UR10 robot arm
-# from a USD file using the SolverUIPC backend, and applies a sinusoidal
-# trajectory to the joint targets.
-#
-# The task (home pose, trajectory, and PD gains) is deliberately identical
-# to ``example_uipc_ur10_force.py`` so the drive flavours compare directly:
-# aim drive / --implicit-pd here versus EFFORT + ControllerPD / --stable-pd
-# there.
-#
-# --implicit-pd switches the joint drives from the gain-agnostic aim drive
-# (strength from ``drive_strength_ratio``) to implicit PD with physical
-# gain semantics: ``joint_target_ke`` / ``joint_target_kd`` act as
-# stiffness and damping springs inside UIPC's incremental potential
-# (gravity sag = tau/ke, kd damps transients).
-#
-# Command: python -m newton.examples uipc_ur10 --world-count 4
-#          python -m newton.examples uipc_ur10 --implicit-pd [--hold]
-#
-###########################################################################
 
 import numpy as np
 import uipc
@@ -36,7 +15,6 @@ from newton import JointTargetMode
 
 class Example:
     # Shared task spec — keep in sync with example_uipc_ur10_force.py.
-    # Gains match the original example_robot_ur10 (uniform 500/50).
     HOME_POSE = np.array([0.0, -np.pi / 3, np.pi / 2, -np.pi / 6, np.pi / 2, 0.0], dtype=np.float32)
     KP = np.array([500.0] * 6, dtype=np.float32)
     KD = np.array([50.0] * 6, dtype=np.float32)
@@ -62,10 +40,7 @@ class Example:
         asset_path = newton.utils.download_asset("universal_robots_ur10")
         asset_file = str(asset_path / "usd" / "ur10_instanceable.usda")
         height = 1.2
-        # ``floating=False`` welds the base to the world via an explicit FIXED
-        # joint. The USD default is a D6 with all axes locked, which SolverUIPC
-        # silently skips — and this example runs with contact disabled, so a
-        # skipped base joint would leave the whole arm in free fall.
+        # Weld the UR10 base with an explicit FIXED joint.
         ur10.add_usd(
             asset_file,
             xform=wp.transform(wp.vec3(0.0, 0.0, height)),
@@ -177,9 +152,7 @@ class Example:
         q = self.state_0.joint_q.numpy()
         assert np.all(np.isfinite(q)), "joint_q went non-finite (divergence)"
         assert np.all(np.abs(q) < 20.0), f"joint_q blew up: {q.tolist()}"
-        # The sinusoidal trajectory is slow relative to the drive stiffness,
-        # so both drive flavours must stay within phase-lag distance of the
-        # commanded target on every DOF.
+        # Verify the trajectory remains stable at the chosen drive stiffness.
         target = self.control.joint_target_q.numpy()
         err = np.abs(q - target)
         assert np.all(err < 0.5), f"tracking error too large: {err.tolist()}"

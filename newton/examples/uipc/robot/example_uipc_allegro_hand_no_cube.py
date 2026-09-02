@@ -1,17 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Allegro Hand (No Cube)
-#
-# Shows how to set up a simulation of an Allegro hand articulation
-# from a USD file using the SolverUIPC backend, without loading the
-# cube object.  A sinusoidal trajectory is applied to the finger
-# joint targets each step.
-#
-# Command: python -m newton.examples uipc_allegro_hand_no_cube --world-count 1
-#
-###########################################################################
 
 import numpy as np
 import uipc

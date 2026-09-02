@@ -1,17 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Softbody Franka
-#
-# Demonstrates a Franka Panda robot grasping a deformable rubber duck
-# on a table. The robot is driven with Newton's GPU IK solver while
-# SolverUIPC integrates the articulated robot and the Stable Neo-Hookean
-# deformable body in the same scene.
-#
-# Command: python -m newton.examples uipc_softbody_franka
-#
-###########################################################################
 
 from __future__ import annotations
 
@@ -166,10 +156,7 @@ class Example:
         for d in range(min(9, len(builder.joint_q))):
             builder.joint_target_q[d] = builder.joint_q[d]
             builder.joint_target_mode[d] = int(JointTargetMode.POSITION)
-            # joint_target_ke/kd are inert for UIPC's default aim drive (its
-            # strength is the solver's drive_strength_ratio, default 100);
-            # kept as physical Franka-class gains for cross-solver
-            # portability and for SolverUIPC(implicit_pd=True).
+            # Keep physical joint gains for cross-solver compatibility.
             builder.joint_target_ke[d] = 650.0
             builder.joint_target_kd[d] = 100.0
 

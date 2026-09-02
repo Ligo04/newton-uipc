@@ -1,19 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Box Pyramid
-#
-# UIPC port of ``example_pyramid``. Builds one or more pyramids of rigid
-# cubes and optionally drops a wrecking ball down a ramp into them. This
-# stresses SolverUIPC's rigid-rigid contact path (IPC barrier + ABD) rather
-# than the narrow-phase contact generation exercised by the XPBD version,
-# so defaults are tuned much smaller — UIPC contact is O(n_pairs) per
-# Newton iteration and explodes quickly with stack height.
-#
-# Command: python -m newton.examples uipc_pyramid
-#
-###########################################################################
 
 import numpy as np
 import uipc
@@ -57,10 +45,7 @@ class Example:
         top_body_indices: list[int] = []
         pyramid_height = pyramid_size * CUBE_SPACING
 
-        # Small vertical gap between the stacked cubes so UIPC's initial
-        # IPC barrier does not see them in contact at t=0 (``d_hat`` is
-        # 1 mm on this solver and stacked boxes sitting flush would land
-        # inside that shell).
+        # Leave a small gap so UIPC initializes outside the contact barrier.
         uipc_gap = 0.02
 
         for pyramid in range(num_pyramids):
@@ -89,9 +74,7 @@ class Example:
         print(f"Built {num_pyramids} pyramids x {pyramid_size} rows = {box_count} boxes")
 
         if not self.test_mode:
-            # Wrecking ball on a ramp. The ball rolls down and smashes the
-            # stack — same idea as the XPBD version, just shorter because
-            # UIPC handles far fewer contacts per step.
+            # Add a wrecking ball that rolls down the ramp.
             ramp_height = 8.4
             ramp_angle = float(np.arctan2(ramp_height, RAMP_LENGTH))
             ball_x = 0.0
@@ -106,12 +89,7 @@ class Example:
             ball_cfg.density = builder.default_shape_cfg.density * WRECKING_BALL_DENSITY_MULT
             builder.add_shape_sphere(body_ball, radius=WRECKING_BALL_RADIUS, cfg=ball_cfg)
 
-            # Static ramp. SolverUIPC only promotes ``body == -1`` shapes
-            # to scene geometry when they are ``GeoType.PLANE`` (see
-            # ``rigid_body.py::build_ground_planes``), so a world-attached
-            # box ramp would be silently dropped and the wrecking ball
-            # would fall straight through. Instead attach the ramp to a
-            # kinematic body so it becomes a fixed ABD collider.
+            # Add the static ramp as a kinematic body.
             ramp_quat = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), float(ramp_angle))
             ramp_body = builder.add_body(
                 xform=wp.transform(

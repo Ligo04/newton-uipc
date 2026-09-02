@@ -1,16 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Conveyor
-#
-# Baggage-claim style conveyor using the SolverUIPC backend. A rotating
-# belt mesh is driven by a revolute joint position target, two static
-# annular rail meshes keep dynamic "bags" on the belt.
-#
-# Command: python -m newton.examples uipc_conveyor
-#
-###########################################################################
 
 import math
 
@@ -148,7 +139,7 @@ class Example:
 
         builder.add_ground_plane()
 
-        # ---- Belt --------------------------------------------------------
+        # Belt
         belt_inner_radius = BELT_RING_RADIUS - BELT_HALF_WIDTH
         belt_outer_radius = BELT_RING_RADIUS + BELT_HALF_WIDTH
 
@@ -166,7 +157,6 @@ class Example:
         belt_cfg = newton.ModelBuilder.ShapeConfig(mu=1.2, ke=1.0e3, kd=1.0e-1)
 
         # Dynamic body driven by a high-stiffness revolute joint target.
-        # (UIPC marks kinematic bodies as fixed, so the belt must be dynamic.)
         self.belt_body = builder.add_link(mass=15.0, label="conveyor_belt")
         builder.add_shape_mesh(self.belt_body, mesh=belt_mesh, cfg=belt_cfg, label="conveyor_belt_mesh")
         self.belt_joint = builder.add_joint_revolute(
@@ -186,7 +176,7 @@ class Example:
         builder.joint_qd[belt_qd_start] = self.belt_angular_speed
         builder.add_articulation([self.belt_joint], label="conveyor_belt")
 
-        # ---- Rails -------------------------------------------------------
+        # Rails
         rail_cfg = newton.ModelBuilder.ShapeConfig(mu=0.8, ke=1.0e3, kd=1.0e-1)
 
         rail_inner_mesh = create_annular_prism_mesh(
@@ -211,8 +201,6 @@ class Example:
         )
 
         # Rails are kinematic (fixed in UIPC) since they don't move.
-        # Shapes on body=-1 other than PLANE are not processed by UIPC,
-        # so we create dedicated bodies.
         for rail_mesh, rail_label in (
             (rail_inner_mesh, "conveyor_rail_inner"),
             (rail_outer_mesh, "conveyor_rail_outer"),
@@ -224,7 +212,7 @@ class Example:
             )
             builder.add_shape_mesh(rail_body, mesh=rail_mesh, cfg=rail_cfg, label=rail_label)
 
-        # ---- Bags --------------------------------------------------------
+        # Bags
         bag_cfg = newton.ModelBuilder.ShapeConfig(mu=1.0, ke=1.0e3, kd=1.0e-1, restitution=0.0)
 
         self.bag_bodies = []

@@ -1,20 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Load USD
-#
-# Generic ``USD -> SolverUIPC`` loader driven from the command line.  Given
-# a ``--usd-path``, the example builds a :class:`~newton.ModelBuilder` via
-# :meth:`~newton.ModelBuilder.add_usd`, steps the articulation under
-# :class:`~newton.solvers.SolverUIPC`, and verifies the resulting body state
-# stays finite in :meth:`test_final`.
-#
-# Command:
-#   python -m newton.examples uipc_load_usd --usd-path <path-to-usd>
-#   python -m newton.examples uipc_load_usd  # uses the default fixture
-#
-###########################################################################
 
 from __future__ import annotations
 
@@ -58,9 +45,7 @@ class Example:
 
         self.model = builder.finalize()
 
-        # FK to sync body_q from the authored joint_q -- guard the optional
-        # arrays so type checkers understand they are populated after
-        # ``finalize()`` on a model that has bodies.
+        # Run FK from authored joint targets after checking optional arrays.
         assert self.model.joint_q is not None and self.model.joint_qd is not None
         self.state_0 = self.model.state()
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)  # ty:ignore[invalid-argument-type]  # pyright: ignore[reportArgumentType]

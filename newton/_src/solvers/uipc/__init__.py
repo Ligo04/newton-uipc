@@ -22,10 +22,7 @@ __all__ = [
     "SolverUIPC",
 ]
 
-# These wrapper classes live in modules that hard-import ``uipc`` (libuipc) at
-# load time. Expose them lazily so importing this package — the path by which
-# ``import newton`` reaches the import-safe :class:`SolverUIPC` — does not pull
-# in libuipc. :class:`SolverUIPC` itself is import-safe and imported eagerly.
+# Load UIPC-dependent wrappers lazily.
 _LAZY_MODULES = {
     "Articulation": ".articulation",
     "ArticulationBuilder": ".articulation_builder",

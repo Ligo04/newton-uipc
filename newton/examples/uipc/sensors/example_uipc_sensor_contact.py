@@ -1,19 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Sensor Contact
-#
-# Demonstrates contact force sensing using the SensorContact API.
-#
-# Scene: two boxes stacked on a ground plane. A SensorContact on the
-# bottom box measures the total contact force (ground + top box).
-#
-# Multiple solver backends are supported via ``--solver``:
-#   python -m newton.examples uipc_sensor_contact
-#   python -m newton.examples uipc_sensor_contact --solver mujoco
-#
-###########################################################################
 
 import warp as wp
 

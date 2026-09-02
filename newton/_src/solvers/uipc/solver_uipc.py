@@ -27,8 +27,7 @@ except ImportError:  # Python < 3.12
     from typing_extensions import override
 
 if TYPE_CHECKING:
-    # Resolved lazily by :meth:`SolverUIPC.import_uipc` so ``import newton``
-    # works without libuipc; these bindings exist only for static type analysis.
+    # Resolve UIPC lazily so ``import newton`` remains safe.
     import uipc
     from uipc import Logger as ULogger
     from uipc.core import (
@@ -69,15 +68,7 @@ if TYPE_CHECKING:
     from .rigid_body import RigidBodyBuilder
     from .utils import _view_attr
 
-# UIPC ABD per-group meta attributes (see libuipc AffineBodyConstitution):
-#   "mass"                 Float   - scalar mass m [kg]
-#   "mass_center"          Vec3    - COM c in body frame [m]
-#   "inertia"              Mat3x3  - inertia at COM, body axes [kg*m^2]
-#   "abd_mass"             Float   - same m (cached)
-#   "abd_mass_x_bar"       Vec3    - integral rho*x dV = m*c
-#   "abd_mass_x_bar_x_bar" Mat3x3  - integral rho*x*x^T dV (body-frame origin)
-# The first triplet matches Newton's body_mass/body_com/body_inertia
-# conventions directly, so reading back is a plain copy.
+# UIPC ABD per-group metadata keys.
 _UIPC_MASS_ATTR: str = "mass"
 _UIPC_COM_ATTR: str = "mass_center"
 _UIPC_INERTIA_ATTR: str = "inertia"
@@ -423,8 +414,7 @@ class SolverUIPC(SolverBase):
         super().__init__(model=model)
         self.import_uipc()
 
-        # Backend-dependent defaults; not evaluable as argument defaults
-        # without hard-importing ``uipc`` at module load.
+        # Resolve backend-dependent defaults inside the constructor.
         if kappa is None:
             kappa = 1.0 * GPa
         if logger_level is None:
@@ -478,8 +468,7 @@ class SolverUIPC(SolverBase):
         self._stats: USimulationStats | None = USimulationStats() if require_profile else None
         self._auto_report_saved: bool = False
 
-        # weakref.finalize fires on solver GC or interpreter shutdown; atexit
-        # fired too late (the solver ref often dies before it).
+        # Register cleanup for solver destruction and interpreter shutdown.
         if require_profile:
 
             def _auto_save(stats: USimulationStats, workspace: str) -> None:
@@ -502,15 +491,13 @@ class SolverUIPC(SolverBase):
         self._contact_tabular_fn: Callable | None = None
         self._subscene_tabular_fn: Callable | None = None
 
-        # Bodies whose Newton-authored inertia overrides UIPC's
-        # density*volume derivation; set via sync_uipc_inertia_with_model.
+        # Track bodies with Newton-authored inertia overrides.
         self._custom_inertia_bodies: set[int] = set()
 
         # Bodies excluded from AffineBody instancing; add before initialize().
         self._no_instance_bodies: set[int] = set()
 
-        # Auto-run sync_model_inertia_from_uipc at the end of initialize();
-        # disable to keep the authored ModelBuilder inertias untouched.
+        # Optionally sync model inertia from UIPC during initialize().
         self._auto_sync_inertia: bool = auto_sync_inertia
 
         # Builders (populated during initialize)
@@ -523,9 +510,7 @@ class SolverUIPC(SolverBase):
         self._body_contact_elem: dict[int, ContactElement] = {}
         self._contact_tabular_ref: ContactTabular | None = None
 
-    # ------------------------------------------------------------------
     # Pre-initialization configuration
-    # ------------------------------------------------------------------
 
     def configure_scene(self, config: dict[str, Any]) -> None:
         """Update UIPC scene configuration before initialization.
@@ -600,8 +585,7 @@ class SolverUIPC(SolverBase):
         flag = bool(enable)
 
         if self._initialized:
-            # Mutate the live scene config. UIPC exposes scene.config() as a
-            # mutable view onto the underlying JSON-like config object.
+            # Update the live UIPC scene config.
             scene_cfg = self.scene.config()
             scene_cfg["contact"]["enable"] = flag  # ty:ignore[not-subscriptable]
             if d_hat is not None:
@@ -750,9 +734,7 @@ class SolverUIPC(SolverBase):
             raise RuntimeError("Cannot configure subscene tabular after initialization.")
         self._subscene_tabular_fn = fn
 
-    # ------------------------------------------------------------------
     # Mass / inertia bridge: read ABD-derived values back into Newton
-    # ------------------------------------------------------------------
 
     def sync_uipc_inertia_with_model(
         self,
@@ -898,8 +880,7 @@ class SolverUIPC(SolverBase):
         if body_indices is None:
             body_indices = sorted(self.mapping.body_geo_slots.keys())
 
-        # Pull once, mutate host arrays, push back in one shot — avoids
-        # body_count round-trips to the device.
+        # Update host arrays in one pull/modify/push operation.
         body_mass_np = model.body_mass.numpy().copy()
         body_com_np = model.body_com.numpy().copy()
         body_inertia_np = model.body_inertia.numpy().copy()
@@ -924,8 +905,7 @@ class SolverUIPC(SolverBase):
             if inv_mass_np is not None:
                 inv_mass_np[b] = np.float32(1.0 / m)
             if inv_inertia_np is not None:
-                # Symmetric 3x3 invert via numpy; falls back to pseudo-inverse
-                # if inertia is singular (e.g. a degenerate ABD proxy).
+                # Invert the symmetric 3x3 matrix with a pseudo-inverse fallback.
                 try:
                     inv_i = np.linalg.inv(i_cm)
                 except np.linalg.LinAlgError:
@@ -943,9 +923,7 @@ class SolverUIPC(SolverBase):
                 model.body_inv_inertia.assign(inv_inertia_np)
         return written
 
-    # ------------------------------------------------------------------
     # Initialization
-    # ------------------------------------------------------------------
 
     def initialize(self, state: State | None = None) -> None:  # pyright: ignore[reportRedeclaration]
         """Build UIPC scene objects from the Newton model and initialize the world.
@@ -997,8 +975,7 @@ class SolverUIPC(SolverBase):
         print(f"scene_config:{self._scene_config}")
         body_kappa = self._body_kappa_from_model(model)
 
-        # Subscene tabular for multi-world contact isolation — set up BEFORE
-        # contact elements so that elements can be created within subscenes.
+        # Set up subscene contact isolation before contact elements.
         subscene_elements: list[SubsceneElement] = []
         tabular = self.scene.subscene_tabular()
         default_subscene_elem = tabular.default_element()
@@ -1006,13 +983,11 @@ class SolverUIPC(SolverBase):
             se = tabular.create(f"world_{world_index}")
             subscene_elements.append(se)
 
-        # Cross-subscene contact is disabled by default in UIPC;
-        # only enable each world ↔ default (ground).
+        # Enable contact between each world subscene and the default ground.
         for se in subscene_elements:
             tabular.insert(default_subscene_elem, se, True)
 
-        # Let user override subscene configuration (called once with all
-        # subscenes available).
+        # Apply the user's subscene configuration once for all worlds.
         if self._subscene_tabular_fn is not None:
             self._subscene_tabular_fn(tabular, subscene_elements, default_subscene_elem)
 
@@ -1089,9 +1064,7 @@ class SolverUIPC(SolverBase):
 
         self._rigid_body_builder.build_ground_planes(ground_elem)
 
-        # Classify articulation vs free-joint bodies; ball-joint children are
-        # auto-flagged (merged with _no_instance_bodies) so they don't share
-        # AffineBody instances with shape-key siblings.
+        # Classify articulation and free-joint bodies.
         articulation_bodies: set[int] = set()
         free_joint_bodies: set[int] = set()
         ball_joint_bodies: set[int] = set()
@@ -1201,8 +1174,7 @@ class SolverUIPC(SolverBase):
             if self._deformable_builder.has_deformable:
                 self._deformable_builder.build(actor_elems[world_index], particle_range, se)
 
-        # Resolve mimic couplings once all worlds' joints are registered;
-        # followers are driven per step via apply_mimic_targets.
+        # Resolve mimic couplings after registering all world joints.
         self._articulation_builder.setup_mimic_constraints()
 
         # Initialize UIPC world and set up state accessors
@@ -1217,8 +1189,7 @@ class SolverUIPC(SolverBase):
         # Device buffers for reading ABD state back from UIPC.
         self._abd_accessor: AffineBodyStateAccessorFeature = self.world.features().find(AffineBodyStateAccessorFeature)  # ty:ignore[invalid-assignment]
         n = self.mapping.num_mapped_bodies
-        # Size by the highest backend index: backend offsets can be
-        # non-contiguous across worlds, exceeding num_mapped_bodies.
+        # Size buffers for the highest backend index.
         buf_count = self.mapping.max_backend_count
         if n > 0:
             self._abd_transform_buf = uipc.adapter.warp.buffer(buf_count, dtype=wp.mat44d, device=model.device)
@@ -1285,16 +1256,13 @@ class SolverUIPC(SolverBase):
 
         self._initialized = True
 
-        # Sync model inertia from UIPC ABD so host-side dynamics (e.g.
-        # eval_mass_matrix) match; skips shapeless articulation proxies.
+        # Sync UIPC ABD inertia into Newton's host-side dynamics.
         if self._auto_sync_inertia:
             shape_backed_bodies = [b for b in self.mapping.body_geo_slots if self.mapping.body_shapes.get(b)]
             if shape_backed_bodies:
                 self.sync_model_inertia_from_uipc(shape_backed_bodies)
 
-    # ------------------------------------------------------------------
     # Solver interface
-    # ------------------------------------------------------------------
 
     @override
     def step(
@@ -1338,17 +1306,13 @@ class SolverUIPC(SolverBase):
         # Phase 1: Cache joint control
         self._articulation_builder.cache_joint_control(control)
 
-        # Snapshot pre-advance joint angles/distances so the post-retrieve
-        # finite difference yields a true (q_{t+dt} - q_t) / dt velocity.
-        # Pure host work, so it overlaps the in-flight control D2H copies.
+        # Snapshot joint angles and distances before advancing UIPC.
         self._articulation_builder.read_joint_state_pre_advance()
 
-        # The mimic pass and the animator (inside world.advance()) read the
-        # CPU control arrays on the host; wait for the D2H copies first.
+        # Sync host control arrays before UIPC advances.
         self._articulation_builder.sync_control_transfers()
 
-        # Drive mimic followers: must run after control caching and the
-        # pre-advance snapshot, before the animator fires in world.advance().
+        # Apply mimic targets before the animator runs.
         self._articulation_builder.apply_mimic_targets()
 
         # Dump surface geometry before physics advance
@@ -1549,12 +1513,10 @@ class SolverUIPC(SolverBase):
             flags: Bit-mask of model-update flags.
         """
         if not self._initialized:
-            # Nothing to push yet -- :meth:`initialize` will read the
-            # model's current state when it runs.
+            # Defer state upload until initialize().
             return
 
-        # Baked into scene objects at build time — one aggregated warning;
-        # the user must recreate the solver.
+        # Build-time flags require a solver rebuild.
         unsupported_mask = (
             ModelFlags.BODY_INERTIAL_PROPERTIES
             | ModelFlags.SHAPE_PROPERTIES
@@ -1571,16 +1533,13 @@ class SolverUIPC(SolverBase):
                 stacklevel=2,
             )
 
-        # Armature + (implicit_pd) ke/kd re-derive; libuipc re-reads both
-        # every step. Friction/limits stay baked, as do gains without
-        # implicit_pd (drive strength is a solver knob there).
+        # Re-derive armature and implicit-PD gains before stepping.
         if flags & ModelFlags.JOINT_DOF_PROPERTIES:
             self._articulation_builder.refresh_armature(self.model)
             if self._implicit_pd:
                 self._articulation_builder.refresh_drive_strengths(self.model)
 
-        # _state_dirty coalesces JOINT_PROPERTIES + BODY_PROPERTIES into a
-        # single state push to UIPC.
+        # Coalesce joint and body property changes.
         self._state_dirty = False
 
         if flags & ModelFlags.JOINT_PROPERTIES:
@@ -1594,9 +1553,7 @@ class SolverUIPC(SolverBase):
             self._sync_state_to_uipc()
         self._state_dirty = False
 
-    # ------------------------------------------------------------------
     # Per-flag notify_model_changed handlers (supported flags only)
-    # ------------------------------------------------------------------
 
     def _notify_joint_properties(self) -> None:
         """Handle :attr:`~newton.ModelFlags.JOINT_PROPERTIES`.
@@ -1676,8 +1633,7 @@ class SolverUIPC(SolverBase):
         if not self._initialized:
             return
         model = self.model
-        # StateFlags is an IntEnum (not IntFlag): combined values are not
-        # members, so keep flags as a plain int for bitwise tests.
+        # Keep StateFlags as an integer for bitwise tests.
         flags = int(StateFlags.ALL) if flags is None else int(flags)
 
         # Host bool view of the world mask, computed once and reused.
@@ -1692,7 +1648,7 @@ class SolverUIPC(SolverBase):
                 return None
             return np.nonzero(mask_host[world_index_host])[0].astype(np.int64)
 
-        # --- rigid bodies ---
+        # rigid bodies
         mapping = self.mapping
         if mapping.num_mapped_bodies > 0 and mapping.body_geo_slots and model.body_world is not None:
             if self._mapped_body_world is None:
@@ -1700,8 +1656,7 @@ class SolverUIPC(SolverBase):
                 self._mapped_body_world = model.body_world.numpy()[mapping.body_indices_wp.numpy()]
             rows = _rows_for_world(self._mapped_body_world)
             if rows is None or rows.size > 0:
-                # FK only when joints are the source and both arrays exist —
-                # else eval_fk clobbers caller's body_q or crashes on None qd.
+                # Run FK only when joints provide the source arrays.
                 do_fk = (
                     bool(flags & (StateFlags.JOINT_Q | StateFlags.JOINT_QD))
                     and not bool(flags & StateFlags.BODY_Q)
@@ -1709,8 +1664,7 @@ class SolverUIPC(SolverBase):
                     and state.joint_qd is not None
                 )
                 if do_fk:
-                    # Restrict FK to masked worlds via a per-articulation mask so
-                    # non-masked worlds' state.body_q is not silently recomputed.
+                    # Restrict FK to the selected worlds.
                     articulation_mask = None
                     if mask_host is not None and model.articulation_world is not None:
                         aw = model.articulation_world.numpy()
@@ -1729,7 +1683,7 @@ class SolverUIPC(SolverBase):
                         check_sanity=True,
                     )
 
-        # --- FEM particles ---
+        # FEM particles
         if (
             self._fem_accessor is not None
             and self._fem_mapped_vertex_count > 0
@@ -1812,8 +1766,7 @@ class SolverUIPC(SolverBase):
         transforms_host = self._abd_transform_buf.warp().numpy()[:n]
         velocities_host = self._abd_velocity_buf.warp().numpy()[:n]
 
-        # Master state geo spans every ABD body (row = UIPC flat q slot);
-        # topology is immutable after scene init, so allocate once.
+        # Allocate one master state geometry for all ABD bodies.
         state_geo = getattr(self, "_master_state_geo", None)
         if state_geo is None:
             state_geo = self._abd_accessor.create_geometry()
@@ -1821,14 +1774,12 @@ class SolverUIPC(SolverBase):
             state_geo.instances().create("velocity", np.zeros((4, 4), dtype=np.float64))
             self._master_state_geo = state_geo
 
-        # Backend offsets (UIPC q index per mapped body) are populated once
-        # and immutable; cache a host copy.
+        # Cache the stable UIPC q offset for each mapped body.
         if getattr(self, "_backend_offsets_host", None) is None:
             self._backend_offsets_host = mapping.backend_offsets_wp.numpy().astype(np.int64, copy=False)
         offsets_np = self._backend_offsets_host
 
-        # Seed the master geo with the current UIPC state so unmapped
-        # bodies round-trip unchanged, then overwrite the rows Newton owns.
+        # Seed master geometry from the current UIPC state.
         self._abd_accessor.copy_to(state_geo)
 
         transform_attr = state_geo.instances().find("transform")
@@ -1887,17 +1838,14 @@ class SolverUIPC(SolverBase):
                 state_geo.vertices().create("velocity", np.zeros((3, 1), dtype=np.float64))
             self._master_fem_state_geo = state_geo
 
-        # Seed the master geo from UIPC so unmapped FEM vertices, if any,
-        # round-trip unchanged, then overwrite Newton-owned vertices.
+        # Seed unmapped FEM vertices from UIPC.
         self._fem_accessor.copy_to(state_geo)
 
         position_attr = state_geo.vertices().find("position")
         assert position_attr is not None
         position_view = _view_attr(position_attr)
 
-        # Buffers/views are backend-vertex ordered (`position_view`
-        # [backend_vertex_count, 3, 1]); `selected_rows` are compact mapped
-        # indices — translate to backend slots via the cached offsets.
+        # Use backend-vertex ordering for FEM buffers and views.
         if getattr(self, "_fem_backend_offsets_host", None) is None:
             self._fem_backend_offsets_host = self._fem_backend_offsets_wp.numpy().astype(np.int64, copy=False)
         rows = slice(None) if selected_rows is None else self._fem_backend_offsets_host[selected_rows]
@@ -2081,9 +2029,7 @@ class SolverUIPC(SolverBase):
         elif hasattr(contacts, "rigid_contact_count"):
             contacts.rigid_contact_count.zero_()
 
-    # ------------------------------------------------------------------
     # GPU batch sync methods
-    # ------------------------------------------------------------------
 
     def _sync_body_state_from_uipc(self, state_out: State) -> None:
         """Read UIPC body state back into Newton state arrays via pre-allocated GPU buffers.
@@ -2100,8 +2046,7 @@ class SolverUIPC(SolverBase):
             assert self._abd_transform_buf is not None
             assert self._abd_velocity_buf is not None
 
-            # Read the full backend range — offsets can be non-contiguous
-            # with multi-world replicate.
+            # Read the full backend range because offsets may be non-contiguous.
             buf_count = self.mapping.max_backend_count
             self._abd_accessor.copy_transform_to(self._abd_transform_buf.buffer_view(), 0, buf_count)
             self._abd_accessor.copy_velocity_to(self._abd_velocity_buf.buffer_view(), 0, buf_count)

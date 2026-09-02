@@ -1,21 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC IK Franka
-#
-# Interactive inverse kinematics on a Franka FR3 arm simulated with the
-# SolverUIPC backend. A viewer gizmo controls the TCP target; an IK solver
-# turns the gizmo pose into joint targets that are fed to the UIPC ABD/IPC
-# stack as POSITION-mode actuator commands.
-#
-# This is essentially ``example_ik_franka`` (gizmo + IK only, no physics)
-# upgraded to drive a real UIPC simulation, mirroring the actuator setup
-# from ``example_uipc_panda``.
-#
-# Command: python -m newton.examples uipc_ik_franka
-#
-###########################################################################
 
 import numpy as np
 import uipc
@@ -40,8 +26,7 @@ def write_joint_targets_kernel(
     joint_targets: wp.array[wp.float32],
     gripper_value: float,
 ):
-    # Single-world helper: copy 7 arm DOFs from the IK result and stamp the
-    # two finger DOFs at a constant gripper opening.
+    # Copy seven arm DOFs and set a fixed gripper opening.
     tid = wp.tid()
     if tid == 0:
         for j in range(7):
@@ -59,9 +44,7 @@ class Example:
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.viewer = viewer
 
-        # ------------------------------------------------------------------
         # Build the Franka FR3 arm.
-        # ------------------------------------------------------------------
         franka = newton.ModelBuilder(up_axis=newton.Axis.Z)
 
         franka.add_urdf(
@@ -114,9 +97,7 @@ class Example:
 
         franka.add_ground_plane()
 
-        # ------------------------------------------------------------------
         # Finalize model and UIPC solver.
-        # ------------------------------------------------------------------
         self.model = franka.finalize()
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
@@ -134,15 +115,11 @@ class Example:
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
 
         # Persistent flat buffer mirroring control.joint_target_q shape.
-        # Slice-assigning into control.joint_target_q via wp.copy on views
-        # is unreliable; we always write the whole buffer instead.
         self.joint_targets_flat = wp.zeros_like(self.control.joint_target_q)
         wp.copy(self.joint_targets_flat, self.model.joint_q)
         wp.copy(self.control.joint_target_q, self.joint_targets_flat)
 
-        # ------------------------------------------------------------------
         # Viewer setup.
-        # ------------------------------------------------------------------
         self.viewer.set_model(self.model)
         self.viewer.set_camera(
             pos=wp.vec3(1.2, 1.2, 0.9),
@@ -153,15 +130,7 @@ class Example:
         # Start paused so the user can verify the rest pose before stepping.
         self.viewer._paused = True
 
-        # ------------------------------------------------------------------
-        # IK setup — single-problem solver targeting ``fr3_hand``, which
-        # matches the convention used by ``example_uipc_panda``. The
-        # wrist chain (``link7 → link8 → fr3_hand``) now behaves correctly
-        # under UIPC because ``articulation_franka._compute_shape_body_anchors``
-        # collapses the shapeless ``fr3_link8`` into its nearest ABD-bearing
-        # ancestor, so the gizmo-driven IK solution is actually tracked by
-        # the physics.
-        # ------------------------------------------------------------------
+        # Configure a single-problem IK solver targeting ``fr3_hand``.
         self.ee_index = next(i for i, lbl in enumerate(self.model.body_label) if lbl.endswith("/fr3_hand"))
         body_q_np = self.state_0.body_q.numpy()
         self.ee_tf = wp.transform(*body_q_np[self.ee_index])
@@ -182,10 +151,7 @@ class Example:
             weight=10.0,
         )
 
-        # Seed the IK warm-start buffer from the model rest pose via numpy
-        # so we are sure the values land in the (1, dofs) buffer — passing a
-        # wp.array straight into wp.array(..., shape=...) does not always
-        # copy the underlying data on every Warp version.
+        # Seed the IK warm start from the model rest pose.
         joint_q_np = self.model.joint_q.numpy().astype(np.float32).reshape(1, self.model.joint_coord_count)
         self.joint_q_ik = wp.array(joint_q_np, dtype=wp.float32)
         self.ik_iters = 24
@@ -200,9 +166,7 @@ class Example:
         # Persistent gripper opening (kept constant — gizmo only drives TCP).
         self.gripper_value = 0.04
 
-    # ----------------------------------------------------------------------
     # Helpers
-    # ----------------------------------------------------------------------
     def _push_targets_from_gizmo(self):
         """Read gizmo-updated transform and push into the IK objectives."""
         pos = wp.transform_get_translation(self.ee_tf)
@@ -216,9 +180,7 @@ class Example:
         self._push_targets_from_gizmo()
         self.ik_solver.step(self.joint_q_ik, self.joint_q_ik, iterations=self.ik_iters)
 
-        # Build the full target buffer in one kernel launch and copy the
-        # whole thing into control — sliced wp.copy on Warp array views is
-        # unreliable, which silently leaves UIPC stuck on the rest pose.
+        # Build and copy the full target buffer in one kernel launch.
         wp.launch(
             write_joint_targets_kernel,
             dim=1,
@@ -226,9 +188,7 @@ class Example:
         )
         wp.copy(self.control.joint_target_q, self.joint_targets_flat)
 
-    # ----------------------------------------------------------------------
     # Template API
-    # ----------------------------------------------------------------------
     def simulate(self):
         for _ in range(self.sim_substeps):
             self.state_0.clear_forces()
@@ -245,12 +205,7 @@ class Example:
     def step(self):
         self.simulate()
         self.sim_time += self.frame_dt
-        # Note: ``fr3_link8`` / ``fr3_hand_tcp`` are shapeless frame links in
-        # the URDF so they have no ABD body in UIPC, but nothing in this
-        # example references their ``body_q`` (no visuals, no IK targets on
-        # them) so the stale values are harmless. ``fr3_hand`` itself is
-        # now correctly simulated thanks to the shapeless-anchor collapse
-        # in ``articulation_franka._compute_shape_body_anchors``.
+        # Shapeless frame links have no UIPC ABD body.
 
     def render(self):
         self.viewer.begin_frame(self.sim_time)

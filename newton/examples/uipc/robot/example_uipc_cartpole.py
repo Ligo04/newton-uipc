@@ -1,15 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Cartpole
-#
-# Shows how to set up a simulation of a rigid-body cartpole articulation
-# from a USD stage using the SolverUIPC backend.
-#
-# Command: python -m newton.examples uipc_cartpole --world-count 4
-#
-###########################################################################
 
 import uipc
 import warp as wp
@@ -96,8 +88,6 @@ class Example:
 
     def test_final(self):
         # After simulation the cart should have moved and poles should be swinging.
-        # Bodies: 0=cart, 1=pole1, 2=pole2
-        # (rail is collapsed into the fixed joint since collapse_fixed_joints=True)
         num_bodies_per_world = self.model.body_count // self.world_count
 
         # Cart should remain near ground level with correct orientation

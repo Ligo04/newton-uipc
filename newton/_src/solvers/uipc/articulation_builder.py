@@ -90,9 +90,7 @@ class ArticulationBuilder:
         self._limit_strength_ratio = limit_strength_ratio
         self._implicit_pd = implicit_pd
 
-        # Cache of mimic-follower global joint indices (lazily built from
-        # ``model.constraint_mimic_joint0``). Followers are kinematic slaves and
-        # always use the constant solver-knob drive strength, never implicit-PD.
+        # Cache mimic-follower joint indices.
         self._mimic_follower_joints: set[int] | None = None
 
         # Per-articulation runtime objects (populated by build_joints)
@@ -105,26 +103,15 @@ class ArticulationBuilder:
         self._subscene_elem: Any | None = None
 
         # Resolved mimic constraints (populated by setup_mimic_constraints).
-        # Each entry: (follower_art, follower_local, leader_art, leader_local,
-        #              coef0, coef1). All indices are local within their
-        #              owning Articulation. See :meth:`apply_mimic_targets`.
         self._mimic_constraints: list[tuple[Articulation, int, Articulation, int, float, float]] = []
 
-        # Live armature-constraint handles (populated by
-        # _build_external_articulation): one entry per created
-        # ExternalArticulationConstraint, ``(geo_slot, dof_indices)`` where
-        # ``dof_indices`` index ``model.joint_armature`` in the constraint's
-        # local joint order. Consumed by :meth:`refresh_armature`.
+        # Store live armature-constraint handles.
         self._armature_slots: list[tuple[SimplicialComplexSlot, list[int]]] = []
-        # Revolute/prismatic dofs skipped at build time (armature <= 0); they
-        # have no constraint edge, so a runtime armature enable needs a
-        # solver rebuild. refresh_armature warns once when it detects this.
+        # Track revolute/prismatic DOFs skipped when armature is non-positive.
         self._armature_skipped_dofs: list[int] = []
         self._warned_baked_armature = False
 
-    # ------------------------------------------------------------------
     # Build
-    # ------------------------------------------------------------------
 
     def build_joints(
         self,
@@ -154,8 +141,7 @@ class ArticulationBuilder:
         if model.joint_count == 0:
             return
 
-        # Validate required model arrays. Keep local bindings so type checkers
-        # can narrow the Optional array attributes after the explicit guard.
+        # Validate required model arrays and keep narrowed local bindings.
         joint_type = model.joint_type
         joint_parent = model.joint_parent
         joint_child = model.joint_child
@@ -205,13 +191,7 @@ class ArticulationBuilder:
         joint_parent_np = joint_parent.numpy()
         joint_child_np = joint_child.numpy()
 
-        # -- Pre-pass: create proxy meshes for shapeless bodies ----------------
-        # Shapeless bodies (e.g. URDF frame-only links ``fr3_link8``) get
-        # dynamic proxies at their world pose — Newton FIXED joints in the
-        # model naturally constrain them to their neighbour.
-        # Body -1 (world frame) is handled per-joint in the batch builders
-        # and must NOT be registered in body_geo_slots (it has no entry in
-        # model.body_q, so the GPU sync kernels would index out of bounds).
+        # Pre-pass: create proxy meshes for shapeless bodies
         for j in range(jstart, jend):
             if JointType(joint_type_np[j]) == JointType.FREE:
                 continue
@@ -219,7 +199,7 @@ class ArticulationBuilder:
                 if b >= 0 and b not in self._mapping.body_geo_slots:
                     self._create_shapeless_proxy(b)
 
-        # -- Classify joints by type and collect per-joint data ----------------
+        # Classify joints by type and collect per-joint data
         revolute_joints: list[dict] = []
         prismatic_joints: list[dict] = []
         fixed_joints: list[dict] = []
@@ -232,8 +212,6 @@ class ArticulationBuilder:
             child_body = int(joint_child_np[j])
 
             # Check that both parent and child bodies have ABD geometry.
-            # Body -1 (world frame) is exempt. FREE joints are exempt
-            # (they represent floating root bodies managed separately).
             joint_name = model.joint_label[j] if j < len(model.joint_label) else "?"
             missing_geo = False
 
@@ -315,7 +293,7 @@ class ArticulationBuilder:
                     stacklevel=2,
                 )
 
-        # -- Batch build each joint type -------------------------------------
+        # Batch build each joint type
         if revolute_joints:
             self._build_revolute_joints_batch(
                 revolute_joints,
@@ -332,8 +310,7 @@ class ArticulationBuilder:
             self._build_ball_joints_batch(ball_joints, model)
         applied_free_joint_geometry_ids: set[int] = set()
         for jdata in free_joints:
-            # Register for body-state readback (FREE joints are not active, so
-            # the finite-difference readback path skips them).
+            # Register FREE joints for body-state readback.
             if jdata["child_body"] >= 0:
                 jdata["art"].register_free_joint(int(jdata["j"]))
 
@@ -351,30 +328,20 @@ class ArticulationBuilder:
             if art.num_active_joints > 0:
                 art.setup_state()
 
-        # Build reflected-inertia (armature) constraints for this world's
-        # articulations. Consumes only ``joint_geo_slots`` / ``_joint_edge_idx``
-        # populated by the batch builders above, so it must run after them.
+        # Build reflected-inertia constraints for this world's articulations.
         for a in art_indices_in_range:
             art = self.articulations[a]
             if art.num_active_joints > 0:
                 self._build_external_articulation(a, art, model)
 
-        # Seed initial ``target_position`` from ``model.joint_q`` so the
-        # first animator callback (which may fire inside ``world.init``
-        # before :meth:`SolverUIPC.step` runs ``cache_control``) sees the
-        # intended rest pose. Without this the prismatic gripper fingers
-        # (or any joint with non-zero initial ``joint_q``) race toward
-        # ``aim = 0`` and, combined with the ``-init_q`` edge offset,
-        # snap to the fully-closed/zero configuration on step 0.
+        # Seed animator targets from model joint positions.
         if model.joint_q is not None:
             joint_q_np = model.joint_q.numpy()
             for art in self.articulations.values():
                 if art.num_active_joints > 0:
                     art.seed_initial_targets(joint_q_np)
 
-    # ------------------------------------------------------------------
     # Joint building helpers
-    # ------------------------------------------------------------------
 
     def _create_proxy(
         self,
@@ -440,8 +407,7 @@ class ArticulationBuilder:
         if is_fixed:
             _view_attr(sc.instances().find(uipc_builtin.is_fixed))[:] = 1
 
-        # Apply contact / subscene so the proxy participates in the same
-        # contact group and subscene as other robot bodies.
+        # Apply the proxy's contact and subscene settings.
         self._contact_elem.apply_to(sc)
         if self._subscene_elem is not None:
             self._subscene_elem.apply_to(sc)
@@ -535,13 +501,7 @@ class ArticulationBuilder:
         joint_axis_np = joint_axis.numpy()
         joint_qd_start_np = joint_qd_start.numpy()
         joint_q_start_np = joint_q_start.numpy()
-        # Revolute-only: UIPC's ``angle`` edge attribute measures rotation
-        # *relative to the build-time body configuration*, so we seed
-        # ``init_angle`` with the build-time Newton angle ``joint_q`` so
-        # that both the readback (``angle``) and the drive target
-        # (``aim_angle``) operate in Newton's absolute joint-q space.
-        # NOTE: the prismatic counterpart (``distance``) is already in
-        # Newton absolute units — do NOT write ``init_distance``.
+        # Seed revolute ``angle`` from Newton's build-time joint position.
         joint_q_np = model.joint_q.numpy() if model.joint_q is not None else None
 
         # Dispatch list for animator callback: (art, newton_joint_idx, edge_idx)
@@ -651,11 +611,7 @@ class ArticulationBuilder:
                 np.array(limit_strengths, dtype=np.float64),
             )
 
-        # Shift UIPC's delta-from-rest ``angle`` into Newton's absolute
-        # joint-q space. Only applied when model.joint_q is populated;
-        # otherwise UIPC's default (init_angle = 0) preserves the raw
-        # delta-from-rest semantics. NOT applied to prismatic — its
-        # ``distance`` is already absolute.
+        # Convert UIPC revolute angles to Newton absolute joint positions.
         if joint_q_np is not None:
             init_angles_np = np.array(init_angles, dtype=np.float64)
             init_angle_view: np.ndarray = _view_attr(jm.edges().find("init_angle"))
@@ -674,8 +630,6 @@ class ArticulationBuilder:
             self._mapping.joint_mesh[j] = jm
 
         # Single animator callback dispatching to all revolute joints.
-        # ``anim_dispatch`` is a local list that is no longer mutated
-        # after this point, so the closure can capture it by reference.
         def _revolute_batch_anim(info: Animation.UpdateInfo) -> None:
             try:
                 geo: SimplicialComplex = info.geo_slots()[0].geometry()
@@ -1336,12 +1290,10 @@ class ArticulationBuilder:
 
         obj: Object = self._scene.objects().create(f"external_articulation_{art_idx}")
         geo_slot = cast(SimplicialComplexSlot, obj.geometries().create(articulation_geo)[0])
-        # Keep the live slot so refresh_armature can rewrite the mass
-        # diagonal at runtime (libuipc re-collects it every step).
+        # Keep the slot so refresh_armature can update armature mass.
         self._armature_slots.append((geo_slot, dof_indices))
 
-        # Inertial extrapolation: predicted increment = previous step's actual
-        # increment (Δθ̃ = previous ``delta_theta``).
+        # Predict the inertial increment from the previous step.
         def _armature_anim(info: Animation.UpdateInfo) -> None:
             try:
                 geo = info.geo_slots()[0].geometry()
@@ -1378,9 +1330,7 @@ class ArticulationBuilder:
                     "parent_body": int(joint_parent[newton_idx]),
                     "child_body": int(joint_child[newton_idx]),
                 }
-                # Route through _drive_params so mimic followers keep their
-                # constant solver-knob strength on a live gain refresh instead
-                # of being recomputed from ke/kd.
+                # Route gain refreshes through _drive_params for mimic followers.
                 strength, damp_blend = self._drive_params(newton_idx, jdata, model)
                 geo = art.joint_geo_slots[newton_idx].geometry()
                 attr = geo.edges().find("driving/strength_ratio")
@@ -1442,9 +1392,7 @@ class ArticulationBuilder:
         mass = float(model.body_mass.numpy()[body_idx])
         return mass if mass > 0.0 else 1.0
 
-    # ------------------------------------------------------------------
     # Per-step interface (called by SolverUIPC.step)
-    # ------------------------------------------------------------------
 
     def cache_joint_control(self, control: Control) -> None:
         """Cache Newton control values for all articulations.
@@ -1467,8 +1415,7 @@ class ArticulationBuilder:
         if model.joint_target_mode is None:
             return
 
-        # Model + control arrays stay on the solver device — the
-        # cache_control kernel runs on ``self._device``.
+        # Keep model and control arrays on the solver device.
         joint_type = model.joint_type.to(self._device)
         joint_target_mode = model.joint_target_mode.to(self._device)
         target_pos = control.joint_target_q.to(self._device) if control.joint_target_q is not None else None
@@ -1543,8 +1490,7 @@ class ArticulationBuilder:
         if state_out.joint_q is None:
             return
 
-        # The scatter kernel writes directly into the solver-device
-        # joint_q / joint_qd buffers — no CPU round trip required.
+        # Scatter directly into solver-device joint buffers.
         joint_q = state_out.joint_q.to(self._device)
         joint_qd = state_out.joint_qd.to(self._device) if state_out.joint_qd is not None else None
 
@@ -1555,8 +1501,7 @@ class ArticulationBuilder:
             if art.num_active_joints > 0 or art.num_free_joints > 0:
                 art.write_readback(joint_q, joint_qd, free_joint_ctx)
 
-        # If .to() returned a fresh allocation (i.e. the original lived
-        # on a different device) propagate the result back.
+        # Copy back when .to() created a new allocation.
         if joint_q is not state_out.joint_q:
             wp.copy(state_out.joint_q, joint_q)
         if joint_qd is not None and state_out.joint_qd is not None and joint_qd is not state_out.joint_qd:
@@ -1610,9 +1555,7 @@ class ArticulationBuilder:
         for art in self.articulations.values():
             art.increment_step()
 
-    # ------------------------------------------------------------------
     # Mimic joint coupling
-    # ------------------------------------------------------------------
 
     def setup_mimic_constraints(self) -> None:
         """Resolve ``model.constraint_mimic_*`` into per-articulation indices.
@@ -1684,11 +1627,7 @@ class ArticulationBuilder:
                 )
             )
 
-        # Topologically order chained mimics: a follower whose leader is itself
-        # another mimic's follower must be applied after that parent, so
-        # :meth:`apply_mimic_targets` reads the leader's freshly re-derived
-        # target instead of its stale value. Followers are unique, so keying by
-        # follower is unambiguous.
+        # Order chained mimic constraints so leaders update before followers.
         follower_to_idx = {(c[0], c[1]): i for i, c in enumerate(self._mimic_constraints)}
 
         def _chain_depth(idx: int, seen: set[int] | None = None) -> int:
@@ -1733,9 +1672,7 @@ class ArticulationBuilder:
             if leader_art.target_position is None or leader_art.joint_position is None:
                 continue
 
-            # Prefer the leader's commanded target (lag-free) when it is
-            # position-driven; fall back to its measured start-of-step
-            # position otherwise.
+            # Prefer the leader's commanded target for position-driven mimics.
             leader_driven = (
                 bool(leader_art.is_constrained.numpy()[leader_local])
                 if leader_art.is_constrained is not None

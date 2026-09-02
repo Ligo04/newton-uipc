@@ -54,7 +54,7 @@ class FreeJointReadbackContext:
     joint_qd_start: wp.array
 
 
-# -- Warp kernels (CPU) ---------------------------------------------------
+# Warp kernels (CPU)
 
 
 @wp.kernel
@@ -89,10 +89,7 @@ def _cache_control_kernel(
     qd_idx = local_qd_start[local]
     mode = joint_target_mode[qd_idx]
 
-    # Position driving (POSITION or POSITION_VELOCITY). Under aim blending
-    # (implicit PD / filtered aim), VELOCITY joints are driven too: an aim
-    # toward q_prev + dt*dq_ref is a velocity servo (blend weight 1 — the
-    # cached position target is never read).
+    # Drive position targets, including velocity aims when blending is enabled.
     if mode == JointTargetMode.POSITION or mode == JointTargetMode.POSITION_VELOCITY:
         out_is_constrained[local] = 1  # ty:ignore[invalid-assignment]
         if has_target_pos != 0:
@@ -102,8 +99,7 @@ def _cache_control_kernel(
     else:
         out_is_constrained[local] = 0  # ty:ignore[invalid-assignment]
 
-    # Aim velocity target — POSITION_VELOCITY forwards it, as does VELOCITY
-    # under aim blending; the blend damps toward rest in plain POSITION mode.
+    # Forward velocity targets for POSITION_VELOCITY and blended VELOCITY modes.
     forward_vel = mode == JointTargetMode.POSITION_VELOCITY
     if blend_aims != 0 and mode == JointTargetMode.VELOCITY:
         forward_vel = True
@@ -112,10 +108,7 @@ def _cache_control_kernel(
     else:
         out_target_vel[local] = wp.float64(0.0)  # ty:ignore[invalid-assignment]
 
-    # Force/torque control (EFFORT mode). A joint is either position-driven
-    # or force-controlled, never both — gravity compensation under implicit
-    # PD is done in the position domain via an aim offset, not a coexisting
-    # feedforward torque.
+    # Apply force or torque only in EFFORT mode.
     if mode == JointTargetMode.EFFORT and has_joint_f != 0:
         out_target_force[local] = wp.float64(joint_f[qd_idx])  # ty:ignore[invalid-assignment]
         out_is_force_constrained[local] = 1  # ty:ignore[invalid-assignment]
@@ -221,9 +214,7 @@ def _free_joint_readback_kernel(
     joint_qd[qd_start + 5] = w_err_c[2]  # ty:ignore[invalid-assignment]
 
 
-# -- Placeholder for empty warp arrays passed to kernels -------------------
-# One placeholder per device, allocated lazily so kernel launches with optional
-# inputs can match the launch device without re-allocating each step.
+# Placeholder for empty warp arrays passed to kernels
 _EMPTY_F32_CACHE: dict[str, wp.array] = {}
 _EMPTY_F64_CACHE: dict[str, wp.array] = {}
 
@@ -291,7 +282,7 @@ class Articulation:
         self._device = device
         """Solver device — kernel launches and mapping arrays live here."""
 
-        # -- Joint metadata (populated by ArticulationBuilder) ----------
+        # Joint metadata (populated by ArticulationBuilder)
         self.active_joint_indices: list[int] = []
         """Newton joint indices for active (driven) joints."""
 
@@ -302,16 +293,14 @@ class Articulation:
         self._joint_q_start: dict[int, int] = {}
         self._joint_qd_start: dict[int, int] = {}
 
-        # -- UIPC geometry references (populated by ArticulationBuilder) --
+        # UIPC geometry references (populated by ArticulationBuilder)
         self.joint_geo_slots: dict[int, SimplicialComplexSlot] = {}
         self.joint_mesh: dict[int, Any] = {}
         # Per-joint edge index and type for post-retrieve readback.
         self._joint_edge_idx: dict[int, int] = {}
         self._joint_is_revolute: dict[int, bool] = {}
 
-        # -- Animator-facing CPU arrays (allocated by setup_state) -----
-        # These are read/written by UIPC animation callbacks via numpy
-        # views, so they MUST stay on CPU.
+        # Animator-facing CPU arrays (allocated by setup_state)
         self.joint_position: wp.array | None = None  # (J,) float64
         self.joint_velocity: wp.array | None = None  # (J,) float64
         self.target_position: wp.array | None = None  # (J,) float64
@@ -320,18 +309,12 @@ class Articulation:
         self.is_constrained: wp.array | None = None  # (J,) int32
         self.is_force_constrained: wp.array | None = None  # (J,) int32
 
-        # -- Mapping arrays for kernel dispatch (allocated by setup_state)
-        # These live on ``self._device`` (typically CUDA).
+        # Mapping arrays for kernel dispatch (allocated by setup_state)
         self._active_joints_wp: wp.array | None = None  # (J,) int32
         self._local_q_start_wp: wp.array | None = None  # (J,) int32
         self._local_qd_start_wp: wp.array | None = None  # (J,) int32
 
-        # -- Device-side mirrors (allocated by setup_state) ------------
-        # ``cache_control`` writes the target/constraint arrays on the
-        # solver device and then ``wp.copy`` them into the CPU arrays
-        # above for the animator. ``write_readback`` does the reverse:
-        # ``wp.copy`` the animator-updated CPU joint state into these
-        # mirrors before launching the scatter kernel.
+        # Device-side mirrors (allocated by setup_state)
         self._joint_position_dev: wp.array | None = None
         self._joint_velocity_dev: wp.array | None = None
         self._target_position_dev: wp.array | None = None
@@ -340,21 +323,14 @@ class Articulation:
         self._is_constrained_dev: wp.array | None = None
         self._is_force_constrained_dev: wp.array | None = None
 
-        # -- Aim blending (populated by ArticulationBuilder) --
-        # local index → damping blend weight over the summed drive
-        # stiffness. The anim callbacks blend the aim toward
-        # theta_prev + dt*dq_ref (implicit-PD damping spring) by this
-        # weight. Empty = off.
+        # Aim blending (populated by ArticulationBuilder)
         self.aim_blend_weights: dict[int, float] = {}
 
-        # -- FREE joint readback (populated by register_free_joint) -----
-        # Tracked separately from active joints; recovered from body state.
+        # FREE joint readback (populated by register_free_joint)
         self._free_joint_indices: list[int] = []
-        self._free_joint_indices_wp: wp.array | None = None  # (F,) int32, on solver device
+        self._free_joint_indices_wp: wp.array | None = None  # Free-joint indices on the solver device.
 
-    # ------------------------------------------------------------------
     # Properties
-    # ------------------------------------------------------------------
 
     @property
     def num_active_joints(self) -> int:
@@ -366,9 +342,7 @@ class Articulation:
         """Number of FREE joints in this articulation (read back from body state)."""
         return len(self._free_joint_indices)
 
-    # ------------------------------------------------------------------
     # Build-time registration
-    # ------------------------------------------------------------------
 
     def register_joint(
         self,
@@ -404,9 +378,7 @@ class Articulation:
         """
         self._free_joint_indices.append(newton_idx)
 
-    # ------------------------------------------------------------------
     # State allocation
-    # ------------------------------------------------------------------
 
     def setup_state(self) -> None:
         """Allocate warp arrays and numpy views.
@@ -417,7 +389,7 @@ class Articulation:
         num_activate_joints = self.num_active_joints
         device = self._device
 
-        # -- Mapping arrays (on solver device) -----------------------------
+        # Mapping arrays (on solver device)
         active_np = np.array(self.active_joint_indices, dtype=np.int32)
         q_starts = np.array(
             [self._joint_q_start[idx] for idx in self.active_joint_indices],
@@ -431,18 +403,17 @@ class Articulation:
         self._local_q_start_wp = wp.array(q_starts, dtype=wp.int32, device=device)
         self._local_qd_start_wp = wp.array(qd_starts, dtype=wp.int32, device=device)
 
-        # -- Animator-facing CPU arrays ------------------------------------
+        # Animator-facing CPU arrays
         self.joint_position = wp.zeros(num_activate_joints, dtype=wp.float64, device="cpu")
         self.joint_velocity = wp.zeros(num_activate_joints, dtype=wp.float64, device="cpu")
-        # Pinned so the cache_control D2H mirror copies are truly async and
-        # legal inside a CUDA graph capture (pageable D2H is neither).
+        # Pin CPU targets for asynchronous cache_control copies.
         self.target_position = wp.zeros(num_activate_joints, dtype=wp.float64, device="cpu", pinned=True)
         self.target_velocity = wp.zeros(num_activate_joints, dtype=wp.float64, device="cpu", pinned=True)
         self.target_force = wp.zeros(num_activate_joints, dtype=wp.float64, device="cpu", pinned=True)
         self.is_constrained = wp.zeros(num_activate_joints, dtype=wp.int32, device="cpu", pinned=True)
         self.is_force_constrained = wp.zeros(num_activate_joints, dtype=wp.int32, device="cpu", pinned=True)
 
-        # -- Device-side mirrors for kernel I/O ----------------------------
+        # Device-side mirrors for kernel I/O
         self._joint_position_dev = wp.zeros(num_activate_joints, dtype=wp.float64, device=device)
         self._joint_velocity_dev = wp.zeros(num_activate_joints, dtype=wp.float64, device=device)
         self._target_position_dev = wp.zeros(num_activate_joints, dtype=wp.float64, device=device)
@@ -468,8 +439,7 @@ class Articulation:
         if self.target_position is None:
             return
         target_np = self.target_position.numpy()
-        # joint_position doubles as q_prev for the implicit-PD aim blend;
-        # seed it too so the world.init-time callback does not damp toward 0.
+        # Use joint_position as q_prev for implicit-PD aim blending.
         assert self.joint_position is not None
         position_np = self.joint_position.numpy()
         for newton_idx in self.active_joint_indices:
@@ -482,17 +452,13 @@ class Articulation:
         """Increment internal step counter (call once per simulation step)."""
         self._step_count += 1
 
-    # ------------------------------------------------------------------
     # Internal helpers
-    # ------------------------------------------------------------------
 
     def _ensure_state(self) -> bool:
         """Return ``True`` if state arrays have been allocated."""
         return self.joint_position is not None
 
-    # ------------------------------------------------------------------
     # Animation callbacks (called by UIPC inside world.advance())
-    # ------------------------------------------------------------------
 
     def revolute_joint_anim(
         self,
@@ -543,9 +509,7 @@ class Articulation:
         if force_only:
             _view_attr(geo.edges().find("external_torque"))[edge_idx] = external_torque
 
-        # Position/velocity driving — ``aim_angle`` is in Newton absolute
-        # space thanks to the ``init_angle`` edge offset, so write the
-        # Newton target directly.
+        # Write position and velocity targets in Newton absolute coordinates.
         if driving:
             aim_angle = self._blend_aim(local, aim_angle)
             _view_attr(geo.edges().find("aim_angle"))[edge_idx] = aim_angle
@@ -619,9 +583,7 @@ class Articulation:
         dq_ref = float(self.target_velocity.numpy()[local])
         return (1.0 - w_d) * aim + w_d * (q_prev + self._dt * dq_ref)
 
-    # ------------------------------------------------------------------
     # Per-step control caching & state readback
-    # ------------------------------------------------------------------
 
     def cache_control(
         self,
@@ -696,10 +658,7 @@ class Articulation:
             ],
             device=device,
         )
-        # Mirror device-side results into the pinned CPU arrays consumed by
-        # the UIPC animation callbacks. wp.copy is enqueued on the device
-        # stream; the caller is responsible for synchronising before the
-        # animator runs (see ArticulationBuilder.sync_control_transfers).
+        # Copy device results into pinned CPU arrays for UIPC callbacks.
         wp.copy(self.target_position, self._target_position_dev)
         wp.copy(self.target_velocity, self._target_velocity_dev)
         wp.copy(self.target_force, self._target_force_dev)
@@ -730,16 +689,13 @@ class Articulation:
         """
         device = self._device
 
-        # -- Active (driven) joints: scatter the animator-cached state. ----
-        # Skipped for FREE-only articulations, which never run setup_state.
+        # Active (driven) joints: scatter the animator-cached state.
         if self.num_active_joints > 0 and self._ensure_state():
             assert self.joint_position is not None
             assert self.joint_velocity is not None
             assert self._joint_position_dev is not None
             assert self._joint_velocity_dev is not None
             # Mirror animator-updated CPU joint state up to the solver device.
-            # The kernel launch below is enqueued on the same device stream so
-            # it observes these copies without an explicit sync.
             wp.copy(self._joint_position_dev, self.joint_position)
             if joint_qd_out is not None:
                 wp.copy(self._joint_velocity_dev, self.joint_velocity)
@@ -759,7 +715,7 @@ class Articulation:
                 device=device,
             )
 
-        # -- FREE joints: recover joint_q[0:7] / joint_qd[0:6] from body. --
+        # FREE joints: recover joint_q[0:7] / joint_qd[0:6] from body.
         if self.num_free_joints > 0 and joint_qd_out is not None and free_joint_ctx is not None:
             if self._free_joint_indices_wp is None:
                 self._free_joint_indices_wp = wp.array(self._free_joint_indices, dtype=wp.int32, device=device)

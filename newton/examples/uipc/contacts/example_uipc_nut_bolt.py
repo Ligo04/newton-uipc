@@ -1,17 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Nut Bolt
-#
-# UIPC version of ``nut_bolt_hydro``. The original example uses Newton's
-# hydroelastic SDF contact pipeline with XPBD/MuJoCo. This version can use
-# either the original IsaacGym nut/bolt meshes or Autodesk affine-body-dynamics
-# screw/nut assets and runs them as closed UIPC affine bodies with IPC contact.
-#
-# Command: python -m newton.examples uipc_nut_bolt
-#
-###########################################################################
 
 import numpy as np
 import trimesh
@@ -38,26 +28,18 @@ ORIGIN_MESH_SOURCE_ALIAS = "origin"
 MESH_SOURCE_CHOICES = (AUTODESK_MESH_SOURCE, ORIGINAL_MESH_SOURCE, ORIGIN_MESH_SOURCE_ALIAS)
 
 # Autodesk ABD meshes are authored in millimeters with the screw axis along Y.
-# Scale the Autodesk screw head radius to the IsaacGym M20 bolt head radius
-# and rotate the screw axis to Newton's Z-up world with the screw head below
-# the threaded shaft. Use a proper right-handed rotation to preserve handedness.
 AUTODESK_MESH_SCALE = 0.00326
 ORIGINAL_MESH_SCALE = 1.0
-# The original IsaacGym visual meshes are tight enough that UIPC surface IPC
-# can wedge at the first thread when d_hat=1e-4. Add a small radial-only
-# clearance for the threaded surfaces while preserving the authored Z pitch.
+# Scale the original meshes to leave room for UIPC surface contact.
 ORIGINAL_BOLT_RADIAL_SCALE = 0.955
 ORIGINAL_NUT_RADIAL_SCALE = 1.0
-# Use the requested UIPC contact thickness for threaded contact. Nut start
-# heights below are measured with this gap to avoid initial mesh intersection.
+# Use the requested UIPC contact thickness and starting pose.
 UIPC_GAP = 0.0001
 ASSEMBLY_SPACING = 0.1
 AUTODESK_BOLT_START_Z = 0.048
 AUTODESK_NUT_START_Z = 0.05676
 ORIGINAL_BOLT_START_Z = 0.0
 # The SDF original starts the nut at 0.041 m, with slight initial mesh overlap.
-# UIPC rejects intersecting surface meshes during sanity checks, so use the
-# lowest tested non-intersecting start heights for UIPC_GAP=1e-4.
 ORIGINAL_NUT_START_Z = 0.04262
 NUT_START_YAW = np.pi / 8.0
 MIN_NUT_DROP_BY_MESH_SOURCE = {
@@ -65,17 +47,11 @@ MIN_NUT_DROP_BY_MESH_SOURCE = {
     ORIGINAL_MESH_SOURCE: 0.004,
 }
 MIN_NUT_ROTATION = 1.0
-# Threaded UIPC contact needs tighter solve tolerances than the defaults;
-# otherwise the first thread contact is accepted as converged after only a tiny
-# displacement, making the nut appear stuck instead of sliding/rotating.
+# Use tight solve tolerances for threaded contact.
 UIPC_SOLVE_TOL = 1.0e-5
-# UIPC Coulomb friction resists the very small gravity-driven tangent component
-# on M20-scale thread flanks. Use frictionless nut/bolt contact so the screw
-# geometry, not an external drive, converts gravity into rotation.
+# Disable friction so the nut can rotate under gravity.
 THREAD_CONTACT_MU = 0.0
-# UIPC ABD stiffness override for the small steel parts. The solver default is
-# 1 GPa; the higher value keeps the thread profile closer to rigid while still
-# avoiding the very stiff 10 GPa setting used by larger brick examples.
+# Override ABD stiffness for the small steel parts.
 NUT_BOLT_ABD_KAPPA = 2.0 * uipc.unit.GPa
 
 SHAPE_CFG = newton.ModelBuilder.ShapeConfig(
@@ -313,8 +289,6 @@ class Example:
 
     def _configure_contact_tabular(self, contact_tabular, _world_index, ground_elem, env_elem, _robo_elem, actor_elem):
         # Bolts are kinematic ``env`` bodies, nuts are free-joint ``actor`` bodies.
-        # Keep ground/nut contact enabled for safety but disable bolt/bolt and
-        # environment self-contact to avoid unnecessary IPC pairs.
         GPa = 1.0e9
         contact_tabular.insert(env_elem, env_elem, 0.5, GPa, False)
         contact_tabular.insert(env_elem, actor_elem, SHAPE_CFG.mu, GPa, True)

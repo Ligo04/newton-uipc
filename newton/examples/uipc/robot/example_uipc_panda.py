@@ -1,29 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Panda
-#
-# Pick-and-place manipulation with a Franka Panda arm using the
-# SolverUIPC backend. Mirrors ``example_robot_panda_hydro`` but replaces
-# the hydroelastic-SDF + MuJoCo stack with UIPC's ABD/IPC contact model.
-#
-# Scene contents:
-#   * Franka FR3 arm (URDF) with finger pads on both fingertips.
-#   * Static table built as a kinematic body (UIPC only treats ground
-#     planes as world-anchored, so any other static collider must be a
-#     kinematic body).
-#   * A square cup assembled from four wall boxes + a base, each as its
-#     own kinematic body so the cavity survives ABD's per-body merging.
-#   * A pen (capsule) or a cube to manipulate.
-#   * Ground plane.
-#
-# IK runs on a single-world model and the resulting joint targets are
-# broadcast to every replicated world.
-#
-# Command: python -m newton.examples uipc_panda --scene pen
-#
-###########################################################################
 
 import copy
 from enum import Enum
@@ -80,11 +58,7 @@ class Example:
 
         builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
 
-        # ------------------------------------------------------------------
         # Franka Panda arm
-        # ------------------------------------------------------------------
-        # Scene layout matches example_robot_panda_hydro so both examples
-        # can be visually compared side-by-side.
         panda_xform = wp.transform((-0.5, -0.5, 0.05), wp.quat_identity())
         builder.add_urdf(
             str(newton.utils.download_asset("franka_emika_panda") / "urdf/fr3_franka_hand.urdf"),
@@ -100,8 +74,7 @@ class Example:
         right_finger_idx = find_body("fr3_rightfinger")
         self.hand_body_idx = find_body("fr3_hand")
 
-        # Add gripper pads (mesh) before convex-hull approximation so they
-        # get merged with each finger into a single closed ABD body.
+        # Add gripper pads before convex-hull approximation.
         pad_asset_path = newton.utils.download_asset("manipulation_objects/pad")
         pad_stage = Usd.Stage.Open(str(pad_asset_path / "model.usda"))
         pad_mesh = newton.usd.get_mesh(
@@ -134,7 +107,6 @@ class Example:
         )
 
         # Convex-hull every panda body so UIPC ABD gets closed manifolds.
-        # Initial joint configuration (matches example_robot_panda_hydro).
         init_q = [
             -3.6802115e-03,
             2.3901723e-02,
@@ -144,17 +116,11 @@ class Example:
             2.3922248e00,
             7.8549200e-01,
         ]
-        # Initial joint state and PD target — matches example_robot_panda_hydro.py
-        # exactly (joint_q, target_pos, armature, effort_limit). The arm armature
-        # in particular must stay at 0.1 / 0.5 or the arm will visibly sag under
-        # gravity and the rest pose will not match the original.
+        # Initialize joints and targets to match the Panda example.
         builder.joint_q[:9] = [*init_q, 0.00, 0.00]
         builder.joint_target_q[:9] = [*init_q, 1.0, 1.0]
 
-        # joint_target_ke/kd are cross-solver metadata only: UIPC's aim
-        # drive strength comes from the solver's drive_strength_ratio
-        # (default 100) and has no damping channel, independent of these
-        # values.
+        # Keep joint gains as cross-solver metadata; UIPC uses aim drive.
         builder.joint_target_ke[:9] = [650.0] * 9
         builder.joint_target_kd[:9] = [100.0] * 9
         builder.joint_effort_limit[:7] = [80.0] * 7
@@ -165,16 +131,7 @@ class Example:
         for d in range(9):
             builder.joint_target_mode[d] = int(JointTargetMode.POSITION)
 
-        # ------------------------------------------------------------------
         # Static table — kinematic body so UIPC sees it.
-        # ------------------------------------------------------------------
-        # Positions otherwise match example_robot_panda_hydro.py so the two
-        # examples can be compared side-by-side. UIPC's sanity check fires
-        # whenever any two geometries (including body ↔ ground halfplane)
-        # have initial distance ≤ 0 — this runs regardless of whether the
-        # contact_tabular entry is disabled — so both the table (bottom vs
-        # ground) and the manipulated object (bottom vs table top) are
-        # lifted by ``uipc_gap`` to guarantee a strictly positive gap.
         uipc_gap = 0.001
         box_size = 0.05
         table_pos = wp.vec3(0.08, -0.5, box_size + uipc_gap)
@@ -190,14 +147,7 @@ class Example:
             hz=box_size,
         )
 
-        # ------------------------------------------------------------------
-        # Cup — load the manipulation_objects/cup mesh on a single kinematic
-        # body. The mesh is open-topped, so we run convex_hull approximation
-        # on this shape only to guarantee the watertight, positive-volume
-        # manifold that UIPC ABD requires (cavity is intentionally lost — we
-        # just need a solid cup-shaped obstacle). Only created when
-        # ``put_in_cup`` is enabled, matching the original panda_hydro.
-        # ------------------------------------------------------------------
+        # Load the cup mesh as a single kinematic body.
         if self.put_in_cup:
             self.cup_pos = [0.13, -0.5, box_size + 0.1]
             cup_xform = wp.transform(wp.vec3(self.cup_pos), wp.quat_identity())
@@ -221,16 +171,11 @@ class Example:
             builder.add_shape_mesh(body=cup_body, mesh=cup_mesh)
             builder.approximate_meshes(method="convex_hull", shape_indices=[cup_body], keep_visual_shapes=True)
 
-        # ------------------------------------------------------------------
         # Object to manipulate
-        # ------------------------------------------------------------------
         if self.scene == SceneType.PEN:
             radius = 0.005
             length = 0.14
-            # Table top sits at ``2*box_size + uipc_gap`` after the table
-            # lift. Place the pen so its bottom has exactly ``uipc_gap`` of
-            # clearance above the table top — i.e. ``2 * uipc_gap`` above
-            # robot_panda_hydro's raw formula.
+            # Place the object above the table with the UIPC gap.
             self.object_pos = [0.0, -0.5, 2 * box_size + radius + 2 * uipc_gap]
             object_xform = wp.transform(
                 wp.vec3(self.object_pos),
@@ -246,10 +191,7 @@ class Example:
             self.place_offset = -0.02
         else:  # CUBE
             size = 0.04
-            # Same rationale as the pen branch — robot's formula has the
-            # cube bottom flush with the table top, so we need ``2 *
-            # uipc_gap`` (one for the table lift, one for the cube/table
-            # minimum-separation margin) to satisfy UIPC's sanity check.
+            # Use the same UIPC gap offset as the pen branch.
             self.object_pos = [0, -0.5, 2 * box_size + 0.5 * size + 2 * uipc_gap]
             object_xform = wp.transform(wp.vec3(self.object_pos), wp.quat_identity())
             self.object_body_local = builder.add_body(xform=object_xform, label="object")
@@ -262,9 +204,7 @@ class Example:
             self.grasping_offset = [0.00, 0.0, 0.10]
             self.place_offset = 0.0
 
-        # ------------------------------------------------------------------
         # Build single-world model for IK before replication.
-        # ------------------------------------------------------------------
         self.model_single = copy.deepcopy(builder).finalize()
         self.bodies_per_world = builder.body_count
 
@@ -311,10 +251,7 @@ class Example:
         self.object_max_z = [self.object_pos[2]] * self.world_count if self.test_mode else None
 
     def _setup_ik(self):
-        # Use fr3_hand as the IK end-effector. The grasping_offset values
-        # are calibrated against the hand frame, so targeting the hand
-        # here is required for the waypoint sequence to actually reach
-        # the cube / pen on the table.
+        # Use ``fr3_hand`` as the IK end-effector.
         self.ee_index = self.hand_body_idx
         print("self.ee_index", self.ee_index)
         body_q_np = self.state.body_q.numpy()
@@ -348,16 +285,12 @@ class Example:
         )
 
         # Pick-and-place + drop-into-cup waypoints.
-        # Tuple layout: (target_pos, duration, gripper_close, rot_hand).
         self.time_in_waypoint = 0.0
         self.current_waypoint = 0
         self.z_rest = 0.5
         grasping_pos = wp.vec3(self.object_pos) + wp.vec3(self.grasping_offset)
         resting_pos = wp.vec3(grasping_pos[0], grasping_pos[1], self.z_rest)
-        # Waypoints match example_robot_panda_hydro.py exactly so the two
-        # examples can be compared side-by-side. When ``put_in_cup`` is
-        # disabled the cup-related waypoints are skipped (base: 4 points;
-        # with cup: +5 → 9 total).
+        # Reuse the Panda reference waypoints.
         grasp_pos = 1.0
         no_grasp_pos = 0.0
         rot_hand = 0.0
@@ -409,8 +342,7 @@ class Example:
         self.ik_solver.step(self.joint_q_ik, self.joint_q_ik, iterations=self.ik_iters)
 
         t_gripper = self.waypoints[wp_idx][2] * (1.0 - t) + self.waypoints[next_idx][2] * t
-        # Match example_robot_panda_hydro.py: open commands 0.06 (saturates at
-        # the finger joint limit ≈0.04m), closed commands 0.0.
+        # Match the reference gripper opening command.
         gripper_value = 0.04 * (1.0 - t_gripper)
         wp.launch(
             broadcast_ik_solution_kernel,
@@ -437,11 +369,7 @@ class Example:
             self.state_0, self.state_1 = self.state_1, self.state_0
 
     def step(self):
-        # IK + waypoint advance happens once per frame (matches
-        # example_robot_panda_hydro). Keeping it out of the substep loop
-        # means ``self.time_in_waypoint`` advances by ``frame_dt`` regardless
-        # of ``sim_substeps``, so raising substeps won't make the waypoint
-        # schedule run faster than intended.
+        # Advance IK and waypoints once per frame.
         self._set_joint_targets()
         self.simulate()
         self.sim_time += self.frame_dt
@@ -459,9 +387,7 @@ class Example:
         self.viewer.end_frame()
 
     def test_final(self):
-        # Mirrors example_robot_panda_hydro.test_final:
-        #   1. Verify the object was actually picked up (max-z lift check).
-        #   2. If put_in_cup, verify it ended up inside the cup XY/Z window.
+        # Reuse the Panda reference final-state checks.
         assert self.object_max_z is not None, "test_final requires --test so ``step`` populates self.object_max_z."
         initial_z = self.object_pos[2]
         min_lift_height = 0.15  # Object should be lifted >= 15 cm.

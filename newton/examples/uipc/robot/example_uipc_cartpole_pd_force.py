@@ -1,29 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Cartpole PD — Force (Effort) Control via ControllerPD
-#
-# Drives the cart (prismatic DOF) with a PD controller implemented as a
-# Newton ``ControllerPD`` composed under ``newton.actuators.Actuator`` with
-# a ``ClampingMaxEffort`` layer for the force limit. The actuator reads
-# ``state.joint_q`` / ``state.joint_qd`` and ``control.joint_target_q`` /
-# ``joint_target_qd``, computes the PD torque, clamps it, and writes it
-# into ``control.joint_f``. The cart DOF is configured as
-# ``JointTargetMode.EFFORT`` so the UIPC solver forwards that force as
-# generalized effort on the joint.
-#
-# Compared to ``example_uipc_cartpole_pd_position`` which uses a solver-
-# native position drive, this variant shows the canonical "external
-# actuator" pipeline:
-#   1. ``builder.add_actuator(ControllerPD, ...)`` registers a PD actuator
-#   2. every step: write the position target into ``control.joint_target_q``
-#   3. every step: ``actuator.step(state, control, ...)`` computes joint_f
-#   4. every step: ``solver.step(...)`` consumes joint_f via EFFORT mode
-#
-# Command: python -m newton.examples uipc_cartpole_pd_force --world-count 1
-#
-###########################################################################
 
 import math
 
@@ -49,8 +27,7 @@ class Example:
         self.world_count = args.world_count
         self.viewer = viewer
 
-        # Target trajectory for the cart — identical to the position-control
-        # variant so the two examples can be visually compared.
+        # Share the target trajectory with the position-control example.
         self.cart_amplitude = 0.8  # [m]
         self.cart_frequency = 0.5  # [Hz]
 
@@ -70,24 +47,16 @@ class Example:
             collapse_fixed_joints=True,
         )
 
-        # DOF layout after collapse_fixed_joints:
-        #   d=0 : prismatic cart slider
-        #   d=1 : revolute pole1
-        #   d=2 : revolute pole2
+        # DOF layout: cart slider, pole1, pole2.
         cartpole.joint_q[-3:] = [0.0, 0.3, 0.0]
 
-        # Cart DOF is EFFORT-mode (fed by the external PD actuator); the
-        # poles stay passive.
+        # Drive the cart in EFFORT mode; leave poles passive.
         cart_dof = len(cartpole.joint_target_mode) - 3
         cartpole.joint_target_mode[cart_dof] = int(JointTargetMode.EFFORT)
         cartpole.joint_target_mode[cart_dof + 1] = int(JointTargetMode.NONE)
         cartpole.joint_target_mode[cart_dof + 2] = int(JointTargetMode.NONE)
 
-        # Register the PD actuator on the cart DOF. The actuator reads
-        # control.joint_target_q / joint_target_qd, the ControllerPD
-        # kernel computes the PD torque, ClampingMaxEffort clamps it to
-        # ±max_force, and the Actuator scatter-adds the result into
-        # control.joint_f.
+        # Register a PD actuator for the cart DOF.
         cartpole.add_actuator(
             ControllerPD,
             index=cart_dof,
@@ -116,9 +85,7 @@ class Example:
         self.control = self.model.control()
         self.contacts = newton.CollisionPipeline(self.model).contacts()
 
-        # Selection view over every replicated cartpole — lets us read/write
-        # per-DOF control/state tensors as (world_count, 1, dof_per_arti)
-        # without hand-rolled strided indexing.
+        # Use one view to read and write all replicated cartpoles.
         self.cartpoles = ArticulationView(self.model, "/cartPole")
         assert self.cartpoles.count == self.world_count, (
             f"expected one /cartPole per world, got {self.cartpoles.count} for {self.world_count} worlds"
@@ -210,10 +177,7 @@ class Example:
         self.viewer.end_frame()
 
     def test_final(self):
-        # After simulation the cart should be tracking the commanded sine
-        # (looser tolerance than the position-driven version since this PD
-        # loop runs at the outer frame rate), and both poles should still be
-        # above the ground.
+        # Verify cart tracking after simulation.
         num_bodies_per_world = self.model.body_count // self.world_count
 
         # Shape: (world_count, 1, dofs_per_arti) → cart slider at dof `cart_dof`.

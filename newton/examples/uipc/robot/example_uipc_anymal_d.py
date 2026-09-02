@@ -1,14 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Anymal D
-#
-# Shows how to simulate Anymal D with multiple worlds using SolverUIPC.
-#
-# Command: python -m newton.examples uipc_anymal_d --world-count 4
-#
-###########################################################################
 
 import uipc
 import warp as wp
@@ -49,8 +42,7 @@ class Example:
         if len(articulation_builder.joint_q) > 6:
             articulation_builder.joint_q[3:7] = [0.0, 0.0, 0.0, 1.0]
 
-        # Drive gains, modes, and armature are indexed by DOF, while joint_type
-        # is indexed by joint — walk both spaces in parallel.
+        # Expand per-DOF settings from each joint's type.
         joint_count = len(articulation_builder.joint_type)
         for j in range(joint_count):
             jtype = articulation_builder.joint_type[j]

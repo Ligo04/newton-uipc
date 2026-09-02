@@ -1,79 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Cartpole PD — Classic Inverted-Pendulum Balance (Force)
-#
-# Textbook cartpole stabilisation problem:
-#
-#     "Given an inverted pendulum on a force-controlled cart, keep the pole
-#      upright (theta ~= 0) while regulating the cart back to the origin."
-#
-# Unlike ``example_uipc_cartpole_pd_force`` (cart *tracks a sinusoid* while
-# the poles hang passively) and ``example_uipc_cartpole_pd_position`` (same
-# tracking task via UIPC's native aim drive), this example implements the
-# classical balancing controller studied in every control-theory course:
-# a 4-state linear feedback on cart position and pole angle.
-#
-# Textbook form:
-#     F_cart = -(K_theta * theta + K_theta_d * theta_dot
-#                + K_x * x       + K_x_d     * x_dot)         # F = -K * state
-#
-# Implementation form (see "Empirical sign note" in ``_apply_feedback``):
-#     f[cart_dof] = k_pole  * theta     + k_poled * theta_dot
-#                 + k_cart  * x         + k_cartd * x_dot
-#
-# The sign difference comes from this particular USD/UIPC import: a positive
-# value in ``joint_f[cart_dof]`` accelerates the cart in the direction that
-# catches a positive-theta lean, so the state-feedback sign flips relative
-# to the textbook convention. This is cross-DOF feedback (the cart force
-# depends on pole state), which the single-DOF ``newton.actuators.ControllerPD``
-# cannot express, so we compute the force in Python and write it directly
-# into ``control.joint_f``. The cart DOF is set to ``JointTargetMode.EFFORT``
-# so the UIPC solver consumes that force as a generalised effort on the
-# prismatic joint.
-#
-# The default ``cartpole.usda`` has a *double* pole (pole1 -> pole2). A
-# single cart actuator with four scalar gains cannot stabilise a double
-# inverted pendulum, so we also inject a stiff joint-lock PD on the pole2
-# DOF that drives the relative angle theta_2 to zero. The articulation
-# then behaves like a single rigid inverted pendulum — the setup used in
-# the textbook analysis.
-#
-# DOF layout after collapse_fixed_joints:
-#   d=0 : prismatic cart slider  (EFFORT — textbook F_cart)
-#   d=1 : revolute  pole1        (NONE   — passive, balanced via the cart)
-#   d=2 : revolute  pole2        (EFFORT — locked to pole1 by stiff PD)
-#
-# Multiple solver backends are supported via ``--solver {uipc,mujoco,
-# featherstone,semi_implicit}``. All four consume ``control.joint_f`` via
-# the EFFORT target mode, so the same balancing controller drives each of
-# them; only the constructor kwargs and contact setup differ.
-#
-# --stable-pd switches the pole2 joint-lock from a hand-rolled scalar PD
-# to ``ControllerStablePD`` (Tan et al. 2011).  Tan's implicit-in-position
-# rewrite
-#
-#     (M + Kd·Δt)·θ̈ = Kp·(0 - θ - θ̇·Δt) + Kd·(0 - θ̇) - C
-#     τ = Kp·(0 - θ - θ̇·Δt) + Kd·(0 - θ̇) - Kd·θ̈·Δt
-#
-# cancels the high-frequency numerical oscillation that plain explicit PD
-# exhibits at the stiff ``k_lock = 400 N·m/rad`` used here.  The cart
-# controller is *not* touched — its state feedback is cross-DOF (F_cart
-# depends on pole1 state) and ControllerStablePD only handles per-DOF PD.
-# For the StablePD actuator we wire:
-#
-#     ctrl_state.mass_matrix = H[pole2, pole2]              # eval_mass_matrix slice
-#     ctrl_state.bias_forces = (C(q,q̇)q̇ + g(q))[pole2]      # eval_inverse_dynamics_passive slice
-#
-# The bias is the exact RNEA inverse-dynamics term (gravity plus Coriolis)
-# projected onto the pole2 DOF.
-#
-# Command: python -m newton.examples uipc_cartpole_pd_balance --world-count 1
-#          python -m newton.examples uipc_cartpole_pd_balance --stable-pd
-#          python -m newton.examples uipc_cartpole_pd_balance --solver mujoco
-#
-###########################################################################
 
 import numpy as np
 import warp as wp
@@ -89,8 +17,6 @@ from newton.selection import ArticulationView
 class Example:
     def __init__(self, viewer, args):
         # The unstable pole mode has time constant tau = sqrt(L/g) ~ 0.32 s.
-        # Render at 60 Hz but step physics at 240 Hz so the controller is
-        # well-oversampled relative to tau.
         self.fps = 60
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 0.0
@@ -102,27 +28,16 @@ class Example:
         self.stable_pd = bool(args.stable_pd)
         self.viewer = viewer
 
-        # ControllerStablePD batches the implicit solve block-diagonally
-        # over worlds via num_worlds; --world-count > 1 is supported.
+        # ControllerStablePD batches the implicit solve by world.
 
-        # --- Cart state-feedback gains (all positive) -------------------------
-        # These are the magnitudes of the four classical LQR gains; see the
-        # "Empirical sign note" in ``_apply_feedback`` for why all four enter
-        # the force expression with a + sign in this particular USD/UIPC
-        # import rather than the textbook - sign.
-        #
-        # Order-of-magnitude check (M+m ~ 1.5 kg, g ~ 9.81, L ~ 1 m):
-        #   k_pole must exceed (M+m)*g*L ~ 14.7 to beat gravity.
-        #   We pick ~20x that for a comfortable stability margin.
+        # Cart state-feedback gains (all positive)
         self.k_pole = 300.0  # [N / rad]
         self.k_poled = 40.0  # [N s / rad]
         self.k_cart = 8.0  # [N / m]
         self.k_cartd = 10.0  # [N s / m]
         self.max_force = 500.0  # [N] symmetric clamp on F_cart
 
-        # --- Pole2 joint-lock gains (turns the double-pole into a single rod) -
-        # Stiff PD driving theta_2 -> 0. Makes the pole2 joint *effectively*
-        # rigid so the system matches the textbook single-pendulum model.
+        # Pole2 joint-lock gains (turns the double-pole into a single rod)
         self.k_lock = 400.0  # [N m / rad]
         self.k_lock_d = 20.0  # [N m s / rad]
         self.max_torque_lock = 200.0  # [N m]
@@ -132,9 +47,7 @@ class Example:
         cartpole.default_joint_cfg.armature = 0.1
         cartpole.default_body_armature = 0.1
 
-        # MuJoCo consumes extra per-joint/per-shape USD attributes. Register
-        # them on the builder before ``add_usd`` so the importer can copy
-        # them across; the other solvers ignore these attributes.
+        # Register MuJoCo-specific USD attributes when needed.
         if self.solver_name == "mujoco":
             newton.solvers.SolverMuJoCo.register_custom_attributes(cartpole)
 
@@ -144,9 +57,7 @@ class Example:
             collapse_fixed_joints=True,
         )
 
-        # Pole1 starts 0.05 rad off vertical — small enough that the linear
-        # state feedback is valid, large enough that the controller has to
-        # act immediately.
+        # Start pole1 near upright for the linear controller.
         cartpole.joint_q[-3:] = [0.0, 0.05, 0.0]
 
         cart_dof = len(cartpole.joint_target_mode) - 3
@@ -154,16 +65,7 @@ class Example:
         cartpole.joint_target_mode[cart_dof + 1] = int(JointTargetMode.NONE)
         cartpole.joint_target_mode[cart_dof + 2] = int(JointTargetMode.EFFORT)
 
-        # Register a ControllerStablePD on pole2 so ``--stable-pd`` can drive
-        # the joint-lock via Tan 2011 instead of the hand-rolled scalar PD
-        # in ``_apply_feedback``.  The composed Actuator scatter-adds into
-        # ``control.joint_f`` (``+=``), so we zero joint_f before writing
-        # the cart force and running the actuator so no residual leaks
-        # across substeps.  Effort clamping is handled by the dedicated
-        # ``ClampingMaxEffort`` layer (the controller kernel itself no
-        # longer clamps).  ``target_pos`` / ``target_vel`` both default to
-        # 0 (``Model.control()`` zero-inits them), which is the pole2
-        # lock's set-point, so no per-step target update is needed.
+        # Register stable-PD on pole2 when requested.
         if self.stable_pd:
             cartpole.add_actuator(
                 ControllerStablePD,
@@ -171,8 +73,7 @@ class Example:
                 kp=self.k_lock,
                 kd=self.k_lock_d,
                 clamping=[(ClampingMaxEffort, {"max_effort": self.max_torque_lock})],
-                # 1 = worlds contributed by *this* builder; ``replicate``
-                # sums it across the merged copies to world_count.
+                # Use one world here; replicate expands it to world_count.
                 num_worlds=1,
             )
 
@@ -189,13 +90,10 @@ class Example:
 
         self.state_1 = self.model.state()
         self.control = self.model.control()
-        # UIPC needs a Contacts object even for collision-free runs; the
-        # maximal-/minimal-coordinate articulation solvers don't.
+        # Create Contacts for UIPC even in collision-free runs.
         self.contacts = newton.CollisionPipeline(self.model).contacts() if self._uses_contacts else None
 
-        # Selection view over every replicated cartpole — read/write
-        # (world_count, 1, dofs_per_arti) tensors through a single handle
-        # instead of stride-mangled flat indices.
+        # Use one view to read and write all replicated cartpoles.
         self.cartpoles = ArticulationView(self.model, "/cartPole")
         assert self.cartpoles.count == self.world_count, (
             f"expected one /cartPole per world, got {self.cartpoles.count} for {self.world_count} worlds"
@@ -206,10 +104,7 @@ class Example:
         self.pole1_dof = 1
         self.pole2_dof = 2
 
-        # ControllerStablePD state + scratch for the per-substep Tan 2011
-        # solve.  The composed ``Actuator.State`` wraps the controller's
-        # ``State`` under ``.controller_state``.  ``eval_mass_matrix`` wants a
-        # reusable output buffer so we don't re-allocate every substep.
+        # Allocate stable-PD state and per-substep scratch.
         self._pole2_actuator: _NewtonActuator | None = None
         self._act_state: _NewtonActuator.State | None = None
         self._H_buf: wp.array | None = None
@@ -230,8 +125,7 @@ class Example:
             )
             self._pole2_actuator = pole2_actuator
             self._act_state = pole2_actuator.state()
-            # Bias-force output buffers (gravity + Coriolis); reused every
-            # substep to read out the pole2 bias term.
+            # Allocate reusable gravity and Coriolis buffers.
             self._id_gravity_force = wp.zeros(self.model.joint_dof_count, dtype=wp.float32, device=self.model.device)
             self._id_coriolis_force = wp.zeros(self.model.joint_dof_count, dtype=wp.float32, device=self.model.device)
 
@@ -268,8 +162,7 @@ class Example:
         if name == "featherstone":
             return newton.solvers.SolverFeatherstone(self.model), False
         if name == "semi_implicit":
-            # joint_attach_ke/kd keep the articulation attachments stiff
-            # enough that the balance controller sees textbook dynamics.
+            # Keep articulation attachments stiff for semi-implicit runs.
             return (
                 newton.solvers.SolverSemiImplicit(
                     self.model,
@@ -309,22 +202,13 @@ class Example:
         thd2 = qd[:, 0, self.pole2_dof]
 
         # Textbook single-pendulum state feedback on the cart.
-        #
-        # Empirical sign note: in this USD/UIPC import the prismatic DOF
-        # is effectively oriented such that a *positive* ``joint_f[cart]``
-        # accelerates the cart in the direction that counteracts a
-        # positive-theta lean of pole1 (pole tip moving -Y). All four
-        # gain coefficients therefore enter with a *positive* sign; the
-        # cart-regulation terms still produce a restoring force because
-        # the sign convention above also flips the cart-position term.
         f_cart = self.k_pole * th1 + self.k_poled * thd1 + self.k_cart * x + self.k_cartd * xd
         np.clip(f_cart, -self.max_force, self.max_force, out=f_cart)
 
         f = np.zeros((self.world_count, 1, self.dofs_per_world), dtype=np.float32)
         f[:, 0, self.cart_dof] = f_cart
         if not self.stable_pd:
-            # Hand-rolled scalar PD locking pole2 to pole1. Same torque law
-            # ControllerStablePD would produce with C=0 under explicit integration.
+            # Lock pole2 to pole1 with a scalar PD torque.
             tau2 = -self.k_lock * th2 - self.k_lock_d * thd2
             np.clip(tau2, -self.max_torque_lock, self.max_torque_lock, out=tau2)
             f[:, 0, self.pole2_dof] = tau2
@@ -332,8 +216,6 @@ class Example:
 
         if self.stable_pd:
             # (pole2, pole2) entry of the per-world inertia, shape (W, 1, 1).
-            # eval_mass_matrix returns the pure J^T M J; add reflected rotor
-            # inertia for the Stable-PD plant model.
             self._H_buf = newton.eval_mass_matrix(self.model, self.state_0, H=self._H_buf)
             newton.add_armature_to_mass_matrix(self.model, self._H_buf)
             p2 = self.pole2_dof
@@ -341,9 +223,6 @@ class Example:
             ctrl_state = self._act_state.controller_state
             ctrl_state.mass_matrix.assign(pole2_m)
             # bias_forces = pole2 component of the RNEA bias g(q) + C(q,q̇)q̇.
-            # The flat gravity/Coriolis buffers reshape to (world_count, dofs);
-            # pick the pole2 column. eval_inverse_dynamics_passive reads
-            # state_0.body_q, kept consistent by the UIPC readback.
             newton.eval_inverse_dynamics_passive(
                 self.model, self.state_0, gravity_force=self._id_gravity_force, coriolis_force=self._id_coriolis_force
             )
@@ -351,10 +230,7 @@ class Example:
             bias_pole2 = bias_flat.reshape(self.world_count, self.dofs_per_world)[:, p2 : p2 + 1]
             ctrl_state.bias_forces.assign(np.ascontiguousarray(bias_pole2, dtype=np.float32))
 
-            # ControllerStablePD.update_state is a no-op (per-step scratch,
-            # no cross-step information), so passing the same State as both
-            # current and next is safe; the composed Actuator just needs a
-            # non-None next_act_state for its stateful-actuator validation.
+            # Stable-PD state is per-step scratch.
             self._pole2_actuator.step(
                 sim_state=self.state_0,
                 sim_control=self.control,
@@ -364,10 +240,7 @@ class Example:
             )
 
     def simulate(self):
-        # The pole's unstable mode is fast (tau ~ 0.32 s); running the
-        # feedback at the outer 60 Hz frame rate lets the closed-loop
-        # system oscillate. We therefore recompute F_cart inside the
-        # substep loop so the controller effectively runs at 240 Hz.
+        # Recompute feedback inside each substep for stability.
         for _ in range(self.sim_substeps):
             self._apply_feedback()
             self.state_0.clear_forces()

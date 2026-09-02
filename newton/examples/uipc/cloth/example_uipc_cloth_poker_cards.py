@@ -1,21 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # UIPC Cloth Poker Cards
-#
-# This simulation demonstrates poker-card cloth patches dropping
-# and stacking on a cube with SolverUIPC. Cards use high bending stiffness
-# to approximate rigid cards while still using UIPC cloth contact.
-#
-# Standard poker card dimensions:
-# - Width: 6.35 cm (2.5 inches) = 0.0635 m
-# - Height: 8.89 cm (3.5 inches) = 0.0889 m
-# - Resolution: 4x6 cells per card
-#
-# Command: uv run -m newton.examples uipc_cloth_poker_cards
-#
-###########################################################################
 
 import numpy as np
 import uipc
@@ -55,7 +41,6 @@ class Example:
         self.cube_height = 0.11
 
         # Card drop parameters in meters
-        # Cards drop onto the cube surface (cube_height + cube_size = top of cube)
         self.drop_height_base = self.cube_height + self.cube_size + 0.05  # m
         self.card_spacing_z = 0.002  # m - vertical spacing between cards for UIPC shell thickness
         self.random_offset_xy = 0.001  # m (0.5 cm) - random XY offset
@@ -64,7 +49,7 @@ class Example:
         builder = newton.ModelBuilder(gravity=(0.0, 0.0, -9.8))  # m/s²
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
 
-        # Add a static cube for cards to stack on
+        # Add a static support cube for the cards.
         body_cube = builder.add_body(
             xform=wp.transform(
                 p=wp.vec3(0.0, 0.0, self.cube_height),
@@ -87,11 +72,9 @@ class Example:
         )
 
         # Add a dynamic sphere to knock off the cards
-        # Sphere starts to the side and moves toward the card pile
         self.sphere_radius = 0.02  # m (2 cm radius)
         self.sphere_start_x = -0.35  # m - start position to the left
         # Position sphere at card pile height (top of cube + some offset)
-        # cube top is at cube_height + cube_size = 0.1 + 0.1 = 0.2m
         self.sphere_height = 0.23  # m - at card pile level
         self.sphere_velocity_x = 0.5  # m/s - velocity toward cards
         self.sphere_current_x = self.sphere_start_x
@@ -120,15 +103,11 @@ class Example:
         rng = np.random.default_rng(42)
 
         # Card mass properties
-        # Real card: ~1.8g = 0.0018 kg
-        # For a 4x6 grid, there are 5x7 = 35 particles
         card_mass_total = 1.8e-3  # kg (1.8 grams)
         num_particles_per_card = (self.dim_x + 1) * (self.dim_y + 1)  # 5 * 7 = 35
         card_mass_per_particle = card_mass_total / num_particles_per_card
 
         # High bending stiffness for stiff cards
-        # tri_ke/tri_ka: in-plane stretch stiffness
-        # edge_ke: bending stiffness (key for card rigidity)
         tri_ke = 1.0e4  # High stretch stiffness
         tri_ka = 1.0e4  # High shear stiffness
         tri_kd = 1.0e-4  # Small damping
@@ -247,7 +226,6 @@ class Example:
 
     def capture(self):
         # Disable CUDA graph capture because UIPC aim-target animation
-        # updates a host-side geometry attribute each frame.
         self.graph = None
 
     def _write_sphere_aim_transform(self):

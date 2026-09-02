@@ -28,17 +28,13 @@ FORCE_CHANNELS: tuple[str, ...] = ("N", "F")
 
 _PRIM_SPLIT: dict[str, int] = {"PH": 1, "PP": 1, "PE": 1, "PT": 1, "EE": 2}
 
-# Gradient doublets are laid out contiguously per contact stencil with fixed
-# arity (see libuipc SimplexNormalContact::do_assemble: PT_count*4, EE_count*4,
-# PE_count*3, PP_count*2; the half-plane exporter emits one row per vertex).
+# Gradient doublets use fixed arity per contact stencil.
 _PRIM_ARITY: dict[str, int] = {"PH": 1, "PP": 2, "PE": 3, "PT": 4, "EE": 4}
 
 _VERTEX_UNMAPPED = -1
 
 
-# ---------------------------------------------------------------------------
 # Shared gradient reading
-# ---------------------------------------------------------------------------
 
 
 def _read_gradient(csf: ContactSystemFeature, key: str) -> tuple[np.ndarray, np.ndarray] | None:
@@ -70,9 +66,7 @@ def _read_gradient(csf: ContactSystemFeature, key: str) -> tuple[np.ndarray, np.
     return i_view, grad_flat
 
 
-# ---------------------------------------------------------------------------
 # CPU diagnostic path (ContactForceReadback)
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -181,7 +175,6 @@ def retrieve_contact_forces(
                         quat = q[3:]
                         com_world = pos + _quat_rotate(quat, com_local)
                         # Approximate: use body COM for torque arm
-                        # (vertex world position not available here without mesh readback)
                         torque = np.cross(-com_world + pos, force)
 
                     side = "A" if v_local < split_a else "B"
@@ -237,9 +230,7 @@ def _build_vertex_to_body_np(mapping: UIpcMappingInfo) -> np.ndarray | None:
     return vtb
 
 
-# ---------------------------------------------------------------------------
 # GPU path: vertex map building
-# ---------------------------------------------------------------------------
 
 
 def build_gpu_vertex_maps(mapping: UIpcMappingInfo, body_count: int, device: wp.Device) -> None:
@@ -266,9 +257,7 @@ def build_gpu_vertex_maps(mapping: UIpcMappingInfo, body_count: int, device: wp.
         instance_id = mapping.body_instance_ids.get(body_idx, 0)
         start = base_offset + instance_id * n_verts
         end = start + n_verts
-        # ABD geometry positions are authored in body-local frame (instance
-        # transforms carry the world pose), so they double as rigid_contact_point data.
-        # pyuipc returns Eigen Vector3 attributes as (N, 3, 1)
+        # Transform ABD vertices from body-local to world coordinates.
         pos_np = np.ascontiguousarray(_view_attr(geo.positions()), dtype=np.float32).reshape(-1, 3)
         body_vertex_ranges.append((body_idx, start, end, pos_np))
         max_gv = max(max_gv, end)
@@ -316,9 +305,7 @@ def build_gpu_vertex_maps(mapping: UIpcMappingInfo, body_count: int, device: wp.
     mapping.body_to_first_shape_wp = wp.from_numpy(b2s_np, dtype=wp.int32, device=device)
 
 
-# ---------------------------------------------------------------------------
 # GPU path: warp kernels
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -423,9 +410,7 @@ def _populate_contact_pairs_kernel(
     contact_normal[slot] = normal  # ty:ignore[invalid-assignment]
     contact_force[slot] = wp.spatial_vector(total_f[0], total_f[1], total_f[2], 0.0, 0.0, 0.0)  # ty:ignore[invalid-assignment]
 
-    # Contact points feed SensorContact.position_matrix via contact_surface_point():
-    # ABD sides store body-frame vertex positions; FEM/ground sides map to a shape
-    # whose body is -1 (identity transform), so a world-frame point is correct there.
+    # Map contact points into SensorContact.position_matrix.
     point_a = vertex_local_pos[gv_a]
     contact_point0[slot] = point_a  # ty:ignore[invalid-assignment]
     if body_b >= 0:
@@ -436,9 +421,7 @@ def _populate_contact_pairs_kernel(
         contact_point1[slot] = wp.transform_point(body_q[body_a], point_a)  # ty:ignore[invalid-assignment]
 
 
-# ---------------------------------------------------------------------------
 # GPU path: data preparation (vectorized numpy, no per-element Python loop)
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -511,8 +494,7 @@ def prepare_contact_gpu_data(
             if vertex_to_body is not None and vertex_to_body.shape[0] > 0:
                 mgv = vertex_to_body.shape[0]
                 body_of = np.where((sv >= 0) & (sv < mgv), vertex_to_body[np.clip(sv, 0, mgv - 1)], -2)
-                # Anchor the A side on the first rigid vertex so ABD-vs-FEM stencils
-                # export from the rigid side (FEM-anchored rows are unmapped downstream).
+                # Anchor side A on the first rigid vertex for ABD/FEM stencils.
                 has_abd = body_of >= 0
                 anchor = np.where(has_abd.any(axis=1), has_abd.argmax(axis=1), 0)
                 a_side = body_of == body_of[rows, anchor][:, None]

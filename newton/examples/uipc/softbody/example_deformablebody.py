@@ -1,15 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Deformable Body
-#
-# A deformable rubber duck falls onto a table under gravity using
-# SolverUIPC and Stable Neo-Hookean tetrahedra.
-#
-# Command: python -m newton.examples deformablebody
-#
-###########################################################################
 
 from __future__ import annotations
 

@@ -1,16 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Soft Hanging
-#
-# Hanging deformable grids simulated with SolverUIPC and Stable Neo-Hookean
-# deformable bodies. The grids use different Lamé parameters so the effect of
-# material stiffness is visible under gravity.
-#
-# Command: python -m newton.examples uipc_soft_hanging
-#
-###########################################################################
 
 from __future__ import annotations
 

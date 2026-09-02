@@ -1,21 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Cloth Franka
-#
-# Franka-guided cloth manipulation with SolverUIPC.  Cloth shell thickness
-# is taken directly from ``particle_radius`` so UIPC thickness and Newton
-# particle contact radius stay aligned.  Cloth defaults to
-# StrainLimitingBaraffWitkinShell + DiscreteShellBending; pass
-# ``--cloth-model neo_hookean`` to set every ``model.uipc.cloth_model`` entry to
-# NeoHookeanShell.  The Franka follows
-# the same end-effector keyframe sequence as ``cloth_franka`` and manipulates
-# the cloth through UIPC contact.
-#
-# Command: python -m newton.examples uipc_cloth_franka
-#
-###########################################################################
 
 from __future__ import annotations
 
@@ -130,17 +116,13 @@ class Example:
         for d in range(9):
             builder.joint_target_q[d] = builder.joint_q[d]
             builder.joint_target_mode[d] = int(JointTargetMode.POSITION)
-            # joint_target_ke/kd are inert for UIPC's default aim drive (its
-            # strength is the solver's drive_strength_ratio, default 100);
-            # kept as physical Franka-class gains for cross-solver
-            # portability and for SolverUIPC(implicit_pd=True).
+            # Keep physical joint gains for cross-solver compatibility.
             builder.joint_target_ke[d] = 650.0
             builder.joint_target_kd[d] = 100.0
 
         self.robot_key_poses = np.array(
             [
                 # translation_duration, gripper transform (position [m], quaternion), gripper activation
-                # descend to working height before approaching the cloth
                 [4, 0.31, -0.60, 0.40, 0.8536, -0.3536, 0.3536, -0.1464, clamp_open_activation_val],
                 # top left
                 [2, 0.31, -0.60, 0.20, 0.8536, -0.3536, 0.3536, -0.1464, clamp_open_activation_val],

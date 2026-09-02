@@ -1,15 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC H1
-#
-# Shows how to set up a simulation of a H1 articulation
-# from a USD file using the SolverUIPC backend.
-#
-# Command: python -m newton.examples uipc_h1 --world-count 4
-#
-###########################################################################
 
 import uipc
 import warp as wp
@@ -48,7 +40,6 @@ class Example:
         h1.approximate_meshes("bounding_box")
 
         # ``joint_type`` is per-joint while drive/armature arrays are per-DOF.
-        # Iterate joints and expand each joint's DOF range via ``joint_qd_start``.
         for j in range(h1.joint_count):
             dof_start = h1.joint_qd_start[j]
             dof_end = h1.joint_qd_start[j + 1] if j + 1 < h1.joint_count else h1.joint_dof_count

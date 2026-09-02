@@ -1,14 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Hello World
-#
-# Simplest SolverUIPC demo: a single cube falls from height under gravity.
-#
-# Command: python -m newton.examples uipc_hello_world
-#
-###########################################################################
 
 import warp as wp
 

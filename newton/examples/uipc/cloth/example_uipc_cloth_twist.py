@@ -1,18 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Cloth Twist
-#
-# Twist a square cloth with SolverUIPC.  The cloth uses the UIPC default
-# StrainLimitingBaraffWitkinShell + DiscreteShellBending material; pass
-# ``--cloth-model neo_hookean`` to set every ``model.uipc.cloth_model`` entry to
-# NeoHookeanShell instead.  Edge
-# position control is applied through UIPC SoftPositionConstraint targets.
-#
-# Command: python -m newton.examples uipc_cloth_twist
-#
-###########################################################################
 
 from __future__ import annotations
 

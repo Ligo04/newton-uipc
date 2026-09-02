@@ -1,27 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Revolute Multi-Turn
-#
-# Probes the aim-driven hinge energy E = 1/2 * kappa * (theta_a - aim)^2 of
-# a single revolute joint when the target angle leaves (-pi, pi].  The
-# measured angle theta_a inside UIPC comes from atan2 and is inherently
-# wrapped to (-pi, pi], while ``control.joint_target_q`` is an unbounded
-# absolute angle coming from the upper layer (Newton wrapper / IsaacLab).
-# Without unwrapping, the energy jumps by O(2*pi) at the wrap point, line
-# search never accepts the crossing, and the joint pins just before 180
-# degrees.  The ``angle`` readback shares the same wrap.
-#
-# The rotor spins about the world Z axis so gravity exerts no torque about
-# the joint and tracking error isolates the drive itself.  The commanded
-# target ramps at constant speed through several full turns; the example
-# unwraps the (possibly wrapped) readback by nearest continuation purely
-# for measurement and asserts the joint keeps tracking past +/-pi.
-#
-# Command: python -m newton.examples uipc_revolute_multi_turn
-#
-###########################################################################
 
 import math
 
@@ -43,13 +23,10 @@ class Example:
 
         self.viewer = viewer
 
-        # Constant-speed ramp: half a turn per second, so the target exits
-        # (-pi, pi] after two seconds and completes several turns per run.
+        # Ramp the target at a constant half-turn-per-second speed.
         self.target_speed = math.pi  # [rad/s]
 
-        # joint_target_ke/kd are cross-solver metadata only: UIPC's aim
-        # drive strength comes from the solver's drive_strength_ratio
-        # (default 100) and has no damping channel, independent of kp/kd.
+        # Keep joint gains as cross-solver metadata; UIPC uses aim strength.
         self.kp = 1.0e6
         self.kd = 200.0
 
@@ -162,9 +139,7 @@ class Example:
         self.viewer.end_frame()
 
     def test_post_step(self):
-        # Allow a spin-up transient, then require continuous tracking. A
-        # wrapped hinge energy pins the joint just before pi, so the error
-        # grows without bound and trips this immediately after t ~ 2 s.
+        # Allow spin-up, then require continuous tracking.
         if self.sim_time > 1.0:
             error = abs(self.unwrapped_angle - self.target_angle)
             assert error < 0.5, (
@@ -173,8 +148,7 @@ class Example:
             )
 
     def test_final(self):
-        # The joint must have genuinely crossed the atan2 wrap point --
-        # a run too short to leave (-pi, pi] would not probe anything.
+        # Require the joint to cross the atan2 wrap point.
         assert self.target_angle > math.pi + 1.0, (
             f"run too short to cross the wrap point: final target={self.target_angle:.3f}"
         )

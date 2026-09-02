@@ -1,17 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Two Brick Stack
-#
-# Builds a minimal scene with two LEGO bricks already stacked before
-# SolverUIPC initializes. This isolates UIPC's rigid-rigid initialization
-# and sanity-check path for interlocking brick geometry without a robot
-# manipulation sequence.
-#
-# Command: python -m newton.examples uipc_two_brick_stack
-#
-###########################################################################
 
 
 import numpy as np
@@ -33,10 +23,7 @@ from newton.examples.uipc.contacts.example_uipc_brick_stacking import (
 UIPC_GAP = 0.0001
 DEFAULT_NUM_FRAMES = 60
 WORKSPACE_ROOT = "/tmp/newton_uipc/two_brick_stack"
-# Tighten the underside tubes to the top studs for the two-brick
-# initialization scene. The shared robot stacking example keeps looser tubes
-# for manipulation robustness, while this fixture needs real interlock
-# geometry at the 0.1 mm UIPC barrier clearance.
+# Size underside tubes to interlock the two bricks.
 INTERLOCK_TUBE_OUTER_RADIUS = float(np.hypot(0.5 * PITCH, 0.5 * PITCH) - STUD_RADIUS - UIPC_GAP)
 
 

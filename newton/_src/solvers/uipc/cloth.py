@@ -274,9 +274,7 @@ class ClothBuilder:
         if fixed_local_indices.size > 0:
             self._mark_fixed_vertices(sc, fixed_local_indices)
 
-        # Add dormant soft-position attributes.  Vertices remain unconstrained
-        # until SolverUIPC.set_cloth_soft_position_constraints() toggles
-        # ``is_constrained`` and writes ``aim_position``.
+        # Add dormant soft-position attributes for later activation.
         if self._enable_soft_position_constraint:
             spc = SoftPositionConstraint()
             spc.apply_to(sc, self._soft_position_strength_ratio)
@@ -381,8 +379,7 @@ class ClothBuilder:
             if total_mass > 0 and selected_tri_ids.size > 0 and model.tri_areas is not None:
                 total_area = float(np.sum(model.tri_areas.numpy()[selected_tri_ids]))
                 if total_area > 0:
-                    # Surface density = total_mass / total_area
-                    # Volume density = surface_density / thickness
+                    # Compute surface density from mass and area.
                     return total_mass / total_area / thickness
         return 100.0  # Default: 100 kg/m^3
 

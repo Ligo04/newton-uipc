@@ -1,21 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Cloth Franka Stable-PD Force
-#
-# Stable-PD force-control version of the UIPC cloth Franka example.  Cloth shell thickness
-# is taken directly from ``particle_radius`` so UIPC thickness and Newton
-# particle contact radius stay aligned.  Cloth defaults to
-# StrainLimitingBaraffWitkinShell + DiscreteShellBending; pass
-# ``--cloth-model neo_hookean`` to set every ``model.uipc.cloth_model`` entry to
-# NeoHookeanShell.  The Franka follows
-# the same end-effector keyframe sequence as ``cloth_franka`` and manipulates
-# the cloth through UIPC contact.
-#
-# Command: python -m newton.examples uipc_cloth_franka_stable_pd_force
-#
-###########################################################################
 
 from __future__ import annotations
 
@@ -72,13 +58,7 @@ class Example:
         self.robot_contact_mu = 1.5
         self.gripper_activation_scale = 0.04
 
-        # Stable-PD force-control gains for the 7 arm joints plus two
-        # Franka finger sliders.  UIPC consumes these through
-        # ``control.joint_f`` because every robot DOF is set to EFFORT mode.
-        # Gains tuned below UIPC-ABD stability limit (see UR10 force example
-        # notes on implicit-solve chatter at high kp). Proximal joints carry
-        # more inertia so keep higher kp; distal wrist DOFs are heavily
-        # reduced to stop the implicit-solve oscillation at ±effort limits.
+        # Define stable-PD gains for the arm and gripper joints.
         self.stable_pd_kp = np.array([350.0, 350.0, 300.0, 250.0, 150.0, 120.0, 70.0, 700.0, 700.0], dtype=np.float32)
         self.stable_pd_kd = np.array([42.0, 42.0, 36.0, 30.0, 18.0, 14.0, 8.0, 84.0, 84.0], dtype=np.float32)
         self.stable_pd_max_effort = np.array(
@@ -142,8 +122,7 @@ class Example:
         if self._act_state is None or self._act_state.controller_state is None:
             raise ValueError("ControllerStablePD actuator state was not initialized")
         self._H_buf: wp.array | None = None
-        # Bias-force output buffers (gravity + Coriolis), sized for the
-        # model and reused every control step.
+        # Allocate reusable gravity and Coriolis buffers.
         self._id_gravity_force = wp.zeros(self.model.joint_dof_count, dtype=wp.float32, device=self.model.device)
         self._id_coriolis_force = wp.zeros(self.model.joint_dof_count, dtype=wp.float32, device=self.model.device)
         self.home_q = self.robot.get_attribute("joint_q", self.state_0).numpy()[0, 0].copy()
@@ -200,7 +179,6 @@ class Example:
         self.robot_key_poses = np.array(
             [
                 # translation_duration, gripper transform (position [m], quaternion), gripper activation
-                # descend to working height before approaching the cloth
                 [4, 0.31, -0.60, 0.40, 0.8536, -0.3536, 0.3536, -0.1464, clamp_open_activation_val],
                 # top left
                 [2, 0.31, -0.60, 0.20, 0.8536, -0.3536, 0.3536, -0.1464, clamp_open_activation_val],
@@ -418,12 +396,7 @@ class Example:
             raise ValueError("eval_mass_matrix unexpectedly returned None for the Franka articulation")
         ctrl_state = self._act_state.controller_state
         ctrl_state.mass_matrix.assign(self._H_buf)
-        # Tan 2011 stable-PD needs gravity on BOTH sides of the implicit solve:
-        #   1. bias_forces = C(q,q̇)·q̇ + g(q) at q̈ = 0; without it the -kd·q̈·dt
-        #      damping term is wrong and the wrist DOFs explode. eval_inverse_dynamics_passive
-        #      returns gravity and Coriolis as separate flat buffers, summed below.
-        #   2. feedforward joint_act = tau_g so the static effort holds pose at q̈→0.
-        # (eval_inverse_dynamics_passive reads state_0.body_q, kept consistent by UIPC readback.)
+        # Include gravity on both sides of the stable-PD solve.
         newton.eval_inverse_dynamics_passive(
             self.model, self.state_0, gravity_force=self._id_gravity_force, coriolis_force=self._id_coriolis_force
         )

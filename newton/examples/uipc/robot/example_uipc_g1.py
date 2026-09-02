@@ -1,15 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC G1
-#
-# Shows how to set up a simulation of a G1 robot articulation
-# from a USD stage using the SolverUIPC backend.
-#
-# Command: python -m newton.examples uipc_g1 --world-count 4
-#
-###########################################################################
 
 import uipc
 import warp as wp
@@ -48,10 +40,7 @@ class Example:
             skip_mesh_approximation=True,
         )
 
-        # Skip the 6-DOF free base joint (joint 0); configure every DOF of the
-        # remaining articulation joints. ``joint_type`` is per-joint while the
-        # drive/armature arrays are per-DOF, so we iterate joints and expand
-        # each joint's DOF range via ``joint_qd_start``.
+        # Configure every DOF after the free base joint.
         for j in range(1, g1.joint_count):
             dof_start = g1.joint_qd_start[j]
             dof_end = g1.joint_qd_start[j + 1] if j + 1 < g1.joint_count else g1.joint_dof_count

@@ -1,20 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-###########################################################################
 # Example UIPC Sensor Contact Scene
-#
-# UIPC version of the sensors/example_sensor_contact example.
-# Shows how to use the SensorContact class with the UIPC solver to evaluate
-# contact forces, including per-counterpart breakdowns.
-#
-# The flap has a contact sensor registering the total contact force of
-# the objects on top. The plates' sensors register per-counterpart forces
-# for the cube and the ball to detect which object touched which plate.
-#
-# Command: python -m newton.examples uipc_sensor_contact_scene
-#
-###########################################################################
 
 import numpy as np
 import warp as wp
