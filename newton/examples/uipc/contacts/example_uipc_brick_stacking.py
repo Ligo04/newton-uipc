@@ -5,6 +5,7 @@
 
 import argparse
 import enum
+from typing import TypeVar, no_type_check
 
 import numpy as np
 import uipc
@@ -47,6 +48,15 @@ IMPLICIT_PD_KE_SCALE = 20.0
 GRIPPER_OPEN = 0.5 * (2 * PITCH * BRICK_SCALE + 0.004)
 GRIPPER_RELEASE = 0.5 * (2 * PITCH * BRICK_SCALE * 2.0)
 GRIPPER_CLOSED: int | float = 0.5 * (2 * PITCH * BRICK_SCALE - 0.003)
+
+_T = TypeVar("_T")
+
+
+def _require_initialized(value: _T | None, name: str) -> _T:
+    """Return an initialized Newton array or raise a clear construction error."""
+    if value is None:
+        raise RuntimeError(f"{name} is not initialized")
+    return value
 
 
 def _cylinder_mesh(radius, height, segments, cx=0.0, cy=0.0, cz=0.0, bottom_cap=True):
@@ -196,11 +206,12 @@ class TaskType(enum.IntEnum):
     HOME = 7
 
 
-def quat_to_vec4(q: wp.quat) -> wp.vec4:
+def quat_to_vec4(q: np.ndarray) -> wp.vec4:
     return wp.vec4(q[0], q[1], q[2], q[3])
 
 
 @wp.kernel(enable_backward=False)
+@no_type_check
 def apply_gravity_comp_offset_kernel(
     gravity_force: wp.array[float],
     coriolis_force: wp.array[float],
@@ -221,6 +232,7 @@ def apply_gravity_comp_offset_kernel(
 
 
 @wp.kernel(enable_backward=False)
+@no_type_check
 def set_target_pose_kernel(
     task_schedule: wp.array[wp.int32],
     task_time_limits: wp.array[float],
@@ -333,6 +345,7 @@ def set_target_pose_kernel(
 
 
 @wp.kernel(enable_backward=False)
+@no_type_check
 def advance_task_kernel(
     task_time_limits: wp.array[float],
     ee_pos_target: wp.array[wp.vec3],
@@ -441,7 +454,8 @@ class Example:
         # Compensate gravity in the implicit-PD aim target.
         self._id_gravity_force = wp.zeros(self.model.joint_dof_count, dtype=wp.float32, device=self.model.device)
         self._id_coriolis_force = wp.zeros(self.model.joint_dof_count, dtype=wp.float32, device=self.model.device)
-        ke = self.model.joint_target_ke.numpy()[:9]
+        joint_target_ke = _require_initialized(self.model.joint_target_ke, "model.joint_target_ke")
+        ke = joint_target_ke.numpy()[:9]
         self._gravity_comp_inv_ke = wp.array(
             np.where(ke > 0.0, 1.0 / np.where(ke > 0.0, ke, 1.0), 0.0).astype(np.float32),
             dtype=float,
@@ -459,9 +473,12 @@ class Example:
         self.solver.set_contact(enable=self.enable_contact, d_hat=self.uipc_gap)
         self.solver.configure_contact_tabular(self._configure_contact_tabular)
 
-        newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
+        joint_q = _require_initialized(self.model.joint_q, "model.joint_q")
+        joint_qd = _require_initialized(self.model.joint_qd, "model.joint_qd")
+        control_joint_target_q = _require_initialized(self.control.joint_target_q, "control.joint_target_q")
+        newton.eval_fk(self.model, joint_q, joint_qd, self.state_0)  # ty: ignore[invalid-argument-type]
         self.solver.initialize(self.state_0)
-        wp.copy(self.control.joint_target_q[:9], self.model.joint_q[:9])
+        wp.copy(control_joint_target_q[:9], joint_q[:9])
 
         self._setup_ik()
         self._setup_tasks()
@@ -678,8 +695,11 @@ class Example:
 
     def _get_home_pos(self, model: newton.Model) -> wp.vec3:
         state_tmp = model.state()
-        newton.eval_fk(model, model.joint_q, model.joint_qd, state_tmp)
-        return wp.vec3(*state_tmp.body_q.numpy()[self.ee_index][:3])
+        joint_q = _require_initialized(model.joint_q, "model.joint_q")
+        joint_qd = _require_initialized(model.joint_qd, "model.joint_qd")
+        body_q = _require_initialized(state_tmp.body_q, "state.body_q")
+        newton.eval_fk(model, joint_q, joint_qd, state_tmp)  # ty: ignore[invalid-argument-type]
+        return wp.vec3(*body_q.numpy()[self.ee_index][:3])
 
     def _solve_approach_ik(self) -> np.ndarray:
         """Solve IK for the approach pose above the red brick."""
@@ -713,6 +733,8 @@ class Example:
         seed = np.zeros(ik_dofs, dtype=np.float32)
         seed[:7] = [0.0, 0.5, 0.0, -1.5, 0.0, 2.0, 0.78]
         joint_q = wp.array(seed.reshape(1, -1), dtype=wp.float32)
+        joint_limit_lower = _require_initialized(self.model_ik.joint_limit_lower, "model_ik.joint_limit_lower")
+        joint_limit_upper = _require_initialized(self.model_ik.joint_limit_upper, "model_ik.joint_limit_upper")
 
         solver = ik.IKSolver(
             model=self.model_ik,
@@ -729,8 +751,8 @@ class Example:
                     target_rotations=wp.array([quat_to_vec4(target_quat)], dtype=wp.vec4),
                 ),
                 ik.IKObjectiveJointLimit(
-                    joint_limit_lower=self.model_ik.joint_limit_lower,
-                    joint_limit_upper=self.model_ik.joint_limit_upper,
+                    joint_limit_lower=joint_limit_lower,
+                    joint_limit_upper=joint_limit_upper,
                 ),
             ],
             lambda_initial=0.1,
@@ -743,8 +765,11 @@ class Example:
 
     def _setup_ik(self):
         state_tmp = self.model.state()
-        newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, state_tmp)
-        body_q_np = state_tmp.body_q.numpy()
+        joint_q = _require_initialized(self.model.joint_q, "model.joint_q")
+        joint_qd = _require_initialized(self.model.joint_qd, "model.joint_qd")
+        body_q = _require_initialized(state_tmp.body_q, "state.body_q")
+        newton.eval_fk(self.model, joint_q, joint_qd, state_tmp)  # ty: ignore[invalid-argument-type]
+        body_q_np = body_q.numpy()
 
         self.pos_obj = ik.IKObjectivePosition(
             link_index=self.ee_index,
@@ -756,11 +781,13 @@ class Example:
             link_offset_rotation=wp.quat_identity(),
             target_rotations=wp.array([body_q_np[self.ee_index][3:][:4]], dtype=wp.vec4),
         )
+        joint_limit_lower = _require_initialized(self.model_ik.joint_limit_lower, "model_ik.joint_limit_lower")
+        joint_limit_upper = _require_initialized(self.model_ik.joint_limit_upper, "model_ik.joint_limit_upper")
         self.joint_limit_obj = ik.IKObjectiveJointLimit(
-            joint_limit_lower=self.model_ik.joint_limit_lower,
-            joint_limit_upper=self.model_ik.joint_limit_upper,
+            joint_limit_lower=joint_limit_lower,
+            joint_limit_upper=joint_limit_upper,
         )
-        self.joint_q_ik = wp.clone(self.model.joint_q[: self.model_ik.joint_coord_count].reshape((1, -1)))
+        self.joint_q_ik = wp.clone(joint_q[: self.model_ik.joint_coord_count].reshape((1, -1)))
         self.ik_iters = 24
         self.ik_solver = ik.IKSolver(
             model=self.model_ik,
@@ -815,7 +842,8 @@ class Example:
 
         self.task_idx = wp.zeros(1, dtype=wp.int32)
         self.task_time_elapsed = wp.zeros(1, dtype=wp.float32)
-        self.task_init_body_q = wp.clone(self.state_0.body_q)
+        task_init_body_q = _require_initialized(self.state_0.body_q, "state_0.body_q")
+        self.task_init_body_q = wp.clone(task_init_body_q)
 
         self.ee_pos_target = wp.zeros(1, dtype=wp.vec3)
         self.ee_pos_interp = wp.zeros(1, dtype=wp.vec3)
@@ -843,7 +871,7 @@ class Example:
                 self.brick_stack_height,
                 self.home_pos,
                 self.task_init_body_q,
-                self.state_0.body_q,
+                _require_initialized(self.state_0.body_q, "state_0.body_q"),
                 self.ee_index,
             ],
             outputs=[
@@ -859,8 +887,9 @@ class Example:
         self.rot_obj.set_target_rotations(self.ee_rot_interp)
         self.ik_solver.step(self.joint_q_ik, self.joint_q_ik, iterations=self.ik_iters)
 
-        wp.copy(dest=self.control.joint_target_q[:7], src=self.joint_q_ik.flatten()[:7])
-        wp.copy(dest=self.control.joint_target_q[7:9], src=self.gripper_target.flatten()[:2])
+        control_joint_target_q = _require_initialized(self.control.joint_target_q, "control.joint_target_q")
+        wp.copy(dest=control_joint_target_q[:7], src=self.joint_q_ik.flatten()[:7])
+        wp.copy(dest=control_joint_target_q[7:9], src=self.gripper_target.flatten()[:2])
 
         # Offset the implicit-PD aim for gravity compensation.
         if self.implicit_pd:
@@ -905,9 +934,12 @@ class Example:
         self.sim_time = 0.0
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
-        newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
-        wp.copy(self.control.joint_target_q[:9], self.model.joint_q[:9])
-        self.joint_q_ik = wp.clone(self.model.joint_q[: self.model_ik.joint_coord_count].reshape((1, -1)))
+        joint_q = _require_initialized(self.model.joint_q, "model.joint_q")
+        joint_qd = _require_initialized(self.model.joint_qd, "model.joint_qd")
+        control_joint_target_q = _require_initialized(self.control.joint_target_q, "control.joint_target_q")
+        newton.eval_fk(self.model, joint_q, joint_qd, self.state_0)  # ty: ignore[invalid-argument-type]
+        wp.copy(control_joint_target_q[:9], joint_q[:9])
+        self.joint_q_ik = wp.clone(joint_q[: self.model_ik.joint_coord_count].reshape((1, -1)))
         self._setup_tasks()
 
     def step(self):
@@ -917,7 +949,7 @@ class Example:
 
     def test_post_step(self):
         task_idx = int(self.task_idx.numpy()[0])
-        body_q = self.state_0.body_q.numpy()
+        body_q = _require_initialized(self.state_0.body_q, "state_0.body_q").numpy()
         ee_tf = body_q[self.ee_index]
         ee_pos = ee_tf[:3]
         ee_quat = ee_tf[3:7]
@@ -957,7 +989,7 @@ class Example:
         if task_idx < total_tasks - 1:
             raise ValueError(f"Task sequence incomplete: reached step {task_idx}/{total_tasks - 1}")
 
-        body_q = self.state_0.body_q.numpy()
+        body_q = _require_initialized(self.state_0.body_q, "state_0.body_q").numpy()
         bh = self.brick_height_scaled
         stack_height = self.brick_stack_height
         red, green, blue = self.brick_bodies

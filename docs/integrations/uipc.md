@@ -494,7 +494,7 @@ arguments. It deep-merges nested dictionaries before initialization.
 
 The default scene config uses `linear_system.solver="fused_pcg"`,
 `linear_system.use_cuda_graph=2`, `linear_system.fem_preconditioner="mas"`,
-and `contact.constitution="ipc"`. UIPC 0.0.26 auto-partitions non-Empty FEM
+and `contact.constitution="ipc"`. UIPC 0.0.27 auto-partitions non-Empty FEM
 geometries for MAS; this replaces its removed Python `mesh_partition()` API.
 Mode 2 captures one FusedPCG solve, including initialization,
 preconditioning, iterations, and device-side convergence checks, in one CUDA
