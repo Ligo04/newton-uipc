@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Cartpole PD — Force (Effort) Control via ControllerPD
+# Example UIPC Cartpole PD — Force (Effort) Control via DrivePD
 
 import math
 
@@ -12,7 +12,7 @@ import warp as wp
 import newton
 import newton.examples
 from newton import JointTargetMode
-from newton.actuators import ClampingMaxEffort, ControllerPD
+from newton.actuators import ClampingMaxEffort, DrivePD
 from newton.selection import ArticulationView
 
 
@@ -58,7 +58,7 @@ class Example:
 
         # Register a PD actuator for the cart DOF.
         cartpole.add_actuator(
-            ControllerPD,
+            DrivePD,
             index=cart_dof,
             kp=self.kp,
             kd=self.kd,
@@ -158,7 +158,7 @@ class Example:
             self.state_0, self.state_1 = self.state_1, self.state_0
 
     def _log_applied_force(self):
-        """Print the PD torque ControllerPD produced for the cart this frame."""
+        """Print the PD torque DrivePD produced for the cart this frame."""
         joint_q = self.cartpoles.get_attribute("joint_q", self.state_0).numpy()
         joint_f = self.cartpoles.get_attribute("joint_f", self.control).numpy()
         target = self.cart_amplitude * math.sin(2.0 * math.pi * self.cart_frequency * self.sim_time)

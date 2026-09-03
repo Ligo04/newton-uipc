@@ -1924,7 +1924,7 @@ class TestUIPCSoftbodyExamples(unittest.TestCase):
         with open(example_path) as f:
             source = f.read()
 
-        self.assertIn("ControllerStablePD", source)
+        self.assertIn("DriveStablePD", source)
         self.assertIn("ClampingMaxEffort", source)
         self.assertIn("JointTargetMode.EFFORT", source)
         self.assertIn("control.joint_f.zero_()", source)
@@ -2082,6 +2082,13 @@ add_example_test(
     name="controllers.example_controller_joint_impedance_heterogeneous",
     devices=cuda_test_devices,
     test_options={"num-frames": 120},
+    use_viewer=True,
+)
+add_example_test(
+    TestControllersExamples,
+    name="controllers.example_controller_operational_space_hybrid_force_motion",
+    devices=cuda_test_devices,
+    test_options={"usd_required": True, "num-frames": 600},
     use_viewer=True,
 )
 

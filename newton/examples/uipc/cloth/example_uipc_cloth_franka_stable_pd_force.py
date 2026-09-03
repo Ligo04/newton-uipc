@@ -18,7 +18,7 @@ import newton.usd
 import newton.utils
 from newton import JointTargetMode
 from newton.actuators import Actuator as _NewtonActuator
-from newton.actuators import ClampingMaxEffort, ControllerStablePD
+from newton.actuators import ClampingMaxEffort, DriveStablePD
 from newton.selection import ArticulationView
 
 
@@ -116,11 +116,11 @@ class Example:
         self.pd_actuator = next(
             actuator
             for actuator in self.model.actuators
-            if isinstance(actuator, _NewtonActuator) and isinstance(actuator.controller, ControllerStablePD)
+            if isinstance(actuator, _NewtonActuator) and isinstance(actuator.drive, DriveStablePD)
         )
         self._act_state = self.pd_actuator.state()
-        if self._act_state is None or self._act_state.controller_state is None:
-            raise ValueError("ControllerStablePD actuator state was not initialized")
+        if self._act_state is None or self._act_state.drive_state is None:
+            raise ValueError("DriveStablePD actuator state was not initialized")
         self._H_buf: wp.array | None = None
         # Allocate reusable gravity and Coriolis buffers.
         self._id_gravity_force = wp.zeros(self.model.joint_dof_count, dtype=wp.float32, device=self.model.device)
@@ -168,7 +168,7 @@ class Example:
             builder.joint_target_kd[d] = 10.0 if d < 7 else self.stable_pd_kd[d]
             builder.joint_target_mode[d] = int(JointTargetMode.EFFORT)
             builder.add_actuator(
-                ControllerStablePD,
+                DriveStablePD,
                 index=d,
                 kp=float(self.stable_pd_kp[d]),
                 kd=float(self.stable_pd_kd[d]),
@@ -394,7 +394,7 @@ class Example:
         self._H_buf = newton.eval_mass_matrix(self.model, self.state_0, H=self._H_buf)
         if self._H_buf is None:
             raise ValueError("eval_mass_matrix unexpectedly returned None for the Franka articulation")
-        ctrl_state = self._act_state.controller_state
+        ctrl_state = self._act_state.drive_state
         ctrl_state.mass_matrix.assign(self._H_buf)
         # Include gravity on both sides of the stable-PD solve.
         newton.eval_inverse_dynamics_passive(

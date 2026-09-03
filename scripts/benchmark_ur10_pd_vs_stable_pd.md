@@ -1,4 +1,4 @@
-# UR10 Stability Benchmark — `ControllerPD` vs `ControllerStablePD`
+# UR10 Stability Benchmark — `DrivePD` vs `DriveStablePD`
 
 **Solver:** `newton.solvers.SolverMuJoCo`
 **Robot:** UR10 (6 revolute DOFs), pedestaled with a fixed base
@@ -35,10 +35,10 @@
 
 ### Plain-language read
 
-- `ControllerPD` becomes numerically unstable at `dt ≥ 33 ms` — at 30 Hz the
+- `DrivePD` becomes numerically unstable at `dt ≥ 33 ms` — at 30 Hz the
   arm blows up at step 8 (`max|qd| = 699 rad/s`); at 15 Hz it diverges on
   the first step.
-- `ControllerStablePD` is bounded across the whole sweep: steady-state error
+- `DriveStablePD` is bounded across the whole sweep: steady-state error
   drifts only mildly with `dt` (0.11 rad → 0.27 rad) and the peak joint
   velocity stays below 2.6 rad/s. There is no observable instability up to
   `dt = 66.7 ms`.
@@ -68,7 +68,7 @@ uv run python scripts/benchmark_ur10_pd_vs_stable_pd.py --controllers stable_pd
 ## Notes
 
 - The Stable-PD path requires `M(q)` and `C(q,q̇)` populated into
-  `act_state.controller_state` each substep. The script uses the same
+  `act_state.drive_state` each substep. The script uses the same
   `newton.eval_mass_matrix` / `newton.eval_jacobian` + finite-difference
   Christoffel Coriolis pipeline as `example_uipc_ur10_force.py`, so the
   results are directly comparable to that example's `--stable-pd` mode.

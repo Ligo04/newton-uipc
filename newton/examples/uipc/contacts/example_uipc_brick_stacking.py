@@ -687,23 +687,27 @@ class Example:
         bh = 0.5 * self.brick_height_scaled
         sqrt2_2 = np.sqrt(2.0) / 2.0
 
-        red_pos = np.array([
-            float(self.table_top_center[0]),
-            float(self.table_top_center[1]) + 0.06,
-            float(self.table_top_center[2]) + bh,
-        ])
+        red_pos = np.array(
+            [
+                float(self.table_top_center[0]),
+                float(self.table_top_center[1]) + 0.06,
+                float(self.table_top_center[2]) + bh,
+            ]
+        )
         target_pos = red_pos + np.array([0.0, 0.0, float(self.offset_approach[2])])
 
         down = np.array([1.0, 0.0, 0.0, 0.0])
         inv_pick = np.array([0.0, 0.0, -sqrt2_2, sqrt2_2])
         x1, y1, z1, w1 = down
         x2, y2, z2, w2 = inv_pick
-        target_quat = np.array([
-            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-        ])
+        target_quat = np.array(
+            [
+                w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+                w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+                w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+                w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+            ]
+        )
 
         ik_dofs = self.model_ik.joint_coord_count
         seed = np.zeros(ik_dofs, dtype=np.float32)

@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import warp as wp
 
-from .base import Controller
+from .base import DriveBase
 
 # ``...solvers.kamino._src.linalg.factorize`` is intentionally imported lazily
 # inside methods (not at module import time). Top-level import here would
@@ -182,7 +182,7 @@ def _stable_pd_effort_kernel(
     efforts[flat_i] = const_e + ff + p_term + d_term - kd[flat_i] * qddot[w, j] * dt
 
 
-class ControllerStablePD(Controller):
+class DriveStablePD(DriveBase):
     """Stateful stable-PD controller (Tan 2011) with implicit mass-matrix solve.
 
     Implements the Tan, Liu & Turk 2011 "stable proportional-derivative"
@@ -217,10 +217,10 @@ class ControllerStablePD(Controller):
 
     Unlike the historical ``ActuatorStablePD`` in ``newton_actuators``,
     this class delegates effort clamping to the downstream
-    :class:`~newton.actuators.Clamping` layer and does **not** accumulate
+    :class:`~newton.actuators.ClampingBase` layer and does **not** accumulate
     a separate ``control_input`` channel inside the kernel, so the effort
-    law is layer-consistent with :class:`ControllerPD` and
-    :class:`ControllerPID`.
+    law is layer-consistent with :class:`DrivePD` and
+    :class:`DrivePID`.
 
     Reference:
         Tan, J., Liu, K., & Turk, G. (2011). "Stable proportional-derivative
@@ -235,10 +235,10 @@ class ControllerStablePD(Controller):
     """Launch-time thread-block size for the tile kernels."""
 
     @dataclass
-    class State(Controller.State):
+    class State(DriveBase.State):
         """Per-step inputs and scratch buffers for the Tan 2011 solve.
 
-        User-populated each step (before :meth:`ControllerStablePD.compute`):
+        User-populated each step (before :meth:`DriveStablePD.compute`):
             mass_matrix: Per-world effective mass/inertia ``M_w(q)`` for
                 this actuator subsystem, shape
                 ``(num_worlds, n_per_world, n_per_world)``, dtype
@@ -250,7 +250,7 @@ class ControllerStablePD(Controller):
                 compensation ``C_w(q, q̇)``, shape
                 ``(num_worlds, n_per_world)``, dtype ``float32``.
 
-        Internal scratch (allocated by :meth:`ControllerStablePD.state`):
+        Internal scratch (allocated by :meth:`DriveStablePD.state`):
             A: Augmented per-world mass matrices ``M_w + diag(kd_w)·dt``,
                 shape ``(num_worlds, n_padded, n_padded)``, dtype
                 ``float32``. Only the real ``[:, :n, :n]`` sub-blocks
@@ -302,10 +302,10 @@ class ControllerStablePD(Controller):
                     )
 
     SHARED_PARAMS = frozenset({"num_worlds", "block_size", "tile_block_dim"})  # pyright: ignore[reportAssignmentType]
-    """Controller-construction kwargs shared across every actuator in the entry.
+    """Drive-construction kwargs shared across every actuator in the entry.
 
     The :class:`~newton.ModelBuilder` per-DOF / shared split inspects this set
-    to decide which kwargs flow through ``controller_shared_kwargs`` instead
+    to decide which kwargs flow through ``drive_shared_kwargs`` instead
     of being stacked into per-actuator arrays.
     """
 
@@ -375,7 +375,7 @@ class ControllerStablePD(Controller):
         self._tile_block_dim = int(tile_block_dim)
         # Lazy import: top-level would trigger newton._src.solvers.__init__ →
         # Featherstone → sim circular dependency at module-load time. By the
-        # time a ControllerStablePD is actually instantiated the newton package
+        # time a DriveStablePD is actually instantiated the newton package
         # is fully initialised, so the import is safe here.
         from ...solvers.kamino._src.linalg.factorize import (  # noqa: PLC0415
             llt_blocked_factorize,
@@ -428,13 +428,13 @@ class ControllerStablePD(Controller):
     def is_graphable(self) -> bool:
         return True
 
-    def state(self, num_actuators: int, device: wp.Device) -> ControllerStablePD.State:
+    def state(self, num_actuators: int, device: wp.Device) -> DriveStablePD.State:
         if num_actuators % self._num_worlds != 0:
             raise ValueError(f"num_actuators ({num_actuators}) must be divisible by num_worlds ({self._num_worlds})")
         n = num_actuators // self._num_worlds
         n_padded = _next_block_multiple(n, self._block_size)
         W = self._num_worlds
-        return ControllerStablePD.State(
+        return DriveStablePD.State(
             mass_matrix=wp.zeros((W, n, n), dtype=wp.float32, device=device),
             bias_forces=wp.zeros((W, n), dtype=wp.float32, device=device),
             A=_alloc_identity_padded_blocks(W, n, n_padded, device=device),
@@ -456,20 +456,20 @@ class ControllerStablePD(Controller):
         target_pos_indices: wp.array[wp.uint32],
         target_vel_indices: wp.array[wp.uint32],
         forces: wp.array[float],
-        state: ControllerStablePD.State,
+        state: DriveStablePD.State,
         dt: float,
         device: wp.Device | None = None,
     ) -> None:
         if state is None:
-            raise ValueError("ControllerStablePD requires a State; got None.")
+            raise ValueError("DriveStablePD requires a State; got None.")
         if state.mass_matrix is None:
-            raise ValueError("ControllerStablePD.State.mass_matrix must be populated each step.")
+            raise ValueError("DriveStablePD.State.mass_matrix must be populated each step.")
         if state.bias_forces is None:
-            raise ValueError("ControllerStablePD.State.bias_forces must be populated each step.")
+            raise ValueError("DriveStablePD.State.bias_forces must be populated each step.")
         if state.A is None or state.L is None or state.b is None or state.y is None or state.qddot is None:
             raise ValueError(
-                "ControllerStablePD.State is missing scratch buffers (A, L, b, y, qddot). "
-                "Allocate via ControllerStablePD.state() rather than constructing State() directly."
+                "DriveStablePD.State is missing scratch buffers (A, L, b, y, qddot). "
+                "Allocate via DriveStablePD.state() rather than constructing State() directly."
             )
 
         n = self._n_per_world

@@ -10,7 +10,7 @@ import newton
 import newton.examples
 from newton import JointTargetMode
 from newton.actuators import Actuator as _NewtonActuator
-from newton.actuators import ClampingMaxEffort, ControllerStablePD
+from newton.actuators import ClampingMaxEffort, DriveStablePD
 from newton.selection import ArticulationView
 
 
@@ -28,7 +28,7 @@ class Example:
         self.stable_pd = bool(args.stable_pd)
         self.viewer = viewer
 
-        # ControllerStablePD batches the implicit solve by world.
+        # DriveStablePD batches the implicit solve by world.
 
         # Cart state-feedback gains (all positive)
         self.k_pole = 300.0  # [N / rad]
@@ -68,7 +68,7 @@ class Example:
         # Register stable-PD on pole2 when requested.
         if self.stable_pd:
             cartpole.add_actuator(
-                ControllerStablePD,
+                DriveStablePD,
                 index=cart_dof + 2,
                 kp=self.k_lock,
                 kd=self.k_lock_d,
@@ -113,16 +113,14 @@ class Example:
                 (
                     a
                     for a in self.model.actuators
-                    if isinstance(a, _NewtonActuator) and isinstance(a.controller, ControllerStablePD)
+                    if isinstance(a, _NewtonActuator) and isinstance(a.drive, DriveStablePD)
                 ),
                 None,
             )
             if pole2_actuator is None:
-                raise RuntimeError("--stable-pd set but ControllerStablePD missing from model.actuators")
-            kp_len = len(pole2_actuator.controller.kp)
-            assert kp_len == self.world_count, (
-                f"ControllerStablePD kp length {kp_len} != world_count {self.world_count}"
-            )
+                raise RuntimeError("--stable-pd set but DriveStablePD missing from model.actuators")
+            kp_len = len(pole2_actuator.drive.kp)
+            assert kp_len == self.world_count, f"DriveStablePD kp length {kp_len} != world_count {self.world_count}"
             self._pole2_actuator = pole2_actuator
             self._act_state = pole2_actuator.state()
             # Allocate reusable gravity and Coriolis buffers.
@@ -187,7 +185,7 @@ class Example:
         behaviour of the per-DOF ``ActuatorPD`` kernel.
 
         When ``--stable-pd`` is set, the pole2 slot is left at zero and
-        the Tan 2011 ``ControllerStablePD`` then accumulates its implicit
+        the Tan 2011 ``DriveStablePD`` then accumulates its implicit
         torque on top of the freshly written cart force.
         """
         # Shape: (world_count, 1, dofs_per_arti)
@@ -220,7 +218,7 @@ class Example:
             newton.add_armature_to_mass_matrix(self.model, self._H_buf)
             p2 = self.pole2_dof
             pole2_m = np.ascontiguousarray(self._H_buf.numpy()[:, p2 : p2 + 1, p2 : p2 + 1], dtype=np.float32)
-            ctrl_state = self._act_state.controller_state
+            ctrl_state = self._act_state.drive_state
             ctrl_state.mass_matrix.assign(pole2_m)
             # bias_forces = pole2 component of the RNEA bias g(q) + C(q,q̇)q̇.
             newton.eval_inverse_dynamics_passive(
@@ -310,7 +308,7 @@ class Example:
             "--stable-pd",
             action="store_true",
             help=(
-                "Drive the stiff pole2 joint-lock with ControllerStablePD "
+                "Drive the stiff pole2 joint-lock with DriveStablePD "
                 "(Tan et al. 2011) instead of the hand-rolled scalar PD. "
                 "The per-substep State is populated with pole2's diagonal "
                 "entry from newton.eval_mass_matrix and its bias force from "

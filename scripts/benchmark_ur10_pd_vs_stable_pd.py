@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-"""Stability benchmark: ControllerPD vs ControllerStablePD on UR10 (MuJoCo).
+"""Stability benchmark: DrivePD vs DriveStablePD on UR10 (MuJoCo).
 
 For each (controller, dt) cell we drive the UR10 from HOME_POSE under a
 constant step setpoint (HOME_POSE + perturbation) and measure:
@@ -42,7 +42,7 @@ import newton
 import newton.utils
 from newton import JointTargetMode
 from newton.actuators import Actuator as _NewtonActuator
-from newton.actuators import ClampingMaxEffort, ControllerPD, ControllerStablePD
+from newton.actuators import ClampingMaxEffort, DrivePD, DriveStablePD
 from newton.selection import ArticulationView
 
 # UR10 home pose, identical to example_uipc_ur10_force.Example.HOME_POSE.
@@ -103,11 +103,11 @@ def _build_ur10_model(stable_pd: bool) -> newton.Model:
         if builder.joint_type[i] == newton.JointType.REVOLUTE:
             builder.joint_armature[i] = 1e-2
 
-    controller_cls = ControllerStablePD if stable_pd else ControllerPD
+    drive_cls = DriveStablePD if stable_pd else DrivePD
     for dof_idx in range(len(KP)):
         extra = {"num_worlds": 1} if stable_pd else {}
         builder.add_actuator(
-            controller_cls,
+            drive_cls,
             index=dof_idx,
             kp=float(KP[dof_idx]),
             kd=float(KD[dof_idx]),
@@ -208,9 +208,9 @@ def run_trial(*, controller: str, dt: float, duration: float, verbose: bool) -> 
     arti.set_attribute("joint_target_q", control, target_pose)
     arti.set_attribute("joint_target_qd", control, qd_target)
 
-    expected_cls = ControllerStablePD if stable_pd else ControllerPD
+    expected_cls = DriveStablePD if stable_pd else DrivePD
     pd_actuator = next(
-        a for a in model.actuators if isinstance(a, _NewtonActuator) and isinstance(a.controller, expected_cls)
+        a for a in model.actuators if isinstance(a, _NewtonActuator) and isinstance(a.drive, expected_cls)
     )
     act_state = pd_actuator.state() if stable_pd else None
 
@@ -242,7 +242,7 @@ def run_trial(*, controller: str, dt: float, duration: float, verbose: bool) -> 
             H_buf = H_res
             tau_g, J_buf = _gravity_torque(model, state_0, J_buf, dof)
             tau_c, H_fd_buf = _coriolis_bias(model, state_0, H_fd_buf, dof)
-            ctrl_state = act_state.controller_state  # type: ignore[union-attr]
+            ctrl_state = act_state.drive_state  # type: ignore[union-attr]
             ctrl_state.mass_matrix.assign(H_buf)
             ctrl_state.bias_forces.assign((-tau_g + tau_c).reshape(1, dof).astype(np.float32))
 
@@ -312,7 +312,7 @@ def run_trial(*, controller: str, dt: float, duration: float, verbose: bool) -> 
 def _format_table(results: list[TrialResult]) -> str:
     by_dt: dict[float, dict[str, TrialResult]] = {}
     for r in results:
-        by_dt.setdefault(r.dt, {})[r.controller] = r
+        by_dt.setdefault(r.dt, {})[r.drive] = r
     dts = sorted(by_dt.keys())
 
     header = (
@@ -372,7 +372,7 @@ def main() -> int:
     results: list[TrialResult] = []
     for dt in args.dts:
         for ctrl in args.controllers:
-            label = "ControllerPD" if ctrl == "pd" else "ControllerStablePD"
+            label = "DrivePD" if ctrl == "pd" else "DriveStablePD"
             print(f"[run] {label}  dt={dt * 1000:.3f}ms  duration={args.duration:.2f}s")
             r = run_trial(controller=ctrl, dt=dt, duration=args.duration, verbose=args.verbose)
             tag = (
@@ -385,7 +385,7 @@ def main() -> int:
 
     print()
     print("=" * 80)
-    print("UR10 stability sweep - MuJoCo solver, ControllerPD vs ControllerStablePD")
+    print("UR10 stability sweep - MuJoCo solver, DrivePD vs DriveStablePD")
     print(f"  duration={args.duration}s, target = HOME + {TARGET_OFFSET.tolist()}")
     print("=" * 80)
     print(_format_table(results))

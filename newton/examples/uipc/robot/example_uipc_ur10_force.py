@@ -11,7 +11,7 @@ import newton.examples
 import newton.utils
 from newton import JointTargetMode
 from newton.actuators import Actuator as _NewtonActuator
-from newton.actuators import ClampingMaxEffort, ControllerPD, ControllerStablePD
+from newton.actuators import ClampingMaxEffort, DrivePD, DriveStablePD
 from newton.selection import ArticulationView
 
 
@@ -94,12 +94,12 @@ class Example:
             ur10.joint_target_mode[i] = int(JointTargetMode.EFFORT)
 
         # Register one PD actuator per UR10 DOF.
-        controller_cls = ControllerStablePD if self.stable_pd else ControllerPD
+        drive_cls = DriveStablePD if self.stable_pd else DrivePD
         for dof_idx in range(len(self.kp)):
             # Set the stable-PD world count for the replicated builder.
             extra_kwargs = {"num_worlds": 1} if self.stable_pd else {}
             ur10.add_actuator(
-                controller_cls,
+                drive_cls,
                 index=dof_idx,
                 kp=float(self.kp[dof_idx]),
                 kd=float(self.kd[dof_idx]),
@@ -156,15 +156,15 @@ class Example:
         self.ur10s.set_attribute("joint_target_qd", self.control, self.qd_target)
 
         # Cache the composed actuator and its controller state.
-        expected_controller_cls = ControllerStablePD if self.stable_pd else ControllerPD
+        expected_controller_cls = DriveStablePD if self.stable_pd else DrivePD
         pd_actuator = next(
             a
             for a in self.model.actuators
-            if isinstance(a, _NewtonActuator) and isinstance(a.controller, expected_controller_cls)
+            if isinstance(a, _NewtonActuator) and isinstance(a.drive, expected_controller_cls)
         )
         self.pd_actuator = pd_actuator
         expected = self.world_count * self.dofs_per_world
-        kp_len = len(pd_actuator.controller.kp)  # ty:ignore[unresolved-attribute]  # pyright: ignore[reportAttributeAccessIssue]
+        kp_len = len(pd_actuator.drive.kp)  # ty:ignore[unresolved-attribute]  # pyright: ignore[reportAttributeAccessIssue]
         assert kp_len == expected, (
             f"PD actuator kp length {kp_len} != {expected}; "
             "builder/replicate did not merge the per-DOF actuators as expected"
@@ -257,8 +257,8 @@ class Example:
 
         if self.stable_pd:
             if self._act_state is None:
-                raise ValueError("ControllerStablePD state was not initialized")
-            ctrl_state = self._act_state.controller_state
+                raise ValueError("DriveStablePD state was not initialized")
+            ctrl_state = self._act_state.drive_state
 
             # Evaluate the mass matrix at the current pose.
             newton.eval_jacobian(self.model, state, self._mm_J, joint_S_s=self._mm_joint_S_s)
@@ -294,10 +294,10 @@ class Example:
 
         Both actuator paths are pure ``wp.launch`` sequences with no
         host<->device transfers: plain PD (zero ``joint_f`` ->
-        ``ControllerPD`` -> ``ClampingMaxEffort`` -> scatter-add), and
+        ``DrivePD`` -> ``ClampingMaxEffort`` -> scatter-add), and
         stable PD, whose bias assembly (:func:`newton.eval_jacobian`,
         :func:`newton.eval_mass_matrix`, :func:`newton.eval_inverse_dynamics_passive`
-        RNEA passes, and the blocked-LLT solve inside ``ControllerStablePD``)
+        RNEA passes, and the blocked-LLT solve inside ``DriveStablePD``)
         reuses buffers preallocated at init — nothing allocates, reads back,
         or synchronizes during capture.
 
@@ -413,7 +413,7 @@ class Example:
             "--stable-pd",
             action="store_true",
             help=(
-                "Use ControllerStablePD (Tan et al. 2011) instead of ControllerPD. "
+                "Use DriveStablePD (Tan et al. 2011) instead of DrivePD. "
                 "The controller runs an on-device (M + diag(Kd)·Δt)·qddot = b "
                 "solve each substep, so the example populates its State with "
                 "M = newton.eval_mass_matrix and bias_forces = RNEA gravity + "

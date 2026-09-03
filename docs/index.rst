@@ -22,6 +22,7 @@ Newton Physics
    UIPC Parameters <guide/uipc_parameters>
    Development <guide/development>
    Source Code Guidelines <guide/source_code_guidelines>
+   Review Guidelines <guide/review_guidelines>
 
 .. toctree::
    :maxdepth: 1
