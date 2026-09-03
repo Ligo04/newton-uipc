@@ -318,7 +318,7 @@ def _scatter_contact_forces_kernel(
     body_com: wp.array[wp.vec3],
     body_count: int,
     max_global_vertex: int,
-    body_f: wp.array[wp.spatial_vector],  # ty:ignore[invalid-type-form]
+    body_f: wp.array[wp.spatial_vector],
     particle_f: wp.array[wp.vec3],
 ):
     tid = wp.tid()
@@ -334,15 +334,15 @@ def _scatter_contact_forces_kernel(
         pos = wp.transform_get_translation(q)
         rot = wp.transform_get_rotation(q)
         com_local = body_com[body_idx]
-        com_world = pos + wp.quat_rotate(rot, com_local)  # ty:ignore[unsupported-operator]
+        com_world = pos + wp.quat_rotate(rot, com_local)
         r = pos - com_world
         tau = wp.cross(r, f)
-        wp.atomic_add(body_f, body_idx, wp.spatial_vector(f[0], f[1], f[2], tau[0], tau[1], tau[2]))  # ty:ignore[invalid-argument-type, no-matching-overload, not-subscriptable]
+        wp.atomic_add(body_f, body_idx, wp.spatial_vector(f[0], f[1], f[2], tau[0], tau[1], tau[2]))
         return
 
     particle_idx = vertex_to_particle[gv]
     if particle_idx >= 0:
-        wp.atomic_add(particle_f, particle_idx, f)  # ty:ignore[invalid-argument-type]
+        wp.atomic_add(particle_f, particle_idx, f)
 
 
 @wp.kernel
@@ -365,7 +365,7 @@ def _populate_contact_pairs_kernel(
     contact_point0: wp.array[wp.vec3],
     contact_point1: wp.array[wp.vec3],
     contact_normal: wp.array[wp.vec3],
-    contact_force: wp.array[wp.spatial_vector],  # ty:ignore[invalid-type-form]
+    contact_force: wp.array[wp.spatial_vector],
     counter: wp.array[wp.int32],
     max_contacts: int,
 ):
@@ -393,7 +393,7 @@ def _populate_contact_pairs_kernel(
         else:
             particle_b = vertex_to_particle[gv_b]
 
-    slot = wp.atomic_add(counter, 0, 1)  # ty:ignore[invalid-argument-type]
+    slot = wp.atomic_add(counter, 0, 1)
     if slot >= max_contacts:
         return
 
@@ -405,20 +405,20 @@ def _populate_contact_pairs_kernel(
     if n_len > 1.0e-12:
         normal = fn / n_len
 
-    contact_shape0[slot] = shape_a  # ty:ignore[invalid-assignment]
-    contact_shape1[slot] = shape_b  # ty:ignore[invalid-assignment]
-    contact_normal[slot] = normal  # ty:ignore[invalid-assignment]
-    contact_force[slot] = wp.spatial_vector(total_f[0], total_f[1], total_f[2], 0.0, 0.0, 0.0)  # ty:ignore[invalid-assignment]
+    contact_shape0[slot] = shape_a
+    contact_shape1[slot] = shape_b
+    contact_normal[slot] = normal
+    contact_force[slot] = wp.spatial_vector(total_f[0], total_f[1], total_f[2], 0.0, 0.0, 0.0)
 
     # Map contact points into SensorContact.position_matrix.
     point_a = vertex_local_pos[gv_a]
-    contact_point0[slot] = point_a  # ty:ignore[invalid-assignment]
+    contact_point0[slot] = point_a
     if body_b >= 0:
-        contact_point1[slot] = vertex_local_pos[gv_b]  # ty:ignore[invalid-assignment]
+        contact_point1[slot] = vertex_local_pos[gv_b]
     elif particle_b >= 0 and particle_q:
-        contact_point1[slot] = particle_q[particle_b]  # ty:ignore[invalid-assignment]
+        contact_point1[slot] = particle_q[particle_b]
     else:
-        contact_point1[slot] = wp.transform_point(body_q[body_a], point_a)  # ty:ignore[invalid-assignment]
+        contact_point1[slot] = wp.transform_point(body_q[body_a], point_a)
 
 
 # GPU path: data preparation (vectorized numpy, no per-element Python loop)

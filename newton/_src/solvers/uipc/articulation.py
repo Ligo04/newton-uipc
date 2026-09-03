@@ -25,7 +25,7 @@ from .utils import _view_attr
 
 
 @wp.func
-def com_twist_to_point_velocity(qd: wp.spatial_vector, X_wb: wp.transform, body_com: wp.vec3, point: wp.vec3):  # ty:ignore[invalid-type-form]
+def com_twist_to_point_velocity(qd: wp.spatial_vector, X_wb: wp.transform, body_com: wp.vec3, point: wp.vec3):
     """Evaluate a point velocity from a COM-referenced body twist.
 
     Local copy of Newton's COM-twist point-velocity helper so the UIPC backend
@@ -91,29 +91,29 @@ def _cache_control_kernel(
 
     # Drive position targets, including velocity aims when blending is enabled.
     if mode == JointTargetMode.POSITION or mode == JointTargetMode.POSITION_VELOCITY:
-        out_is_constrained[local] = 1  # ty:ignore[invalid-assignment]
+        out_is_constrained[local] = 1
         if has_target_pos != 0:
-            out_target_pos[local] = wp.float64(target_pos[q_idx])  # ty:ignore[invalid-assignment]
+            out_target_pos[local] = wp.float64(target_pos[q_idx])
     elif blend_aims != 0 and mode == JointTargetMode.VELOCITY:
-        out_is_constrained[local] = 1  # ty:ignore[invalid-assignment]
+        out_is_constrained[local] = 1
     else:
-        out_is_constrained[local] = 0  # ty:ignore[invalid-assignment]
+        out_is_constrained[local] = 0
 
     # Forward velocity targets for POSITION_VELOCITY and blended VELOCITY modes.
     forward_vel = mode == JointTargetMode.POSITION_VELOCITY
     if blend_aims != 0 and mode == JointTargetMode.VELOCITY:
         forward_vel = True
     if forward_vel and has_target_vel != 0:
-        out_target_vel[local] = wp.float64(target_vel[qd_idx])  # ty:ignore[invalid-assignment]
+        out_target_vel[local] = wp.float64(target_vel[qd_idx])
     else:
-        out_target_vel[local] = wp.float64(0.0)  # ty:ignore[invalid-assignment]
+        out_target_vel[local] = wp.float64(0.0)
 
     # Apply force or torque only in EFFORT mode.
     if mode == JointTargetMode.EFFORT and has_joint_f != 0:
-        out_target_force[local] = wp.float64(joint_f[qd_idx])  # ty:ignore[invalid-assignment]
-        out_is_force_constrained[local] = 1  # ty:ignore[invalid-assignment]
+        out_target_force[local] = wp.float64(joint_f[qd_idx])
+        out_is_force_constrained[local] = 1
     else:
-        out_is_force_constrained[local] = 0  # ty:ignore[invalid-assignment]
+        out_is_force_constrained[local] = 0
 
 
 @wp.kernel
@@ -127,16 +127,16 @@ def _write_readback_kernel(
     has_qd: int,
 ):
     local = wp.tid()
-    joint_q_out[local_q_start[local]] = wp.float32(joint_position[local])  # ty:ignore[invalid-assignment]
+    joint_q_out[local_q_start[local]] = wp.float32(joint_position[local])
     if has_qd != 0:
-        joint_qd_out[local_qd_start[local]] = wp.float32(joint_velocity[local])  # ty:ignore[invalid-assignment]
+        joint_qd_out[local_qd_start[local]] = wp.float32(joint_velocity[local])
 
 
 @wp.kernel(enable_backward=False)
 def _free_joint_readback_kernel(
     free_joint_indices: wp.array[wp.int32],
     body_q: wp.array[wp.transform],
-    body_qd: wp.array[wp.spatial_vector],  # ty:ignore[invalid-type-form]
+    body_qd: wp.array[wp.spatial_vector],
     body_com: wp.array[wp.vec3],
     joint_parent: wp.array[wp.int32],
     joint_child: wp.array[wp.int32],
@@ -166,9 +166,9 @@ def _free_joint_readback_kernel(
 
     # Parent anchor frame in world space (world frame when parent == -1).
     X_wpj = X_pj
-    v_wp = wp.spatial_vector()  # ty:ignore[no-matching-overload]
+    v_wp = wp.spatial_vector()
     w_p = wp.vec3()
-    X_wp = wp.transform_identity()  # ty:ignore[missing-argument]
+    X_wp = wp.transform_identity()
     if parent >= 0:
         X_wp = body_q[parent]
         X_wpj = X_wp * X_pj
@@ -182,36 +182,36 @@ def _free_joint_readback_kernel(
 
     q_p = wp.transform_get_rotation(X_wpj)
     q_c = wp.transform_get_rotation(X_wcj)
-    x_err = wp.transform_get_translation(X_wcj) - wp.transform_get_translation(X_wpj)  # ty:ignore[unsupported-operator]
-    w_err = w_c - w_p  # ty:ignore[unsupported-operator]
+    x_err = wp.transform_get_translation(X_wcj) - wp.transform_get_translation(X_wpj)
+    w_err = w_c - w_p
 
-    q_pc = wp.quat_inverse(q_p) * q_c  # ty:ignore[unsupported-operator]
+    q_pc = wp.quat_inverse(q_p) * q_c
     x_err_c = wp.quat_rotate_inv(q_p, x_err)
 
     x_child_com_world = wp.transform_point(X_wc, body_com[child])
     v_com_err = wp.spatial_top(v_wc)
     if parent >= 0:
-        v_com_err = v_com_err - com_twist_to_point_velocity(v_wp, X_wp, body_com[parent], x_child_com_world)  # ty:ignore[invalid-argument-type]
+        v_com_err = v_com_err - com_twist_to_point_velocity(v_wp, X_wp, body_com[parent], x_child_com_world)
     v_err_c = wp.quat_rotate_inv(q_p, v_com_err)
     w_err_c = wp.quat_rotate_inv(q_p, w_err)
 
     q_start = joint_q_start[joint_idx]
     qd_start = joint_qd_start[joint_idx]
 
-    joint_q[q_start + 0] = x_err_c[0]  # ty:ignore[invalid-assignment]
-    joint_q[q_start + 1] = x_err_c[1]  # ty:ignore[invalid-assignment]
-    joint_q[q_start + 2] = x_err_c[2]  # ty:ignore[invalid-assignment]
-    joint_q[q_start + 3] = q_pc[0]  # ty:ignore[invalid-assignment]
-    joint_q[q_start + 4] = q_pc[1]  # ty:ignore[invalid-assignment]
-    joint_q[q_start + 5] = q_pc[2]  # ty:ignore[invalid-assignment]
-    joint_q[q_start + 6] = q_pc[3]  # ty:ignore[invalid-assignment]
+    joint_q[q_start + 0] = x_err_c[0]
+    joint_q[q_start + 1] = x_err_c[1]
+    joint_q[q_start + 2] = x_err_c[2]
+    joint_q[q_start + 3] = q_pc[0]
+    joint_q[q_start + 4] = q_pc[1]
+    joint_q[q_start + 5] = q_pc[2]
+    joint_q[q_start + 6] = q_pc[3]
 
-    joint_qd[qd_start + 0] = v_err_c[0]  # ty:ignore[invalid-assignment]
-    joint_qd[qd_start + 1] = v_err_c[1]  # ty:ignore[invalid-assignment]
-    joint_qd[qd_start + 2] = v_err_c[2]  # ty:ignore[invalid-assignment]
-    joint_qd[qd_start + 3] = w_err_c[0]  # ty:ignore[invalid-assignment]
-    joint_qd[qd_start + 4] = w_err_c[1]  # ty:ignore[invalid-assignment]
-    joint_qd[qd_start + 5] = w_err_c[2]  # ty:ignore[invalid-assignment]
+    joint_qd[qd_start + 0] = v_err_c[0]
+    joint_qd[qd_start + 1] = v_err_c[1]
+    joint_qd[qd_start + 2] = v_err_c[2]
+    joint_qd[qd_start + 3] = w_err_c[0]
+    joint_qd[qd_start + 4] = w_err_c[1]
+    joint_qd[qd_start + 5] = w_err_c[2]
 
 
 # Placeholder for empty warp arrays passed to kernels

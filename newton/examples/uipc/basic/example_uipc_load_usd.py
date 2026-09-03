@@ -48,7 +48,7 @@ class Example:
         # Run FK from authored joint targets after checking optional arrays.
         assert self.model.joint_q is not None and self.model.joint_qd is not None
         self.state_0 = self.model.state()
-        newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)  # ty:ignore[invalid-argument-type]  # pyright: ignore[reportArgumentType]
+        newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)  # pyright: ignore[reportArgumentType]
         self.solver = newton.solvers.SolverUIPC(
             workspace="/tmp/newton_uipc/load_usd",
             model=self.model,

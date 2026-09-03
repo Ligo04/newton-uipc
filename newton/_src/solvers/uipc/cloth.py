@@ -293,7 +293,7 @@ class ClothBuilder:
         if model.tri_materials is None or selected_tri_ids.size == 0:
             return
 
-        tri_materials_np = model.tri_materials.numpy()[selected_tri_ids]  # ty:ignore[unresolved-attribute]  # pyright: ignore[reportAttributeAccessIssue]
+        tri_materials_np = model.tri_materials.numpy()[selected_tri_ids]  # pyright: ignore[reportAttributeAccessIssue]
         mu_attr = sc.triangles().find("mu")
         lambda_attr = sc.triangles().find("lambda")
         if mu_attr is None or lambda_attr is None:
@@ -324,7 +324,7 @@ class ClothBuilder:
         local_edge_to_index = {tuple(sorted((int(edge[0]), int(edge[1])))): idx for idx, edge in enumerate(uipc_edges)}
 
         edge_indices_np = model.edge_indices.numpy().reshape(-1, 4)
-        edge_props_np = model.edge_bending_properties.numpy()  # ty:ignore[unresolved-attribute]  # pyright: ignore[reportAttributeAccessIssue]
+        edge_props_np = model.edge_bending_properties.numpy()  # pyright: ignore[reportAttributeAccessIssue]
         if edge_range is None:
             edge_ids = range(edge_indices_np.shape[0])
         else:

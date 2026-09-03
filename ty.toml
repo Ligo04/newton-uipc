@@ -1,9 +1,9 @@
 # Warp kernels use operators and indexed writes that are implemented by Warp's
-# code generator but are not represented in the distributed Python stubs.
-# Keep ty useful for the rest of the project while avoiding false positives in
-# example code that directly exercises the Warp DSL.
+# code generator but are not represented in the distributed Python stubs. Every
+# layer of Newton exercises the Warp DSL directly, so treat warp as Any across
+# the package: the stub gaps otherwise bury the diagnostics worth reading.
 [[overrides]]
-include = ["newton/examples/**"]
+include = ["newton/**"]
 
 [overrides.analysis]
 replace-imports-with-any = ["warp.**"]

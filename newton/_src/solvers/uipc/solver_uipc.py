@@ -1123,7 +1123,7 @@ class SolverUIPC(SolverBase):
                     raise RuntimeError("UIPC initialization requires joint_q and joint_qd for articulated models.")
             state: State = model.state()
             if model.joint_count > 0:
-                newton.eval_fk(model, joint_q, joint_qd, state)  # ty:ignore[invalid-argument-type]
+                newton.eval_fk(model, joint_q, joint_qd, state)
         if model.body_q is not None and state.body_q is not None:
             wp.copy(model.body_q, state.body_q)
         if state.body_qd is not None and model.body_qd is not None:
@@ -1575,7 +1575,7 @@ class SolverUIPC(SolverBase):
                 raise RuntimeError("UIPC joint property notification requires joint_q and joint_qd.")
         state = self.model.state()
         if model.joint_count > 0:
-            newton.eval_fk(model, joint_q, joint_qd, state)  # ty:ignore[invalid-argument-type]
+            newton.eval_fk(model, joint_q, joint_qd, state)
         self._state_dirty = True
 
     def _notify_body_properties(self) -> None:

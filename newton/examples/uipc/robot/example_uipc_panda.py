@@ -136,7 +136,7 @@ class Example:
         box_size = 0.05
         table_pos = wp.vec3(0.08, -0.5, box_size + uipc_gap)
         table_body = builder.add_body(
-            xform=wp.transform(table_pos, wp.quat_identity()),  # ty:ignore[missing-argument]
+            xform=wp.transform(table_pos, wp.quat_identity()),
             label="table",
             is_kinematic=True,
         )

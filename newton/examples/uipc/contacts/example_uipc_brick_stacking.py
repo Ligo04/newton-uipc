@@ -476,7 +476,7 @@ class Example:
         joint_q = _require_initialized(self.model.joint_q, "model.joint_q")
         joint_qd = _require_initialized(self.model.joint_qd, "model.joint_qd")
         control_joint_target_q = _require_initialized(self.control.joint_target_q, "control.joint_target_q")
-        newton.eval_fk(self.model, joint_q, joint_qd, self.state_0)  # ty: ignore[invalid-argument-type]
+        newton.eval_fk(self.model, joint_q, joint_qd, self.state_0)
         self.solver.initialize(self.state_0)
         wp.copy(control_joint_target_q[:9], joint_q[:9])
 
@@ -698,7 +698,7 @@ class Example:
         joint_q = _require_initialized(model.joint_q, "model.joint_q")
         joint_qd = _require_initialized(model.joint_qd, "model.joint_qd")
         body_q = _require_initialized(state_tmp.body_q, "state.body_q")
-        newton.eval_fk(model, joint_q, joint_qd, state_tmp)  # ty: ignore[invalid-argument-type]
+        newton.eval_fk(model, joint_q, joint_qd, state_tmp)
         return wp.vec3(*body_q.numpy()[self.ee_index][:3])
 
     def _solve_approach_ik(self) -> np.ndarray:
@@ -768,7 +768,7 @@ class Example:
         joint_q = _require_initialized(self.model.joint_q, "model.joint_q")
         joint_qd = _require_initialized(self.model.joint_qd, "model.joint_qd")
         body_q = _require_initialized(state_tmp.body_q, "state.body_q")
-        newton.eval_fk(self.model, joint_q, joint_qd, state_tmp)  # ty: ignore[invalid-argument-type]
+        newton.eval_fk(self.model, joint_q, joint_qd, state_tmp)
         body_q_np = body_q.numpy()
 
         self.pos_obj = ik.IKObjectivePosition(
@@ -937,7 +937,7 @@ class Example:
         joint_q = _require_initialized(self.model.joint_q, "model.joint_q")
         joint_qd = _require_initialized(self.model.joint_qd, "model.joint_qd")
         control_joint_target_q = _require_initialized(self.control.joint_target_q, "control.joint_target_q")
-        newton.eval_fk(self.model, joint_q, joint_qd, self.state_0)  # ty: ignore[invalid-argument-type]
+        newton.eval_fk(self.model, joint_q, joint_qd, self.state_0)
         wp.copy(control_joint_target_q[:9], joint_q[:9])
         self.joint_q_ik = wp.clone(joint_q[: self.model_ik.joint_coord_count].reshape((1, -1)))
         self._setup_tasks()

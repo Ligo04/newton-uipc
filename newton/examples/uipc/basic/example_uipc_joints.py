@@ -201,7 +201,7 @@ class Example:
         )
 
         # Set initial joint orientation
-        builder.joint_q[-4:] = wp.quat_rpy(0.5, 0.6, 0.7)  # ty:ignore[invalid-assignment]  # pyright: ignore[reportArgumentType]
+        builder.joint_q[-4:] = wp.quat_rpy(0.5, 0.6, 0.7)  # pyright: ignore[reportArgumentType]
 
         # Finalize
         builder.color()
@@ -218,7 +218,7 @@ class Example:
         self.state_1 = self.model.state()
         self.control = self.model.control()
         self.contacts = newton.CollisionPipeline(self.model).contacts()
-        newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)  # ty:ignore[invalid-argument-type]  # pyright: ignore[reportArgumentType]
+        newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)  # pyright: ignore[reportArgumentType]
         self.solver.initialize(self.state_0)
         self.viewer.set_model(self.model)
         self.viewer._paused = True

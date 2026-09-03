@@ -281,7 +281,7 @@ class DeformableBodyBuilder:
         if model.tet_materials is None or selected_tet_ids.size == 0:
             return
 
-        tet_materials_np = model.tet_materials.numpy()[selected_tet_ids]  # ty:ignore[unresolved-attribute]  # pyright: ignore[reportAttributeAccessIssue]
+        tet_materials_np = model.tet_materials.numpy()[selected_tet_ids]  # pyright: ignore[reportAttributeAccessIssue]
         mu_attr = sc.tetrahedra().find("mu")
         lambda_attr = sc.tetrahedra().find("lambda")
         kappa_attr = sc.tetrahedra().find("kappa")
