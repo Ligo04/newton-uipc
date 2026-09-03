@@ -119,8 +119,11 @@ class Example:
             if isinstance(actuator, _NewtonActuator) and isinstance(actuator.drive, DriveStablePD)
         )
         self._act_state = self.pd_actuator.state()
-        if self._act_state is None or self._act_state.drive_state is None:
+        if self._act_state is None or not isinstance(self._act_state.drive_state, DriveStablePD.State):
             raise ValueError("DriveStablePD actuator state was not initialized")
+        # Keep the narrowed drive state: Actuator.State types it as the DriveBase
+        # base class, which does not carry the Tan 2011 mass_matrix/bias_forces.
+        self._drive_state = self._act_state.drive_state
         self._H_buf: wp.array | None = None
         # Allocate reusable gravity and Coriolis buffers.
         self._id_gravity_force = wp.zeros(self.model.joint_dof_count, dtype=wp.float32, device=self.model.device)
@@ -394,7 +397,7 @@ class Example:
         self._H_buf = newton.eval_mass_matrix(self.model, self.state_0, H=self._H_buf)
         if self._H_buf is None:
             raise ValueError("eval_mass_matrix unexpectedly returned None for the Franka articulation")
-        ctrl_state = self._act_state.drive_state
+        ctrl_state = self._drive_state
         ctrl_state.mass_matrix.assign(self._H_buf)
         # Include gravity on both sides of the stable-PD solve.
         newton.eval_inverse_dynamics_passive(

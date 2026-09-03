@@ -3,6 +3,8 @@
 
 # Example UIPC Cartpole PD — Classic Inverted-Pendulum Balance (Force)
 
+from dataclasses import dataclass
+
 import numpy as np
 import warp as wp
 
@@ -12,6 +14,21 @@ from newton import JointTargetMode
 from newton.actuators import Actuator as _NewtonActuator
 from newton.actuators import ClampingMaxEffort, DriveStablePD
 from newton.selection import ArticulationView
+
+
+@dataclass
+class _StablePDHandles:
+    """The stable-PD objects that exist together or not at all.
+
+    Bundling them lets one ``is not None`` check stand in for the
+    ``--stable-pd`` flag, and pins ``drive_state`` to the concrete
+    :class:`DriveStablePD.State` that carries ``mass_matrix`` and
+    ``bias_forces``; ``Actuator.State`` only types it as ``DriveBase.State``.
+    """
+
+    actuator: _NewtonActuator
+    act_state: _NewtonActuator.State
+    drive_state: DriveStablePD.State
 
 
 class Example:
@@ -104,8 +121,7 @@ class Example:
         self.pole2_dof = 2
 
         # Allocate stable-PD state and per-substep scratch.
-        self._pole2_actuator: _NewtonActuator | None = None
-        self._act_state: _NewtonActuator.State | None = None
+        self._stable_pd_handles: _StablePDHandles | None = None
         self._H_buf: wp.array | None = None
         if self.stable_pd:
             pole2_actuator = next(
@@ -118,10 +134,16 @@ class Example:
             )
             if pole2_actuator is None:
                 raise RuntimeError("--stable-pd set but DriveStablePD missing from model.actuators")
-            kp_len = len(pole2_actuator.drive.kp)
+            # Restate what the generator's isinstance already guarantees: Actuator.drive
+            # is typed as DriveBase, which does not carry kp.
+            drive = pole2_actuator.drive
+            assert isinstance(drive, DriveStablePD)
+            kp_len = len(drive.kp)
             assert kp_len == self.world_count, f"DriveStablePD kp length {kp_len} != world_count {self.world_count}"
-            self._pole2_actuator = pole2_actuator
-            self._act_state = pole2_actuator.state()
+            act_state = pole2_actuator.state()
+            if act_state is None or not isinstance(act_state.drive_state, DriveStablePD.State):
+                raise RuntimeError("DriveStablePD actuator state was not initialized")
+            self._stable_pd_handles = _StablePDHandles(pole2_actuator, act_state, act_state.drive_state)
             # Allocate reusable gravity and Coriolis buffers.
             self._id_gravity_force = wp.zeros(self.model.joint_dof_count, dtype=wp.float32, device=self.model.device)
             self._id_coriolis_force = wp.zeros(self.model.joint_dof_count, dtype=wp.float32, device=self.model.device)
@@ -211,13 +233,14 @@ class Example:
             f[:, 0, self.pole2_dof] = tau2
         self.cartpoles.set_attribute("joint_f", self.control, f)
 
-        if self.stable_pd:
+        handles = self._stable_pd_handles
+        if handles is not None:
             # (pole2, pole2) entry of the per-world inertia, shape (W, 1, 1).
             self._H_buf = newton.eval_mass_matrix(self.model, self.state_0, H=self._H_buf)
             newton.add_armature_to_mass_matrix(self.model, self._H_buf)
             p2 = self.pole2_dof
             pole2_m = np.ascontiguousarray(self._H_buf.numpy()[:, p2 : p2 + 1, p2 : p2 + 1], dtype=np.float32)
-            ctrl_state = self._act_state.drive_state
+            ctrl_state = handles.drive_state
             ctrl_state.mass_matrix.assign(pole2_m)
             # bias_forces = pole2 component of the RNEA bias g(q) + C(q,q̇)q̇.
             newton.eval_inverse_dynamics_passive(
@@ -228,11 +251,11 @@ class Example:
             ctrl_state.bias_forces.assign(np.ascontiguousarray(bias_pole2, dtype=np.float32))
 
             # Stable-PD state is per-step scratch.
-            self._pole2_actuator.step(
+            handles.actuator.step(
                 sim_state=self.state_0,
                 sim_control=self.control,
-                current_act_state=self._act_state,
-                next_act_state=self._act_state,
+                current_act_state=handles.act_state,
+                next_act_state=handles.act_state,
                 dt=self.sim_dt,
             )
 
