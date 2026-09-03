@@ -93,7 +93,7 @@ class Example:
         )
         self.viewer._paused = True
 
-    def _build_solver(self, name: str) -> tuple[object, bool]:
+    def _build_solver(self, name: str) -> tuple[newton.solvers.SolverBase, bool]:
         """Construct the requested solver.
 
         Returns (solver, use_two_states).

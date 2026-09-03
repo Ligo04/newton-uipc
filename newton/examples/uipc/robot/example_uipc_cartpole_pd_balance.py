@@ -45,7 +45,6 @@ class Example:
         cartpole = newton.ModelBuilder(up_axis=newton.Axis.Z)
         cartpole.default_shape_cfg.density = 100.0
         cartpole.default_joint_cfg.armature = 0.1
-        cartpole.default_body_armature = 0.1
 
         # Register MuJoCo-specific USD attributes when needed.
         if self.solver_name == "mujoco":
@@ -137,7 +136,7 @@ class Example:
         self.viewer.set_world_offsets((0.0, 0.0, 0.0))
         self.viewer._paused = True
 
-    def _build_solver(self, name: str) -> tuple[object, bool]:
+    def _build_solver(self, name: str) -> tuple[newton.solvers.SolverBase, bool]:
         """Construct the requested Newton solver.
 
         Returns the solver and a flag telling the caller whether a

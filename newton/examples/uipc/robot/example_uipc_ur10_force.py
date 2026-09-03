@@ -205,7 +205,7 @@ class Example:
         self._capture_actuator_graphs()
 
     # solver
-    def _build_solver(self, name: str) -> tuple[object, bool]:
+    def _build_solver(self, name: str) -> tuple[newton.solvers.SolverBase, bool]:
         """Construct the requested Newton solver.
 
         Returns the solver and a flag telling the caller whether a
