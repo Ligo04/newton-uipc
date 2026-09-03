@@ -37,7 +37,7 @@ from .sdf_utils import (
     get_distance_to_mesh_parity,
     get_primitive_extents,
 )
-from .types import GeoType
+from .types import GeoType, Mesh
 
 # Sentinel values for subgrid indirection slots.
 # Typed uint32 so kernel codegen doesn't overflow an int32 constant.
@@ -3058,7 +3058,6 @@ def compute_isomesh_from_texture_sdf(
         :class:`~newton.Mesh` with the isosurface, or ``None`` if empty.
     """
     from .sdf_mc import get_mc_tables  # noqa: PLC0415
-    from .types import Mesh  # noqa: PLC0415
 
     if device is None:
         device = wp.get_device()

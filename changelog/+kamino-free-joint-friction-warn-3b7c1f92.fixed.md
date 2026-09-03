@@ -1,0 +1,1 @@
+Fix `ModelBuilderKamino.add_joint_descriptor` raising `NameError: name 'msg' is not defined` when a `FREE` joint carries non-zero joint friction: the warning branch that reports the ignored friction referenced the Kamino logger, which the module never imported.

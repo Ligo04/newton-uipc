@@ -15,6 +15,7 @@ import warp as wp
 
 from .....core.types import Axis
 from .....geometry import ShapeFlags
+from ..utils import logger as msg
 from .bodies import RigidBodiesModel, RigidBodyDescriptor
 from .geometry import GeometriesModel, GeometryDescriptor
 from .gravity import GravityDescriptor, GravityModel

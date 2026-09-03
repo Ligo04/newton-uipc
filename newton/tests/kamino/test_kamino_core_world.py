@@ -3,6 +3,7 @@
 
 """Unit tests for the WorldDescriptor container in Kamino"""
 
+import logging
 import math
 import unittest
 
@@ -11,6 +12,7 @@ import warp as wp
 
 from newton._src.geometry.types import GeoType
 from newton._src.solvers.kamino._src.core.bodies import RigidBodyDescriptor
+from newton._src.solvers.kamino._src.core.builder import ModelBuilderKamino
 from newton._src.solvers.kamino._src.core.geometry import GeometryDescriptor
 from newton._src.solvers.kamino._src.core.gravity import GravityDescriptor
 from newton._src.solvers.kamino._src.core.joints import (
@@ -645,6 +647,33 @@ class TestWorldDescriptor(unittest.TestCase):
 
         # Attempt to set an invalid joint as the base joint
         self.assertRaises(ValueError, world.set_base_joint, 2)
+
+
+class TestModelBuilderKamino(unittest.TestCase):
+    def test_free_joint_with_friction_warns(self):
+        # Joint friction is meaningless on a FREE joint, so the builder logs a
+        # warning and ignores it. The warning branch used to raise NameError
+        # because the logger was never imported into builder.py.
+        builder = ModelBuilderKamino()
+        builder.add_world()
+        bid = builder.add_rigid_body_descriptor(
+            RigidBodyDescriptor(
+                name="body_0",
+                m_i=1.0,
+                i_I_i=wp.mat33f(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
+            )
+        )
+        joint = JointDescriptor(
+            name="free_joint",
+            dof_type=JointDoFType.FREE,
+            dof_act_types=[JointActuationType.PASSIVE] * JointDoFType.FREE.num_dofs,
+            bid_F=bid,
+            f_j=1.0,
+        )
+        with self.assertLogs(logging.getLogger(), level=logging.WARNING) as captured:
+            jid = builder.add_joint_descriptor(joint)
+        self.assertEqual(jid, 0)
+        self.assertTrue(any("free_joint" in record.getMessage() for record in captured.records))
 
 
 ###
