@@ -166,7 +166,7 @@ def _h_and_bias_stable_pd_style(
     return H, bias
 
 
-def test_ur10_force_mass_and_bias_match_with_without_mujoco_custom_attrs(self, device):
+def _test_ur10_force_mass_and_bias_match_with_without_mujoco_custom_attrs(self, device):
     """UIPC vs MuJoCo *builder* paths: same ``q``/``qd`` => same H and stable-PD bias.
 
     The dynamics quantities use :func:`newton.eval_mass_matrix` / :func:`newton.eval_jacobian`
@@ -224,7 +224,7 @@ class TestUipcUr10Force(unittest.TestCase):
 add_function_test(
     TestUipcUr10Force,
     "test_ur10_force_mass_and_bias_match_with_without_mujoco_custom_attrs",
-    test_ur10_force_mass_and_bias_match_with_without_mujoco_custom_attrs,
+    _test_ur10_force_mass_and_bias_match_with_without_mujoco_custom_attrs,
     devices=get_test_devices(),
 )
 

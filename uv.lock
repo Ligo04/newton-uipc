@@ -3995,7 +3995,7 @@ requires-dist = [
     { name = "pyglet", marker = "extra == 'rtx'", specifier = ">=2.1.6,<3" },
     { name = "pypandoc", marker = "extra == 'docs'", specifier = ">=1.11" },
     { name = "pypandoc-binary", marker = "extra == 'docs'", specifier = ">=1.11" },
-    { name = "pyuipc", marker = "python_full_version >= '3.10' and python_full_version < '3.14'", specifier = ">=0.0.27" },
+    { name = "pyuipc", marker = "python_full_version >= '3.10' and python_full_version < '3.14'", specifier = ">=0.0.28" },
     { name = "pyyaml", marker = "extra == 'examples'", specifier = ">=6.0.2" },
     { name = "requests", marker = "extra == 'importers'", specifier = ">=2.25.0" },
     { name = "rerun-sdk", extras = ["notebook"], marker = "python_full_version < '3.14' and extra == 'notebook'", specifier = ">=0.27.1" },
@@ -5743,7 +5743,7 @@ wheels = [
 
 [[package]]
 name = "pyuipc"
-version = "0.0.27"
+version = "0.0.28"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
@@ -5755,16 +5755,16 @@ dependencies = [
     { name = "polyscope", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/13/e2/51b81e11d86e25e788703fd8d852455679445b4dc435f5042b4610023d4e/pyuipc-0.0.27-cp310-cp310-manylinux_2_34_x86_64.whl", hash = "sha256:2c6cb17c6ff8b66d9a4b2518124a44bccdd962391315cd53ec6f9068d4a69624", size = 17346391, upload-time = "2026-09-01T17:03:47.85Z" },
-    { url = "https://files.pythonhosted.org/packages/de/4c/eff7266ce3c81de30c08b7c00de4c99190e70e8100d30eeeb7a37eaaeb9e/pyuipc-0.0.27-cp310-cp310-win_amd64.whl", hash = "sha256:1abe9f01e5faa379f8869d78ffacf911aeeda956a3a5d17b82312e9e4f225c8e", size = 17565350, upload-time = "2026-09-01T17:03:51.017Z" },
-    { url = "https://files.pythonhosted.org/packages/9f/5f/11a9f7d722b406745dfb297ebebc68a5ae103430f07cdfc544d9ce3056b4/pyuipc-0.0.27-cp311-cp311-manylinux_2_34_x86_64.whl", hash = "sha256:a145e825e75e88af86b4c81e7c09ea9a3f34ee3cbf613a43490060245ffe50c8", size = 17346361, upload-time = "2026-09-01T17:03:53.991Z" },
-    { url = "https://files.pythonhosted.org/packages/d0/84/38adfcf8695e3281b37714f59b8cee7f8cc02019ecbcad9817a326dd8486/pyuipc-0.0.27-cp311-cp311-win_amd64.whl", hash = "sha256:6f26466934e06f7e2e4d92212c693a62741b256a7e537b79b5e442ea16aec429", size = 17584564, upload-time = "2026-09-01T17:03:56.953Z" },
-    { url = "https://files.pythonhosted.org/packages/cb/45/97f4e979510349c967ba4f0a1b36a54365c0918ff1f67b0f48923649ca01/pyuipc-0.0.27-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:7680e1fe2c5d2836f6160d4c6d70a91cb857ecf76d6499705ad2732030578b72", size = 17348980, upload-time = "2026-09-01T17:04:00.075Z" },
-    { url = "https://files.pythonhosted.org/packages/89/e1/4aca18cedf44c6d74563484a69962d40c79ef854812c63ed926b9dddd1f0/pyuipc-0.0.27-cp312-cp312-win_amd64.whl", hash = "sha256:000bbec621559e31ef5f053fc627748965ac46ed03cc1b66f4f4f21ae12a4008", size = 17586887, upload-time = "2026-09-01T17:04:03.028Z" },
-    { url = "https://files.pythonhosted.org/packages/bf/65/4e07d5e22a1435ec0049ebd34ee72abdce35383ed19ca0632bb4d61050b9/pyuipc-0.0.27-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:c7cf85a58855aca0d1ba5dcedc1abaa9d35bfca77c2d32a45c6ef03435d59edf", size = 17348767, upload-time = "2026-09-01T17:04:05.852Z" },
-    { url = "https://files.pythonhosted.org/packages/ee/22/a1078113c12baa316e68ba84ec1359eb6ad03789fefd1a15d29bf4f7cdc2/pyuipc-0.0.27-cp313-cp313-win_amd64.whl", hash = "sha256:0e119e1269cb203836190685f9c6da4eaf3470bb0686cb9984195c64a161b3c5", size = 17600810, upload-time = "2026-09-01T17:04:08.984Z" },
-    { url = "https://files.pythonhosted.org/packages/45/ee/e87fdcbe463d3eb5f8e394bc687a28efdfef0acfae163c22a608094dafaa/pyuipc-0.0.27-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:282cb2e3150354f20b0e9271bad07c6e853531605c5888d6db22a09d5814cfe1", size = 17350508, upload-time = "2026-09-01T17:04:12.061Z" },
-    { url = "https://files.pythonhosted.org/packages/3a/e2/e105d827c921012e11c7ac19935c2f6d7a63a3bfcbb74ac695ca6ed8cb96/pyuipc-0.0.27-cp314-cp314-win_amd64.whl", hash = "sha256:2b054b1e50b54bdac4033f180600045e302196ebb0accc0ff6b64452b7c9eb28", size = 17782073, upload-time = "2026-09-01T17:04:15.028Z" },
+    { url = "https://files.pythonhosted.org/packages/42/0e/4a5a3f63e5e05ea1c52b521848388baa938c473d0a6b9f4f2a3256f9a697/pyuipc-0.0.28-cp310-cp310-manylinux_2_34_x86_64.whl", hash = "sha256:c4b729a3502c6cbac83d32bdad76cb03105afebcbf318ffc1c50d829c94b59e5", size = 57986862, upload-time = "2026-09-05T00:46:59.321Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/1d/148db91892c1d8515af7c242af4e175223efcca7a3944c6de003ef9ebbdb/pyuipc-0.0.28-cp310-cp310-win_amd64.whl", hash = "sha256:05ffe6f8130dc2f9200d524672779372ecb622add5a0f98a551811a1d9b29731", size = 57661935, upload-time = "2026-09-05T00:47:02.585Z" },
+    { url = "https://files.pythonhosted.org/packages/57/ee/48d3de9225fa77c9e8f17ae2f6f2e8d42f920f378f8d5752be4884415fc0/pyuipc-0.0.28-cp311-cp311-manylinux_2_34_x86_64.whl", hash = "sha256:992cb66a65620ed0ad03ebd04d4997950add3bb4a7d0bc8013dd1b981ee150af", size = 57987714, upload-time = "2026-09-05T00:47:05.494Z" },
+    { url = "https://files.pythonhosted.org/packages/08/d6/8afb0e54e3b47da9429bde01dfd7df716f25b4b4bccbdfb4f7062ab93691/pyuipc-0.0.28-cp311-cp311-win_amd64.whl", hash = "sha256:1f3eff92c80024f17d10705fe4a13440ba3807b1d94b74f6773bd56a979210ce", size = 57633401, upload-time = "2026-09-05T00:47:08.671Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/f8/0d5f4f0b824e215ecd1d75c7c770267bb69d7e08418e19d11cf8773e79db/pyuipc-0.0.28-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:7fce671a9d8ac7b77c61956436205c395a42f11f404b932313b25ad5b71a4f95", size = 57988573, upload-time = "2026-09-05T00:47:11.629Z" },
+    { url = "https://files.pythonhosted.org/packages/17/01/112628f52f2364256078a626cbfc8de4f1a0aea141bf8f49c4e4907d1b3e/pyuipc-0.0.28-cp312-cp312-win_amd64.whl", hash = "sha256:ff05aae737c959758c4a1686497e02ea555169eb1ef2685e977019649d1bd262", size = 57664457, upload-time = "2026-09-05T00:47:17.913Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/35/7f8f76b288178e12d767278d6cb7bcd301d15f185a587cce77b8be38c07b/pyuipc-0.0.28-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:b473eb5fdc3638b5d23ea608cd79b7646c38f28442e8630b4d95788e3611c2fe", size = 57991245, upload-time = "2026-09-05T00:47:21.597Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/9e/995aa8ef161973b1da468e1b7f08b1273da2b815be7915fdd16a6219dfd5/pyuipc-0.0.28-cp313-cp313-win_amd64.whl", hash = "sha256:9aac1276c735092c4b75f8b953013b6989b1a7097623c2a04843e2819c909954", size = 57653933, upload-time = "2026-09-05T00:47:25.181Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/7a/c53f4a9713b131bba871345e0787c00f9f2c284987044dcf70dd75867394/pyuipc-0.0.28-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:4b0dee337861096731ac2720629e7dc87b13fa035509218829c881c96a842f4d", size = 57993222, upload-time = "2026-09-05T00:47:28.839Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/59/e651a18cc58a65cb5aca32bc0dd27dd2d6d8aea646f0376023c89539fd00/pyuipc-0.0.28-cp314-cp314-win_amd64.whl", hash = "sha256:aa4cb59777970f0a31e5a54561528abd91076a727a34c9fee147b2fda09f688f", size = 58157104, upload-time = "2026-09-05T00:47:32.507Z" },
 ]
 
 [[package]]
