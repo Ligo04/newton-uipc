@@ -99,6 +99,7 @@ from ._src.sim import (  # noqa: E402
     eval_inverse_dynamics_passive,
     eval_jacobian,
     eval_mass_matrix,
+    eval_mimic,
     eval_rigid_contact_kinematics,
 )
 
@@ -123,6 +124,7 @@ __all__ += [
     "eval_inverse_dynamics_passive",
     "eval_jacobian",
     "eval_mass_matrix",
+    "eval_mimic",
     "eval_rigid_contact_kinematics",
 ]
 

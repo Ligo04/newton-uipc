@@ -41,6 +41,7 @@ construction.
    DrivePID
    DriveStablePD
    ResponseOracle
+   JointSpaceResponse
    SchemaNames
 
 .. rubric:: Functions
