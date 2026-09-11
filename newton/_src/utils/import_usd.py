@@ -5096,6 +5096,10 @@ def parse_usd(
 
     initialize_free_joint_velocities()
 
+    # Collect both schema families before resolving chains, including mixed-schema chains.
+    # Each entry is follower -> (reference, offset, multiplier) in joint coordinates.
+    pending_mimics: dict[int, tuple[int, float, float]] = {}
+
     # Mimic constraints from PhysxMimicJointAPI (run after collapse so joint indices are final).
     # PhysxMimicJointAPI is an instance-applied schema (e.g. PhysxMimicJointAPI:rotZ)
     # that couples a follower joint to a leader (reference) joint with a gearing ratio.
@@ -5107,8 +5111,8 @@ def parse_usd(
     #   - coef0 carries the follower unit: deg -> rad when the follower is angular.
     #   - coef1 maps leader units to follower units; the deg<->deg (or m<->m) factors
     #     cancel for same-type pairs, leaving a net scale only for mixed angular/linear
-    #     pairs. The follower's angular-ness comes from the axis instance ("rot*" vs
-    #     "trans*"); the leader's from its joint type.
+    #     pairs. Scalar USD joint types determine the units, even if the mimic API
+    #     instance is named "rot*" on a prismatic joint.
     for joint_path, joint_idx in path_joint_map.items():
         joint_prim = stage.GetPrimAtPath(joint_path)
         if not joint_prim or not joint_prim.IsValid():
@@ -5170,7 +5174,12 @@ def parse_usd(
 
             # Convert USD units (deg for angular, m for linear) to Newton's (rad/m).
             follower_angular = axis_instance.lower().startswith("rot")
-            leader_angular = builder.joint_type[leader_idx] == JointType.REVOLUTE
+            if joint_prim.IsA(UsdPhysics.RevoluteJoint):
+                follower_angular = True
+            elif joint_prim.IsA(UsdPhysics.PrismaticJoint):
+                follower_angular = False
+            # Read the authored type because scalar joints can merge into a D6.
+            leader_angular = stage.GetPrimAtPath(leader_path).IsA(UsdPhysics.RevoluteJoint)
             coef0_scale = DegreesToRadian if follower_angular else 1.0
             if follower_angular and not leader_angular:
                 coef1_scale = DegreesToRadian
@@ -5179,15 +5188,11 @@ def parse_usd(
             else:
                 coef1_scale = 1.0
 
-            builder.set_joint_mimic(
-                joint=joint_idx,
-                reference_joint=leader_idx,
-                coeffs=(-offset * coef0_scale, -gearing * coef1_scale),
-            )
+            pending_mimics[joint_idx] = (leader_idx, -offset * coef0_scale, -gearing * coef1_scale)
 
             if verbose:
                 print(
-                    f"Added PhysxMimicJointAPI constraint: '{joint_path}' follows '{leader_path}' "
+                    f"Parsed PhysxMimicJointAPI constraint: '{joint_path}' follows '{leader_path}' "
                     f"(gearing={gearing}, offset={offset}, axis={axis_instance})"
                 )
 
@@ -5238,7 +5243,31 @@ def parse_usd(
                 stacklevel=2,
             )
         leader_idx = path_joint_map[leader_path_str]
-        builder.set_joint_mimic(joint=joint_idx, reference_joint=leader_idx, coeffs=(coef0, coef1))
+        pending_mimics[joint_idx] = (leader_idx, coef0, coef1)
+
+    # Builder mimic metadata requires independent references. Compose affine edges
+    # only after unit conversion, so each follower references the ultimate driver.
+    resolved_mimics: dict[int, tuple[int, float, float]] = {}
+    for follower in pending_mimics:
+        chain: list[int] = []
+        visiting: set[int] = set()
+        joint = follower
+        while joint in pending_mimics and joint not in resolved_mimics:
+            if joint in visiting:
+                paths = " -> ".join(builder.joint_label[index] for index in (*chain, joint))
+                raise ValueError(f"Cyclic USD mimic relationship: {paths}")
+            visiting.add(joint)
+            chain.append(joint)
+            joint = pending_mimics[joint][0]
+        reference, offset, multiplier = resolved_mimics.get(joint, (joint, 0.0, 1.0))
+        for joint in reversed(chain):
+            _, edge_offset, edge_multiplier = pending_mimics[joint]
+            offset = edge_offset + edge_multiplier * offset
+            multiplier = edge_multiplier * multiplier
+            resolved_mimics[joint] = (reference, offset, multiplier)
+
+    for joint, (reference, offset, multiplier) in resolved_mimics.items():
+        builder.set_joint_mimic(joint=joint, reference_joint=reference, coeffs=(offset, multiplier))
 
     # Parse Newton actuator prims from the USD stage.
     from ..actuators.delay import Delay  # noqa: PLC0415

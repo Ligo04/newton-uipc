@@ -1,0 +1,1 @@
+Flatten USD mimic chains onto independent reference joints after composing offsets and multipliers in joint coordinates, reject cyclic references, and use authored scalar joint types for PhysX mimic unit conversion.
