@@ -326,7 +326,10 @@ class TestUIPCMimicShapelessMotor(unittest.TestCase):
                 anchor = builder.add_link(xform=wp.transform((0.0, 0.0, 1.0), wp.quat_identity()))
                 builder.add_shape_box(anchor, hx=0.1, hy=0.1, hz=0.1)
                 root = builder.add_joint_revolute(
-                    parent=-1, child=anchor, parent_xform=wp.transform((0.0, 0.0, 1.0), wp.quat_identity())
+                    parent=-1,
+                    child=anchor,
+                    axis=(0.0, 1.0, 0.0),
+                    parent_xform=wp.transform((0.0, 0.0, 1.0), wp.quat_identity()),
                 )
                 # EX001-like virtual motor: no shape, tiny spatial inertia, reflected joint inertia.
                 motor = builder.add_link(
@@ -374,6 +377,9 @@ class TestUIPCMimicShapelessMotor(unittest.TestCase):
                     solver.step(state, next_state, control, dt=dt)
                     state, next_state = next_state, state
                     self.assertTrue(np.isfinite(state.body_q.numpy()).all(), f"step {step}")
+                    # The motor's reflected inertia is relative to its parent;
+                    # its tiny spatial inertia cannot cause a large wrist recoil.
+                    self.assertLess(abs(float(state.joint_q.numpy()[builder.joint_q_start[root]])), 0.01)
                     transform = np.asarray(uipc.view(solver.mapping.body_geo_slots[motor].geometry().transforms()))[0]
                     np.testing.assert_allclose(
                         np.linalg.svd(transform[:3, :3], compute_uv=False), 1.0, atol=0.01, err_msg=f"step {step}"

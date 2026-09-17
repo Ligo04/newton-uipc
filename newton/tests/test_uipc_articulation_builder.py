@@ -971,6 +971,45 @@ class TestUIPCArmatureRuntimeRefresh(unittest.TestCase):
 
     _DT = 1.0 / 60.0
 
+    def test_revolute_effort_tracks_armature_refresh_and_target_mode(self):
+        """Apply torque once across positive, zero and restored armature, and stop it in NONE mode."""
+        builder = newton.ModelBuilder(gravity=0.0)
+        body = builder.add_link()
+        builder.add_shape_box(body, hx=0.05, hy=0.05, hz=0.05)
+        joint = builder.add_joint_revolute(parent=-1, child=body, axis=newton.Axis.Z, armature=0.01)
+        builder.joint_target_mode[builder.joint_qd_start[joint]] = int(JointTargetMode.EFFORT)
+        model = builder.finalize()
+        dt, torque = 1.0 / 240.0, 0.03
+        solver = newton.solvers.SolverUIPC(
+            model, dt=dt, workspace="/tmp/newton_uipc_effort_armature_refresh", logger_level=uipc.Logger.Error
+        )
+        solver.sync_uipc_inertia_with_model()
+        solver.initialize()
+        inertia = float(model.body_inertia.numpy()[body, 2, 2])
+        state, next_state = model.state(), model.state()
+        control = model.control()
+        control.joint_f.assign(np.array([torque], dtype=np.float32))
+        for armature in (0.01, 0.0, 0.02):
+            with self.subTest(armature=armature):
+                model.joint_armature.assign(np.array([armature], dtype=np.float32))
+                solver.notify_model_changed(newton.ModelFlags.JOINT_DOF_PROPERTIES)
+                velocities = []
+                for _ in range(24):
+                    solver.step(state, next_state, control, dt=dt)
+                    state, next_state = next_state, state
+                    velocities.append(float(state.joint_qd.numpy()[0]))
+                acceleration = float(np.polyfit(np.arange(12) * dt, velocities[-12:], 1)[0])
+                expected = torque / (inertia + armature)
+                self.assertAlmostEqual(acceleration, expected, delta=0.05 * expected)
+
+        model.joint_target_mode.assign(np.array([int(JointTargetMode.NONE)], dtype=np.int32))
+        solver.notify_model_changed(newton.ModelFlags.JOINT_DOF_PROPERTIES)
+        velocity = float(state.joint_qd.numpy()[0])
+        for _ in range(24):
+            solver.step(state, next_state, control, dt=dt)
+            state, next_state = next_state, state
+        self.assertAlmostEqual(float(state.joint_qd.numpy()[0]), velocity, delta=0.02)
+
     @classmethod
     def _make_passive_slider(cls, armature: float | None):
         """Passive (NONE-mode) vertical slider under gravity, as in

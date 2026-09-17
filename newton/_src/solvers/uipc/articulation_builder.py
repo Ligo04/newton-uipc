@@ -1296,8 +1296,12 @@ class ArticulationBuilder:
         :class:`ExternalArticulationConstraint`. ``mass`` is the absolute armature
         (kg for prismatic, kg·m² for revolute; the backend applies ``1/dt²``);
         ``delta_theta_tilde`` is the previous step's ``delta_theta`` (gravity-free
-        inertial prediction). Drive-channel independent, so it covers all target
-        modes; diagonal ``M^t`` (no cross-joint coupling).
+        inertial prediction). For revolute EFFORT mode, add ``dt^2 * torque / m_a``
+        to that prediction: completing the square adds the work term
+        ``-torque * delta_theta`` to the same joint-coordinate potential.
+        This avoids applying a frozen affine torque Jacobian alongside nonlinear
+        joint inertia, which can cause artificial parent rotation at large increments.
+        Diagonal ``M^t`` (no cross-joint coupling) covers every target mode.
 
         See ``docs/development/backend_cuda/joint_armature.md``.
         """
@@ -1316,6 +1320,7 @@ class ArticulationBuilder:
         edge_indices: list[int] = []
         masses: list[float] = []
         dof_indices: list[int] = []
+        joint_indices: list[int] = []
         for j in art.active_joint_indices:
             if int(type_np[j]) not in (int(JointType.REVOLUTE), int(JointType.PRISMATIC)):
                 continue
@@ -1330,6 +1335,9 @@ class ArticulationBuilder:
             edge_indices.append(art._joint_edge_idx[j])
             masses.append(a)
             dof_indices.append(dof)
+            joint_indices.append(j)
+            if int(type_np[j]) == int(JointType.REVOLUTE):
+                art._effort_armature[j] = a
 
         if not joint_geos:
             return
@@ -1356,7 +1364,17 @@ class ArticulationBuilder:
             except (TypeError, IndexError):
                 return
             delta_theta = _view_attr(slot=geo["joint"].find("delta_theta"))
-            _view_attr(geo["joint"].find("delta_theta_tilde"))[:] = delta_theta
+            prediction = _view_attr(geo["joint"].find("delta_theta_tilde"))
+            prediction[:] = delta_theta
+            assert art.is_force_constrained is not None
+            assert art.target_force is not None
+            force_enabled = art.is_force_constrained.numpy()
+            forces = art.target_force.numpy()
+            for row, joint in enumerate(joint_indices):
+                armature = art._effort_armature.get(joint, 0.0)
+                local = art._joint_to_local[joint]
+                if armature > 0.0 and force_enabled[local]:
+                    prediction[row] += self._dt * self._dt * forces[local] / armature
 
         self._scene.animator().insert(obj, _armature_anim)
 
@@ -1426,6 +1444,9 @@ class ArticulationBuilder:
             n = len(dof_indices)
             for local, dof in enumerate(dof_indices):
                 mass_view[local * n + local] = max(float(armature_np[dof]), 0.0)
+        for art in self.articulations.values():
+            for joint in art._effort_armature:
+                art._effort_armature[joint] = max(float(armature_np[art._joint_qd_start[joint]]), 0.0)
         if not self._warned_baked_armature and any(
             float(armature_np[dof]) > 0.0 for dof in self._armature_skipped_dofs
         ):

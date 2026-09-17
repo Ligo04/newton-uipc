@@ -161,29 +161,24 @@ Newton-authored values untouched after initialization, construct the solver with
 
 ### Joint armature
 
-AffineBody dynamics has no joint-space mass slot, so `Model.joint_armature` on
-a revolute joint is folded into the child link's ABD inertia as
-`armature * axis ⊗ axis` about the joint axis. This is exact for rotation
-about the joint's own axis, but the extra inertia also resists other rotations
-of that link (upstream joints, contact impulses) — unlike true joint-space
-armature. Armature children are automatically built through the
-Newton-authored mass-matrix path described above (their mass and COM then come
-from the Newton model rather than `mass_density * mesh_volume`).
-`sync_model_inertia_from_uipc` subtracts the folded armature on the way back,
-so `Model.body_inertia` always stays armature-free and joint-space consumers
-that add armature themselves (via `add_armature_to_mass_matrix` on the
-`eval_mass_matrix` result) do not double-count.
+Positive `Model.joint_armature` on revolute and prismatic joints creates an
+`ExternalArticulationConstraint` with a diagonal joint-space mass matrix.
+Its kinetic potential penalizes changes from the previous joint increment,
+so armature works in every target mode without changing the child body's
+mass or inertia.
 
-A prismatic joint's armature (a reflected translational mass) has no ABD
-inertia equivalent either — the AffineBody mass matrix's translational block
-is isotropic (`m * I3`), and the slide axis' world direction changes as the
-child link rotates, so it cannot be folded into a fixed body-frame tensor.
-Instead, on a POSITION/POSITION_VELOCITY drive (also VELOCITY under
-`implicit_pd=True`), prismatic armature is absorbed as a third aim-drive
-spring toward the free-flight prediction `q_prev + dt * qd_prev` (no gravity
-coupling — the armature's aim is inertial, not gravitational). Prismatic
-armature on a non-driven joint (NONE/EFFORT mode, or VELOCITY without
-`implicit_pd`) has no ABD equivalent and is dropped with a warning.
+For a revolute joint in `EFFORT` mode, torque is included in this same
+potential by shifting the predicted increment by `dt**2 * torque / armature`.
+Completing the square gives the joint work term `-torque * delta_angle`.
+The separate affine external-torque channel is disabled for this joint to
+avoid double application. Using a common joint coordinate for torque and
+reflected inertia avoids artificial parent rotation from a frozen affine
+torque Jacobian during large angular increments.
+
+Revolute joints without positive armature and prismatic efforts retain the
+native external torque/force channel. Runtime armature edits on existing
+constraint edges use `notify_model_changed(ModelFlags.JOINT_DOF_PROPERTIES)`;
+setting a revolute armature to zero restores the native torque channel.
 
 (uipc-custom-attributes)=
 ## UIPC-specific custom attributes
@@ -283,7 +278,7 @@ callbacks.
 | --- | --- |
 | `POSITION` | Enables UIPC driving and writes `aim_angle` / `aim_distance` from `Control.joint_target`. |
 | `POSITION_VELOCITY` | Same as `POSITION`; the position target is forwarded. |
-| `EFFORT` | Enables UIPC external torque / force and writes from `Control.joint_f`. |
+| `EFFORT` | Reads `Control.joint_f`; revolute joints with positive armature apply torque in the joint-space inertia potential, while other joints use native external torque / force. |
 | `VELOCITY` | Passive; no UIPC velocity-only drive is written. |
 | `NONE` | Passive. |
 

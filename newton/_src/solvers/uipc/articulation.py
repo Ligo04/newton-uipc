@@ -293,6 +293,9 @@ class Articulation:
         self._joint_q_start: dict[int, int] = {}
         self._joint_qd_start: dict[int, int] = {}
 
+        # Positive entries route revolute effort through the armature potential.
+        self._effort_armature: dict[int, float] = {}
+
         # UIPC geometry references (populated by ArticulationBuilder)
         self.joint_geo_slots: dict[int, SimplicialComplexSlot] = {}
         self.joint_mesh: dict[int, Any] = {}
@@ -501,7 +504,7 @@ class Articulation:
         # EAC owns a mimic follower's position, while direct effort remains available.
         driving = enable_drive and bool(self.is_constrained.numpy()[local])
         is_force_constrained = bool(self.is_force_constrained.numpy()[local])
-        force_only = is_force_constrained and not driving
+        force_only = is_force_constrained and not driving and self._effort_armature.get(newton_joint_idx, 0.0) <= 0.0
         external_torque = self.target_force.numpy()[local]
         aim_angle = self.target_position.numpy()[local]
 
