@@ -364,7 +364,7 @@ class TestUIPCShapelessProxyInertia(unittest.TestCase):
         model = builder.finalize()
 
         solver = newton.solvers.SolverUIPC(
-            model, backend="none", logger_level=uipc.Logger.Error, auto_sync_inertia=False
+            model, backend="none", logger_level=uipc.Logger.Error, auto_sync_inertia=False, default_mass_density=500.0
         )
         solver.initialize(model.state())
 
@@ -380,6 +380,8 @@ class TestUIPCShapelessProxyInertia(unittest.TestCase):
         self.assertAlmostEqual(props["mass"], model_mass, places=5)
         np.testing.assert_allclose(props["mass_center"], model_com, atol=1e-6)
         np.testing.assert_allclose(props["inertia"], model_inertia, atol=1e-6)
+        volume = uipc.view(solver.mapping.body_geo_slots[link1].geometry().meta().find("volume"))[0]
+        self.assertAlmostEqual(float(volume), 0.005, places=8)
 
 
 @unittest.skipUnless(_HAS_UIPC, "uipc is not installed")

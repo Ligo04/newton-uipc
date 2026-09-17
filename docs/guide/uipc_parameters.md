@@ -24,7 +24,7 @@
 | `SolverUIPC.ADAPTIVE_KAPPA_MIN` | `9.538500988573645e9 Pa` | 当前 UIPC 0.9.0 brick scene 的 adaptive corridor 下限 | 场景质量、尺度、`d_hat` 或时间步改变后该值可能变化；brick example 用它作为固定接触刚度。 |
 | `SolverUIPC.ADAPTIVE_KAPPA_MAX` | `9.538500988573645e11 Pa` | 当前 UIPC 0.9.0 brick scene 的 adaptive corridor 上限 | 与下限成 100 倍关系；其他场景应重新读取或计算自己的 corridor。 |
 | `kappa` | `100 * MPa` | `AffineBodyConstitution`、关节 builder | 刚体 AffineBody stiffness 参数 [Pa]。 |
-| `default_mass_density` | `1000.0` | 刚体 / 软体 fallback 密度 | 当无法从质量和体积估计密度时使用 [kg/m^3]。 |
+| `default_mass_density` | `1000.0` | 刚体 / 软体 fallback 密度 | 当无法从质量和体积估计密度时使用 [kg/m^3]；无几何 articulation 代理用 `mass / density` 推导刚性体积。 |
 | `logger_level` | `ULogger.Warn` | `ULogger.set_level()` | UIPC 日志等级。 |
 | `dump_enable` | `False` | solver dump 路径 | 控制是否输出 UIPC surface mesh / 调试数据。 |
 | `require_profile` | `False` | UIPC timer / report | 开启后记录 step profile，可由 `save_performance_report()` 导出。 |
@@ -63,7 +63,7 @@ Mode 2 只捕获一次 FusedPCG 求解，不捕获整帧仿真。Newton 外层�
 | `model.body_com` | custom ABD mass matrix | 仅 custom inertia 路径使用 | COM 使用 Newton body-local COM。 |
 | `model.body_inertia` | custom ABD mass matrix | 仅 custom inertia 路径使用 | 写入前会对惯量矩阵做对称化。 |
 | `kappa` | `AffineBodyConstitution.apply_to(...)` | `100 * MPa` | 刚体 AffineBody stiffness [Pa]。 |
-| `default_mass_density` | fallback `mass_density` | `1000.0 kg/m^3` | body mass 缺失或 mesh volume 不可用时使用。 |
+| `default_mass_density` | fallback `mass_density` | `1000.0 kg/m^3` | body mass 缺失或 mesh volume 不可用时使用；动态无几何代理以 `mass / density` 作为 ABD 刚性势能的体积系数，保留原始质量、质心和惯量。 |
 | `model.shape_body` | body -> collision shape 映射 | 只选属于当前 body 的 shape | world 静态 shape 使用 `shape_body == -1` 路径。 |
 | `model.shape_type` | 生成 UIPC mesh / halfplane | 支持 mesh、convex mesh、box、sphere、capsule、cylinder、cone；plane 单独处理 | plane 不作为 AffineBody mesh；ground plane 走 `halfplane`。 |
 | `model.shape_transform` | shape 局部变换 | 合成 body mesh | 用于把 shape 几何放到 body-local/world 位置。 |

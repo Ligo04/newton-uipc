@@ -1,0 +1,1 @@
+Fix UIPC geometry-free articulation bodies deforming under joint torque and causing PCG failures in mimic grippers by deriving their rigidity volume from mass and default density while preserving authored inertia.

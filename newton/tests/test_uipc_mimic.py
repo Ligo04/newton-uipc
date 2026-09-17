@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 import unittest
 
 import numpy as np
@@ -17,6 +18,9 @@ from newton.tests.unittest_utils import get_selected_cuda_test_devices
 
 _HAS_UIPC = importlib.util.find_spec("uipc") is not None
 _CUDA_TEST_DEVICES = get_selected_cuda_test_devices(mode="basic")
+
+if _HAS_UIPC:
+    import uipc
 
 _Q_ID = wp.quat_identity(dtype=wp.float64)  # pyright: ignore[reportArgumentType]
 
@@ -309,6 +313,75 @@ class TestUIPCMimicTracking(unittest.TestCase):
                 self.assertTrue(np.isfinite(q).all())
                 np.testing.assert_allclose(q[q_start[leaders]], goals, atol=0.01)
                 np.testing.assert_allclose(q[q_start[followers]], [-0.2, 0.3], atol=0.01)
+
+
+@unittest.skipUnless(_HAS_UIPC and _CUDA_TEST_DEVICES, "uipc and CUDA are required")
+class TestUIPCMimicShapelessMotor(unittest.TestCase):
+    def test_shapeless_motor_stays_rigid_during_repeated_open_close(self):
+        """A geometry-free motor must remain rigid under torque and mixed-joint mimic loads."""
+        for device in _CUDA_TEST_DEVICES:
+            with self.subTest(device=str(device)), tempfile.TemporaryDirectory() as workspace:
+                wp.set_device(device)
+                builder = newton.ModelBuilder(gravity=(0.0, 0.0, 0.0))
+                anchor = builder.add_link(xform=wp.transform((0.0, 0.0, 1.0), wp.quat_identity()))
+                builder.add_shape_box(anchor, hx=0.1, hy=0.1, hz=0.1)
+                root = builder.add_joint_revolute(
+                    parent=-1, child=anchor, parent_xform=wp.transform((0.0, 0.0, 1.0), wp.quat_identity())
+                )
+                # EX001-like virtual motor: no shape, tiny spatial inertia, reflected joint inertia.
+                motor = builder.add_link(
+                    xform=wp.transform((0.0, 0.2, 1.0), wp.quat_identity()),
+                    mass=0.1,
+                    inertia=wp.mat33(np.eye(3) * 1.6667e-10),
+                )
+                leader = builder.add_joint_revolute(
+                    parent=anchor,
+                    child=motor,
+                    axis=(0.0, 1.0, 0.0),
+                    parent_xform=wp.transform((0.0, 0.2, 0.0), wp.quat_identity()),
+                )
+                followers = []
+                scales = (-0.00015 * 180.0 / np.pi, 0.00015 * 180.0 / np.pi)
+                for side, scale in zip((-1, 1), scales, strict=True):
+                    offset = (0.2, side * 0.1, 0.0)
+                    finger = builder.add_link(xform=wp.transform((offset[0], offset[1], 1.0), wp.quat_identity()))
+                    builder.add_shape_box(finger, hx=0.01, hy=0.01, hz=0.05)
+                    follower = builder.add_joint_prismatic(
+                        parent=anchor,
+                        child=finger,
+                        axis=(0.0, 1.0, 0.0),
+                        parent_xform=wp.transform(offset, wp.quat_identity()),
+                    )
+                    builder.set_joint_mimic(follower, leader, coeffs=(0.0, scale))
+                    followers.append(follower)
+                builder.add_articulation([root, leader, *followers])
+                leader_dof = builder.joint_qd_start[leader]
+                builder.joint_target_mode[leader_dof] = int(JointTargetMode.EFFORT)
+                builder.joint_armature[leader_dof] = 1.0
+                model = builder.finalize(device=device)
+                dt = 1.0 / 120.0
+                solver = newton.solvers.SolverUIPC(model, dt=dt, workspace=workspace)
+                state, next_state = model.state(), model.state()
+                control = model.control()
+                q_index = builder.joint_q_start[leader]
+                follower_indices = [builder.joint_q_start[j] for j in followers]
+                for step in range(1200):
+                    target = 5.717175 if (step // 150) % 2 else 0.0
+                    q, qd = state.joint_q.numpy(), state.joint_qd.numpy()
+                    force = control.joint_f.numpy()
+                    force[leader_dof] = np.clip(4000.0 * (target - q[q_index]) - 50.0 * qd[leader_dof], -500.0, 500.0)
+                    control.joint_f.assign(force)
+                    solver.step(state, next_state, control, dt=dt)
+                    state, next_state = next_state, state
+                    self.assertTrue(np.isfinite(state.body_q.numpy()).all(), f"step {step}")
+                    transform = np.asarray(uipc.view(solver.mapping.body_geo_slots[motor].geometry().transforms()))[0]
+                    np.testing.assert_allclose(
+                        np.linalg.svd(transform[:3, :3], compute_uv=False), 1.0, atol=0.01, err_msg=f"step {step}"
+                    )
+                    if step % 150 == 149:
+                        q = state.joint_q.numpy()
+                        self.assertAlmostEqual(float(q[q_index]), target, delta=0.05)
+                        np.testing.assert_allclose(q[follower_indices], np.asarray(scales) * target, atol=5e-4)
 
 
 if __name__ == "__main__":

@@ -350,6 +350,8 @@ class SolverUIPC(SolverBase):
                 ``gravity`` overridden from the Newton model.
             kappa: AffineBody stiffness parameter [Pa]. Defaults to ``1 GPa``.
             default_mass_density: Default mass density [kg/m^3] for bodies.
+                Also determines the rigidity volume of geometry-free articulation
+                proxies as mass / density, without changing their authored inertia.
             logger_level: UIPC logger verbosity. Use ``uipc.Logger.Critical``,
                 ``uipc.Logger.Error``, ``uipc.Logger.Warn``, ``uipc.Logger.Info``,
                 ``uipc.Logger.Debug``, or ``uipc.Logger.Trace``.
@@ -1055,6 +1057,7 @@ class SolverUIPC(SolverBase):
             drive_strength_ratio=self._drive_strength_ratio,
             limit_strength_ratio=self._limit_strength_ratio,
             implicit_pd=self._implicit_pd,
+            default_mass_density=self._default_mass_density,
         )
         self._cloth_builder = ClothBuilder(
             model,

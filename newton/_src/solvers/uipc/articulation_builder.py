@@ -77,6 +77,7 @@ class ArticulationBuilder:
         drive_strength_ratio: float | dict[int, float] = 100.0,
         limit_strength_ratio: float | dict[int, float] = 10.0,
         implicit_pd: bool = False,
+        default_mass_density: float = 1000.0,
     ) -> None:
         self._model = model
         self._scene = scene
@@ -90,6 +91,7 @@ class ArticulationBuilder:
         self._drive_strength_ratio = drive_strength_ratio
         self._limit_strength_ratio = limit_strength_ratio
         self._implicit_pd = implicit_pd
+        self._default_mass_density = default_mass_density
 
         # Enabled mimic followers have coupled energies instead of ordinary aim drives.
         self._mimic_follower_joints: set[int] | None = None
@@ -384,7 +386,8 @@ class ArticulationBuilder:
             inertia: Inertia tensor at the COM [kg·m²], shape ``(3, 3)``. If
                 ``None``, a negligible isotropic inertia is used.
             volume: Body volume [m³] feeding UIPC's ABD stiffness energy. If
-                ``None``, a negligible default is used.
+                ``None``, dynamic proxies use mass / default mass density;
+                fixed world anchors use a negligible default.
 
         Returns:
             The UIPC geometry slot for the proxy body.
@@ -403,7 +406,13 @@ class ArticulationBuilder:
             if inertia is None
             else np.asarray(inertia, dtype=np.float64).reshape(3, 3)
         )
-        proxy_volume = 1e-9 if volume is None else float(volume)
+        if volume is None:
+            # A dynamic proxy needs the same rigidity scale as a shaped body.
+            # The fixed-anchor volume makes a geometry-free motor deform under
+            # torque, even when its reflected joint inertia is nonzero.
+            proxy_volume = 1e-9 if is_fixed else proxy_mass / self._default_mass_density
+        else:
+            proxy_volume = float(volume)
         applied_kappa = self._kappa if kappa is None else kappa
         sc = self._abd.create_proxy(applied_kappa, proxy_mass, proxy_center, proxy_inertia, proxy_volume)
 
@@ -450,9 +459,9 @@ class ArticulationBuilder:
 
         Returns ``(None, None, None)`` when the model omits inertial data or
         authored zero mass, so :meth:`_create_proxy` falls back to its
-        negligible unit proxy (the historical behaviour). The proxy's ``volume``
-        is left at the negligible default: it only scales UIPC's ABD stiffness
-        energy and does not enter the affine mass matrix.
+        unit proxy (the historical behaviour). The proxy's volume is inferred
+        separately from mass and default density to scale the ABD rigidity
+        energy; it does not change the authored affine mass matrix.
         """
         model = self._model
         if model.body_mass is None:
