@@ -99,6 +99,12 @@ class SolverUIPC(SolverBase):
     reading the cached control values and writing ``aim_angle`` / ``aim_position`` to the
     joint geometry.
 
+    Scalar mimic relations from :meth:`~newton.ModelBuilder.set_joint_mimic` or legacy mimic constraints
+    are coupled bidirectionally by UIPC external-articulation energies. Followers retain inactive,
+    zero-strength drive entries for native index compatibility and receive no independent position drive.
+    Direct follower efforts remain available in ``EFFORT`` mode. Mimic metadata is read at initialization;
+    changing its coefficients or enabled state requires rebuilding the solver.
+
     The solver supports a **deferred initialization** workflow so that users can
     configure the UIPC scene and contact tabular before the world is initialized:
 
@@ -389,7 +395,9 @@ class SolverUIPC(SolverBase):
                 mapping keyed by Newton joint index (missing joints fall back
                 to ``100.0``). This is a pure solver constraint-stiffness
                 knob, deliberately independent of ``joint_target_ke`` /
-                ``joint_target_kd``; non-position joints get no drive.
+                ``joint_target_kd``; non-position joints get no drive. For a mimic
+                follower, this value scales the coupled relation energy regardless
+                of the follower's target mode.
             limit_strength_ratio: UIPC ``strength_ratio`` of the joint-limit
                 constraints. Either a global float or a per-joint mapping
                 keyed by Newton joint index (missing joints fall back to
@@ -409,7 +417,8 @@ class SolverUIPC(SolverBase):
                 are read at initialization; to change them at runtime,
                 write the model arrays and call
                 :meth:`notify_model_changed` with
-                :attr:`~newton.ModelFlags.JOINT_DOF_PROPERTIES`.
+                :attr:`~newton.ModelFlags.JOINT_DOF_PROPERTIES`. Mimic followers
+                use their coupled relation energy instead of an independent PD drive.
         """
         super().__init__(model=model)
         self.import_uipc()
@@ -1174,7 +1183,7 @@ class SolverUIPC(SolverBase):
             if self._deformable_builder.has_deformable:
                 self._deformable_builder.build(actor_elems[world_index], particle_range, se)
 
-        # Resolve mimic couplings after registering all world joints.
+        # Build coupled mimic energies after registering all world joints.
         self._articulation_builder.setup_mimic_constraints()
 
         # Initialize UIPC world and set up state accessors
@@ -1312,8 +1321,8 @@ class SolverUIPC(SolverBase):
         # Sync host control arrays before UIPC advances.
         self._articulation_builder.sync_control_transfers()
 
-        # Apply mimic targets before the animator runs.
-        self._articulation_builder.apply_mimic_targets()
+        # Couple measured joint increments inside the upcoming UIPC solve.
+        self._articulation_builder.update_mimic_constraints()
 
         # Dump surface geometry before physics advance
         if self._dump_enable:

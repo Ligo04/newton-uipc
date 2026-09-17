@@ -52,14 +52,15 @@ class ArticulationBuilder:
     logic.  This builder handles only the **construction** phase:
 
     1. Group Newton joints by articulation index.
-    2. Create UIPC geometry (linemesh) for each driven joint.
+    2. Create UIPC geometry (linemesh) for each active joint.
     3. Register UIPC Animator callbacks that delegate to the owning
        :class:`Articulation`.
 
-    After :meth:`build_joints`, the builder exposes three methods that
+    After :meth:`build_joints`, the builder exposes methods that
     :class:`SolverUIPC` calls every step:
 
     - :meth:`cache_joint_control` — extract from Newton ``Control``.
+    - :meth:`update_mimic_constraints` — update coupled-joint predictions.
     - :meth:`write_joint_readback` — write back to Newton ``State``.
     - :meth:`increment_step` — bump all articulation frame counters.
     """
@@ -90,8 +91,9 @@ class ArticulationBuilder:
         self._limit_strength_ratio = limit_strength_ratio
         self._implicit_pd = implicit_pd
 
-        # Cache mimic-follower joint indices.
+        # Enabled mimic followers have coupled energies instead of ordinary aim drives.
         self._mimic_follower_joints: set[int] | None = None
+        self._mimic_relations: list[tuple[int, int, float, float, str]] | None = None
 
         # Per-articulation runtime objects (populated by build_joints)
         self.articulations: dict[int, Articulation] = {}
@@ -103,7 +105,9 @@ class ArticulationBuilder:
         self._subscene_elem: Any | None = None
 
         # Resolved mimic constraints (populated by setup_mimic_constraints).
-        self._mimic_constraints: list[tuple[Articulation, int, Articulation, int, float, float]] = []
+        self._mimic_constraints: list[
+            tuple[Articulation, int, Articulation, int, float, float, SimplicialComplexSlot]
+        ] = []
 
         # Store live armature-constraint handles.
         self._armature_slots: list[tuple[SimplicialComplexSlot, list[int]]] = []
@@ -293,17 +297,18 @@ class ArticulationBuilder:
                     stacklevel=2,
                 )
 
-        # Batch build each joint type
-        if revolute_joints:
-            self._build_revolute_joints_batch(
-                revolute_joints,
-                model,
-            )
-        if prismatic_joints:
-            self._build_prismatic_joints_batch(
-                prismatic_joints,
-                model,
-            )
+        # Keep followers separate so their animator cannot enable an independent aim drive.
+        mimic_followers = self._mimic_follower_joint_set(model)
+        for joints, build_batch in (
+            (revolute_joints, self._build_revolute_joints_batch),
+            (prismatic_joints, self._build_prismatic_joints_batch),
+        ):
+            driven_joints = [jdata for jdata in joints if jdata["j"] not in mimic_followers]
+            follower_joints = [jdata for jdata in joints if jdata["j"] in mimic_followers]
+            if driven_joints:
+                build_batch(driven_joints, model)
+            if follower_joints:
+                build_batch(follower_joints, model, with_drive=False)
         if fixed_joints:
             self._build_fixed_joints_batch(fixed_joints)
         if ball_joints:
@@ -476,8 +481,10 @@ class ArticulationBuilder:
         self,
         joints: list[dict],
         model: Any,
+        *,
+        with_drive: bool = True,
     ) -> None:
-        """Create all revolute joints in a single batched linemesh."""
+        """Create a batch of revolute joints, optionally with aim drives."""
         l_verts: list[np.ndarray] = []  # parent-side positions
         r_verts: list[np.ndarray] = []  # child-side positions
         parent_slots: list[SimplicialComplexSlot] = []
@@ -556,7 +563,9 @@ class ArticulationBuilder:
             child_slots.append(c_slot)
             child_ids.append(c_id)
             strengths.append(self._joint_strength_ratio)
-            drive_strength, damp_blend = self._drive_params(j, jdata, model)
+            drive_strength, damp_blend = 0.0, 0.0
+            if with_drive:
+                drive_strength, damp_blend = self._drive_params(j, jdata, model)
             drive_strengths.append(drive_strength)
 
             # Limits
@@ -598,10 +607,9 @@ class ArticulationBuilder:
             np.array(child_ids, dtype=np.int32),
             np.array(strengths, dtype=np.float64),
         )
-        AffineBodyDrivingRevoluteJoint().apply_to(
-            jm,
-            np.array(drive_strengths, dtype=np.float64),
-        )
+        # pyuipc 0.0.28 requires dense drive/base-joint indices, even for passive followers.
+        # Their zero-strength entries stay disabled in the animator; EAC owns the coupling.
+        AffineBodyDrivingRevoluteJoint().apply_to(jm, np.array(drive_strengths, dtype=np.float64))
         AffineBodyRevoluteJointExternalForce().apply_to(jm)
         if has_any_limit:
             AffineBodyRevoluteJointLimit().apply_to(
@@ -617,7 +625,7 @@ class ArticulationBuilder:
             init_angle_view: np.ndarray = _view_attr(jm.edges().find("init_angle"))
             init_angle_view[:] = init_angles_np
 
-        jobj: Object = self._scene.objects().create("joints_revolute")
+        jobj: Object = self._scene.objects().create("joints_revolute" if with_drive else "joints_revolute_mimic")
         jslot: SimplicialComplexSlot = jobj.geometries().create(jm)[0]
 
         # Record mappings for each joint
@@ -636,7 +644,7 @@ class ArticulationBuilder:
             except (TypeError, IndexError):
                 return
             for art, newton_j, edge_idx in anim_dispatch:
-                art.revolute_joint_anim(info, geo, newton_j, edge_idx)
+                art.revolute_joint_anim(info, geo, newton_j, edge_idx, enable_drive=with_drive)
 
         self._scene.animator().insert(jobj, _revolute_batch_anim)
 
@@ -644,8 +652,10 @@ class ArticulationBuilder:
         self,
         joints: list[dict],
         model: Any,
+        *,
+        with_drive: bool = True,
     ) -> None:
-        """Create all prismatic joints in a single batched linemesh."""
+        """Create a batch of prismatic joints, optionally with aim drives."""
         l_verts: list[np.ndarray] = []  # parent-side positions
         r_verts: list[np.ndarray] = []  # child-side positions
         parent_slots: list[SimplicialComplexSlot] = []
@@ -719,7 +729,9 @@ class ArticulationBuilder:
             child_slots.append(c_slot)
             child_ids.append(c_id)
             strengths.append(self._joint_strength_ratio)
-            drive_strength, damp_blend = self._drive_params(j, jdata, model)
+            drive_strength, damp_blend = 0.0, 0.0
+            if with_drive:
+                drive_strength, damp_blend = self._drive_params(j, jdata, model)
             drive_strengths.append(drive_strength)
 
             # Limits
@@ -760,10 +772,8 @@ class ArticulationBuilder:
             np.array(child_ids, dtype=np.int32),
             np.array(strengths, dtype=np.float64),
         )
-        AffineBodyDrivingPrismaticJoint().apply_to(
-            jm,
-            np.array(drive_strengths, dtype=np.float64),
-        )
+        # Keep the drive/base-joint index mapping dense on pyuipc 0.0.28.
+        AffineBodyDrivingPrismaticJoint().apply_to(jm, np.array(drive_strengths, dtype=np.float64))
         AffineBodyPrismaticJointExternalForce().apply_to(jm)
         if has_any_limit:
             AffineBodyPrismaticJointLimit().apply_to(
@@ -773,7 +783,7 @@ class ArticulationBuilder:
                 np.array(limit_strengths, dtype=np.float64),
             )
 
-        jobj: Object = self._scene.objects().create("joints_prismatic")
+        jobj: Object = self._scene.objects().create("joints_prismatic" if with_drive else "joints_prismatic_mimic")
         jslot: SimplicialComplexSlot = jobj.geometries().create(jm)[0]
 
         for art, j, edge_idx in anim_dispatch:
@@ -790,7 +800,7 @@ class ArticulationBuilder:
             except (TypeError, IndexError):
                 return
             for art, newton_j, edge_idx in anim_dispatch:
-                art.prismatic_joint_anim(info, geo, newton_j, edge_idx)
+                art.prismatic_joint_anim(info, geo, newton_j, edge_idx, enable_drive=with_drive)
 
         self._scene.animator().insert(jobj, _prismatic_batch_anim)
 
@@ -1142,6 +1152,10 @@ class ArticulationBuilder:
             mode = int(model.joint_target_mode.numpy()[qd_start])
             if mode not in (int(JointTargetMode.POSITION), int(JointTargetMode.POSITION_VELOCITY)):
                 return 0.0
+        return self._drive_strength_ratio_for_joint(j)
+
+    def _drive_strength_ratio_for_joint(self, j: int) -> float:
+        """Return the configured drive or mimic strength ratio for joint ``j``."""
         if isinstance(self._drive_strength_ratio, dict):
             return float(self._drive_strength_ratio.get(j, 100.0))
         return float(self._drive_strength_ratio)
@@ -1164,31 +1178,64 @@ class ArticulationBuilder:
         return mass_sum
 
     def _mimic_follower_joint_set(self, model: Any) -> set[int]:
-        """Global joint indices of mimic followers (``constraint_mimic_joint0``).
-
-        A mimic follower is a kinematic slave geared off its leader
-        (``q_follower = coef0 + coef1*q_leader``) and carries no meaningful
-        physical ``joint_target_ke`` / ``joint_target_kd``. It must therefore
-        use the constant solver-knob drive strength
-        (:meth:`_extract_drive_strength`) regardless of the global
-        ``implicit_pd`` flag, so its tracking stiffness is decoupled from the
-        leader/arm actuator gains. Cached on first use.
-        """
+        """Return enabled scalar mimic followers whose coupled energy owns their aim."""
         if self._mimic_follower_joints is None:
-            followers = getattr(model, "constraint_mimic_joint0", None)
-            self._mimic_follower_joints = {int(x) for x in followers.numpy()} if followers is not None else set()
+            joint_types = model.joint_type.numpy()
+            scalar_types = (int(JointType.REVOLUTE), int(JointType.PRISMATIC))
+            self._mimic_follower_joints = {
+                follower
+                for follower, leader, *_ in self._get_mimic_relations()
+                if joint_types[follower] in scalar_types and joint_types[leader] in scalar_types
+            }
         return self._mimic_follower_joints
+
+    def _get_mimic_relations(self) -> list[tuple[int, int, float, float, str]]:
+        """Normalize joint-owned and deprecated sparse mimic metadata once at build time."""
+        if self._mimic_relations is not None:
+            return self._mimic_relations
+        model = self._model
+        relations: list[tuple[int, int, float, float, str]] = []
+        legacy_followers: set[int] = set()
+        if model.constraint_mimic_count:
+            followers = model.constraint_mimic_joint0.numpy()
+            leaders = model.constraint_mimic_joint1.numpy()
+            offsets = model.constraint_mimic_coef0.numpy()
+            multipliers = model.constraint_mimic_coef1.numpy()
+            enabled = (
+                model.constraint_mimic_enabled.numpy()
+                if model.constraint_mimic_enabled is not None
+                else np.ones(model.constraint_mimic_count, dtype=bool)
+            )
+            legacy_followers = {int(follower) for follower in followers}
+            for i, (follower, leader, offset, multiplier, active) in enumerate(
+                zip(followers, leaders, offsets, multipliers, enabled, strict=True)
+            ):
+                if active:
+                    label = model.constraint_mimic_label[i] or f"mimic_{i}"
+                    relations.append((int(follower), int(leader), float(offset), float(multiplier), label))
+
+        # Match SolverMuJoCo: legacy entries, including disabled ones, take precedence for the same follower.
+        if model.joint_mimic_joint is not None and model.joint_mimic_coeffs is not None:
+            references = model.joint_mimic_joint.numpy()
+            coeffs = model.joint_mimic_coeffs.numpy()
+            for follower, leader in enumerate(references):
+                if leader >= 0 and follower not in legacy_followers:
+                    offset, multiplier = coeffs[follower]
+                    relations.append(
+                        (follower, int(leader), float(offset), float(multiplier), f"joint_mimic_{follower}")
+                    )
+        self._mimic_relations = relations
+        return relations
 
     def _drive_params(self, j: int, jdata: dict, model: Any) -> tuple[float, float]:
         """Aim-drive parameters ``(strength_ratio, damping_blend)``.
 
         Dispatches to :meth:`_implicit_pd_params` under ``implicit_pd``;
-        otherwise the plain solver-knob drive strength. Mimic followers always
-        take the plain solver-knob strength (never implicit-PD), so their
-        tracking stiffness stays decoupled from actuator ``ke``/``kd``. Armature
-        is carried separately by :meth:`_build_external_articulation`.
+        otherwise the plain solver-knob drive strength. Mimic followers have
+        disabled zero-strength drives and never call this method. Armature is
+        carried separately by :meth:`_build_external_articulation`.
         """
-        if self._implicit_pd and j not in self._mimic_follower_joint_set(model):
+        if self._implicit_pd:
             return self._implicit_pd_params(j, jdata, model)
         return self._extract_drive_strength(j, model), 0.0
 
@@ -1326,16 +1373,17 @@ class ArticulationBuilder:
             for newton_idx in art.active_joint_indices:
                 if newton_idx not in art._joint_edge_idx:
                     continue
-                jdata = {
-                    "parent_body": int(joint_parent[newton_idx]),
-                    "child_body": int(joint_child[newton_idx]),
-                }
-                # Route gain refreshes through _drive_params for mimic followers.
-                strength, damp_blend = self._drive_params(newton_idx, jdata, model)
+                if newton_idx in self._mimic_follower_joint_set(model):
+                    continue
                 geo = art.joint_geo_slots[newton_idx].geometry()
                 attr = geo.edges().find("driving/strength_ratio")
                 if attr is None:
                     continue
+                jdata = {
+                    "parent_body": int(joint_parent[newton_idx]),
+                    "child_body": int(joint_child[newton_idx]),
+                }
+                strength, damp_blend = self._drive_params(newton_idx, jdata, model)
                 _view_attr(attr)[art._joint_edge_idx[newton_idx]] = strength
                 local = art._joint_to_local[newton_idx]
                 if strength > 0.0 and damp_blend > 0.0:
@@ -1436,10 +1484,9 @@ class ArticulationBuilder:
     def sync_control_transfers(self) -> None:
         """Block until the ``cache_joint_control`` D2H copies have landed.
 
-        Must run before any host-side consumer of the CPU control arrays
-        (:meth:`apply_mimic_targets`, the UIPC animator callbacks inside
-        ``world.advance()``). Kept out of :meth:`cache_joint_control` so the
-        kernel + copy segment stays CUDA-graph capturable.
+        Must run before the UIPC animator callbacks inside ``world.advance()``
+        consume the CPU control arrays. Kept out of :meth:`cache_joint_control`
+        so the kernel + copy segment stays CUDA-graph capturable.
         """
         wp.synchronize_stream(wp.get_stream(self._device))
 
@@ -1558,12 +1605,14 @@ class ArticulationBuilder:
     # Mimic joint coupling
 
     def setup_mimic_constraints(self) -> None:
-        """Resolve ``model.constraint_mimic_*`` into per-articulation indices.
+        """Build coupled UIPC energies for Newton mimic constraints.
 
         Call **once** after every world has been built via
         :meth:`build_joints` (so all active joints are registered and
-        ``setup_state`` has run). Builds the ``_mimic_constraints`` list
-        consumed by :meth:`apply_mimic_targets` each step.
+        ``setup_state`` has run). Each relation uses a two-joint
+        :class:`ExternalArticulationConstraint` with rank-one weight matrix
+        ``rho * [1, -coef1]^T [1, -coef1]``. Its off-diagonal entries transmit
+        reactions between the follower and leader inside the UIPC solve.
 
         Newton semantic: ``joint0 = coef0 + coef1 * joint1`` (follower =
         offset + scale * leader). Only REVOLUTE / PRISMATIC joints are
@@ -1572,14 +1621,8 @@ class ArticulationBuilder:
         """
         self._mimic_constraints = []
         model = self._model
-        count = getattr(model, "constraint_mimic_count", 0)
-        if (
-            not count
-            or model.constraint_mimic_joint0 is None
-            or model.constraint_mimic_joint1 is None
-            or model.constraint_mimic_coef0 is None
-            or model.constraint_mimic_coef1 is None
-        ):
+        relations = self._get_mimic_relations()
+        if not relations:
             return
 
         # Global Newton joint index -> (Articulation, local index).
@@ -1588,23 +1631,10 @@ class ArticulationBuilder:
             for newton_idx, local in art._joint_to_local.items():
                 joint_to_art[newton_idx] = (art, local)
 
-        joint0_np = model.constraint_mimic_joint0.numpy()
-        joint1_np = model.constraint_mimic_joint1.numpy()
-        coef0_np = model.constraint_mimic_coef0.numpy()
-        coef1_np = model.constraint_mimic_coef1.numpy()
-        enabled_np = (
-            model.constraint_mimic_enabled.numpy()
-            if model.constraint_mimic_enabled is not None
-            else np.ones(count, dtype=bool)
-        )
-        labels = model.constraint_mimic_label
+        joint_parent = model.joint_parent.numpy()
+        joint_child = model.joint_child.numpy()
 
-        for i in range(count):
-            if not bool(enabled_np[i]):
-                continue
-            follower = int(joint0_np[i])
-            leader = int(joint1_np[i])
-            label = labels[i] if i < len(labels) else f"mimic_{i}"
+        for i, (follower, leader, coef0, coef1, label) in enumerate(relations):
             if follower not in joint_to_art or leader not in joint_to_art:
                 missing = follower if follower not in joint_to_art else leader
                 role = "follower" if follower not in joint_to_art else "leader"
@@ -1616,73 +1646,46 @@ class ArticulationBuilder:
                 continue
             follower_art, follower_local = joint_to_art[follower]
             leader_art, leader_local = joint_to_art[leader]
+            joint_geos = [follower_art.joint_geo_slots[follower], leader_art.joint_geo_slots[leader]]
+            edge_indices = np.array(
+                [follower_art._joint_edge_idx[follower], leader_art._joint_edge_idx[leader]], dtype=np.int32
+            )
+            constraint_geo = ExternalArticulationConstraint().create_geometry(joint_geos, edge_indices)
+            follower_data = {
+                "parent_body": int(joint_parent[follower]),
+                "child_body": int(joint_child[follower]),
+            }
+            rho = self._drive_strength_ratio_for_joint(follower) * self._drive_mass_sum(follower, follower_data, model)
+            relation = np.array([1.0, -coef1], dtype=np.float64)
+            _view_attr(constraint_geo["joint_joint"].find("mass"))[:] = (rho * np.outer(relation, relation)).ravel()
+            obj = self._scene.objects().create(f"mimic_constraint_{i}")
+            constraint_slot = obj.geometries().create(constraint_geo)[0]
             self._mimic_constraints.append(
                 (
                     follower_art,
                     follower_local,
                     leader_art,
                     leader_local,
-                    float(coef0_np[i]),
-                    float(coef1_np[i]),
+                    coef0,
+                    coef1,
+                    constraint_slot,
                 )
             )
 
-        # Order chained mimic constraints so leaders update before followers.
-        follower_to_idx = {(c[0], c[1]): i for i, c in enumerate(self._mimic_constraints)}
+    def update_mimic_constraints(self) -> None:
+        """Update mimic predictions from measured frame-start joint coordinates.
 
-        def _chain_depth(idx: int, seen: set[int] | None = None) -> int:
-            seen = seen if seen is not None else set()
-            if idx in seen:  # defensive: cyclic mimic, treat as root
-                return 0
-            seen.add(idx)
-            parent = follower_to_idx.get((self._mimic_constraints[idx][2], self._mimic_constraints[idx][3]))
-            return 0 if parent is None else 1 + _chain_depth(parent, seen)
-
-        depths = [_chain_depth(i) for i in range(len(self._mimic_constraints))]
-        self._mimic_constraints = [
-            c for _, c in sorted(enumerate(self._mimic_constraints), key=lambda ic: depths[ic[0]])
-        ]
-
-    def apply_mimic_targets(self) -> None:
-        """Drive follower joints from their leaders for this step.
-
-        Call **once per step**, after :meth:`cache_joint_control` and
-        :meth:`read_joint_state_pre_advance`, but **before**
-        ``world.advance()``. Overwrites the follower's CPU
-        ``target_position`` numpy view with ``coef0 + coef1 * q_leader``
-        and forces the follower into position-driving mode, so the UIPC
-        animator drives it toward the coupled target.
-
-        Leader value: the leader's commanded ``target_position`` when the
-        leader is itself position-driven (no lag), otherwise its
-        start-of-step measured ``joint_position`` from
-        :meth:`read_joint_state_pre_advance` (one-step lag).
-
-        The coupling is soft: the follower tracks its target through the
-        UIPC driving-joint stiffness and may lag under load, like any
-        position-driven UIPC joint. Chained mimics (a follower that is
-        also a leader) are resolved in dependency order (see
-        :meth:`setup_mimic_constraints`), so each follower reads its
-        leader's freshly updated target this step; the coupling remains
-        soft, so deep chains still track with per-level position lag.
+        For ``a = [1, -coef1]`` and error ``e = q_f - coef0 - coef1*q_l``,
+        choose ``a^T delta_theta_tilde = -e``. The EAC energy then penalizes
+        ``e + delta_q_f - coef1*delta_q_l`` in both joints' next-step increments.
+        Run after :meth:`read_joint_state_pre_advance` and before ``world.advance()``.
         """
-        for follower_art, follower_local, leader_art, leader_local, coef0, coef1 in self._mimic_constraints:
-            if follower_art.target_position is None or follower_art.is_constrained is None:
+        for follower_art, follower_local, leader_art, leader_local, coef0, coef1, slot in self._mimic_constraints:
+            if follower_art.joint_position is None or leader_art.joint_position is None:
                 continue
-            if leader_art.target_position is None or leader_art.joint_position is None:
-                continue
-
-            # Prefer the leader's commanded target for position-driven mimics.
-            leader_driven = (
-                bool(leader_art.is_constrained.numpy()[leader_local])
-                if leader_art.is_constrained is not None
-                else False
-            )
-            if leader_driven:
-                q_leader = float(leader_art.target_position.numpy()[leader_local])
-            else:
-                q_leader = float(leader_art.joint_position.numpy()[leader_local])
-
-            target = coef0 + coef1 * q_leader
-            follower_art.target_position.numpy()[follower_local] = target
-            follower_art.is_constrained.numpy()[follower_local] = 1
+            q_follower = float(follower_art.joint_position.numpy()[follower_local])
+            q_leader = float(leader_art.joint_position.numpy()[leader_local])
+            error = q_follower - coef0 - coef1 * q_leader
+            prediction = _view_attr(slot.geometry()["joint"].find("delta_theta_tilde"))
+            prediction[0] = -error / (1.0 + coef1 * coef1)
+            prediction[1] = coef1 * error / (1.0 + coef1 * coef1)

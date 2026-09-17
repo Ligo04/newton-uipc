@@ -1,0 +1,1 @@
+Solve revolute and prismatic mimic relations bidirectionally in `SolverUIPC` using coupled external-articulation energies, supporting both `ModelBuilder.set_joint_mimic()` and legacy mimic constraints. Transmit follower loads back to the leader and disable independent follower position drives; use the follower's `drive_strength_ratio` to tune the soft coupling.

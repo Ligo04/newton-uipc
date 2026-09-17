@@ -466,6 +466,8 @@ class Articulation:
         geo: SimplicialComplex,
         newton_joint_idx: int,
         edge_idx: int = 0,
+        *,
+        enable_drive: bool = True,
     ) -> None:
         """UIPC Animator callback for a revolute joint.
 
@@ -485,6 +487,7 @@ class Articulation:
             geo: UIPC geometry object (from ``info.geo_slots()[0].geometry()``).
             newton_joint_idx: Newton joint index.
             edge_idx: Edge index within the batched linemesh.
+            enable_drive: Whether to allow an aim drive; mimic followers leave it disabled.
         """
         if not self._ensure_state():
             return
@@ -495,8 +498,8 @@ class Articulation:
 
         local = self._joint_to_local[newton_joint_idx]
 
-        # Constraint and force flags
-        driving = bool(self.is_constrained.numpy()[local])
+        # EAC owns a mimic follower's position, while direct effort remains available.
+        driving = enable_drive and bool(self.is_constrained.numpy()[local])
         is_force_constrained = bool(self.is_force_constrained.numpy()[local])
         force_only = is_force_constrained and not driving
         external_torque = self.target_force.numpy()[local]
@@ -520,6 +523,8 @@ class Articulation:
         geo: SimplicialComplex,
         newton_joint_idx: int,
         edge_idx: int = 0,
+        *,
+        enable_drive: bool = True,
     ) -> None:
         """UIPC Animator callback for a prismatic joint.
 
@@ -532,6 +537,7 @@ class Articulation:
             geo: UIPC geometry object (from ``info.geo_slots()[0].geometry()``).
             newton_joint_idx: Newton joint index.
             edge_idx: Edge index within the batched linemesh.
+            enable_drive: Whether to allow an aim drive; mimic followers leave it disabled.
         """
         if not self._ensure_state():
             return
@@ -542,8 +548,8 @@ class Articulation:
 
         local = self._joint_to_local[newton_joint_idx]
 
-        # Constraint and force flags
-        driving = bool(self.is_constrained.numpy()[local])
+        # EAC owns a mimic follower's position, while direct effort remains available.
+        driving = enable_drive and bool(self.is_constrained.numpy()[local])
         is_force_constrained = bool(self.is_force_constrained.numpy()[local])
         force_only = is_force_constrained and not driving
         external_force = self.target_force.numpy()[local]
