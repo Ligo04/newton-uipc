@@ -28,11 +28,13 @@ class Example:
         builder.add_usd(newton.examples.get_asset("sensor_contact_scene.usda"))
         builder.add_ground_plane()
 
-        # Raise Cube and Sphere to avoid initial mesh intersection with Flap
+        contact_d_hat = 0.01
+
+        # Raise Cube and Sphere by the IPC barrier distance to avoid initial mesh intersection with Flap
         for i, label in enumerate(builder.body_label):
             if "Cube" in label or "Sphere" in label:
                 t = builder.body_q[i]
-                new_p = wp.vec3(float(t.p[0]), float(t.p[1]), float(t.p[2]) + 0.3)
+                new_p = wp.vec3(float(t.p[0]), float(t.p[1]), float(t.p[2]) + contact_d_hat)
                 builder.body_q[i] = wp.transform(p=new_p, q=t.q)
                 # Also update joint_q for free joints (set at joint creation time)
                 for j in range(len(builder.joint_child)):
@@ -66,7 +68,7 @@ class Example:
             require_profile=True,
             dump_enable=True,
         )
-        self.solver.set_contact(True, d_hat=0.01)
+        self.solver.set_contact(True, d_hat=contact_d_hat)
         self.solver.initialize()
 
         self.contacts = Contacts(

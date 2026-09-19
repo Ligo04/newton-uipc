@@ -16,7 +16,7 @@ STACK_GAP = 0.02
 
 class Example:
     def __init__(self, viewer: newton.viewer.ViewerBase, args):
-        self.fps = 60
+        self.fps = 120
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 0.0
         self.sim_substeps = 1
