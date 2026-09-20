@@ -1,0 +1,1 @@
+Add experimental `SolverUIPC.get_body_affine_transforms()` to expose full GPU affine matrices and validity in Newton body order after initialization, stepping, and resets, preserving stretch and shear for renderers.

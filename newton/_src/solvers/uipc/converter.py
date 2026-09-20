@@ -171,6 +171,21 @@ def _write_to_backend_kernel(
 
 
 @wp.kernel(enable_backward=False)
+def _gather_body_affine_kernel(
+    backend_offsets: wp.array[wp.uint32],
+    body_indices: wp.array[wp.int32],
+    backend_transforms: wp.array[wp.mat44d],
+    body_affine: wp.array[wp.mat44d],
+    body_valid: wp.array[wp.bool],
+):
+    """Preserve the full Eigen affine matrix in Newton body order."""
+    i = wp.tid()
+    body = body_indices[i]
+    body_affine[body] = wp.transpose(backend_transforms[backend_offsets[i]])
+    body_valid[body] = True
+
+
+@wp.kernel(enable_backward=False)
 def _read_from_backend_kernel(
     backend_offsets: wp.array[wp.uint32],
     src_transforms: wp.array[wp.mat44d],
@@ -734,13 +749,9 @@ def populate_backend_offsets(mapping: UIpcMappingInfo, device: wp.Device) -> Non
     if not mapping.body_geo_slots:
         return
 
-    body_indices = sorted(mapping.body_geo_slots.keys())
-    n = len(body_indices)
-
-    offsets_np = np.empty(n, dtype=np.uint32)
-    indices_np = np.array(body_indices, dtype=np.int32)
-
-    for i, body_idx in enumerate(body_indices):
+    body_indices: list[int] = []
+    offsets: list[int] = []
+    for body_idx in sorted(mapping.body_geo_slots):
         geo = mapping.body_geo_slots[body_idx].geometry()
         # Stubs type ``find`` as non-optional; runtime may still omit the attribute.
         offset_attr = cast(
@@ -752,12 +763,17 @@ def populate_backend_offsets(mapping: UIpcMappingInfo, device: wp.Device) -> Non
                 f"Body {body_idx}: backend_abd_body_offset not found after world.init(), skipping backend mapping",
                 stacklevel=2,
             )
-            offsets_np[i] = 0
             continue
-        base_offset = offset_attr.view()[0]
+        base_offset = int(offset_attr.view()[0])
+        if base_offset < 0:
+            continue
         instance_id = mapping.body_instance_ids.get(body_idx, 0)
-        offsets_np[i] = base_offset + instance_id
+        body_indices.append(body_idx)
+        offsets.append(base_offset + instance_id)
 
+    n = len(body_indices)
+    offsets_np = np.asarray(offsets, dtype=np.uint32)
+    indices_np = np.asarray(body_indices, dtype=np.int32)
     mapping.body_indices_wp = wp.from_numpy(indices_np, dtype=wp.int32, device=device)
     mapping.backend_offsets_wp = wp.from_numpy(offsets_np, dtype=wp.uint32, device=device)
     mapping.num_mapped_bodies = n

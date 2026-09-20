@@ -240,6 +240,7 @@ class SolverUIPC(SolverBase):
         global build_gpu_vertex_maps, prepare_contact_gpu_data, retrieve_contact_forces
         global _read_fem_particle_positions_from_backend_kernel, _read_fem_particles_from_backend_kernel
         global _read_from_backend_kernel, _spatial_to_vel_mat44_kernel, _transform_to_mat44_kernel
+        global _gather_body_affine_kernel
         global _write_fem_particle_positions_to_backend_kernel, _write_fem_particles_to_backend_kernel
         global populate_backend_offsets
         try:
@@ -268,6 +269,7 @@ class SolverUIPC(SolverBase):
             )
             from .converter import (
                 UIpcMappingInfo,
+                _gather_body_affine_kernel,
                 _read_fem_particle_positions_from_backend_kernel,
                 _read_fem_particles_from_backend_kernel,
                 _read_from_backend_kernel,
@@ -1210,6 +1212,10 @@ class SolverUIPC(SolverBase):
             self._abd_transform_buf = None
             self._abd_velocity_buf = None
 
+        self._body_affine = wp.full(model.body_count, wp.mat44d(np.eye(4)), device=model.device)
+        self._body_affine_valid = wp.zeros(model.body_count, dtype=wp.bool, device=model.device)
+        self._update_body_affine_transforms()
+
         self._fem_accessor: FiniteElementStateAccessorFeature = self.world.features().find(
             FiniteElementStateAccessorFeature
         )  # ty:ignore[invalid-assignment]
@@ -1275,6 +1281,49 @@ class SolverUIPC(SolverBase):
                 self.sync_model_inertia_from_uipc(shape_backed_bodies)
 
     # Solver interface
+
+    def get_body_affine_transforms(self) -> tuple[wp.array[wp.mat44d], wp.array[wp.bool]]:
+        """Return full affine transforms and validity in Newton body order.
+
+        Experimental API: this method may change without a deprecation period.
+        The returned solver-owned arrays have shape ``[model.body_count]`` on
+        ``model.device``. Treat them as read-only; clone to retain a snapshot.
+        They are updated in place after initialization, stepping, and body resets.
+
+        Each matrix maps collision-rest body coordinates to world coordinates:
+        ``x_world = A * x_body + t``. Translation [m] occupies the last column;
+        the upper 3x3 preserves rotation, stretch, and shear. Authored shape
+        scale is already baked into collision-rest coordinates. This is not
+        the raw transposed Eigen buffer or a transform reconstructed from ``body_q``.
+
+        Unmapped bodies (and backends without a state accessor) have an identity
+        matrix and a false validity entry; consumers must use their rigid-pose
+        fallback for those entries. Available after :meth:`initialize`.
+        """
+        if not self._initialized:
+            raise RuntimeError("get_body_affine_transforms() requires initialize() first.")
+        return self._body_affine, self._body_affine_valid
+
+    def _update_body_affine_transforms(self, *, copy_from_backend: bool = True) -> None:
+        """Refresh the rendering view without converting the linear part to a quaternion."""
+        if self._abd_accessor is None or self.mapping.num_mapped_bodies == 0:
+            return
+        if copy_from_backend:
+            self._abd_accessor.copy_transform_to(
+                self._abd_transform_buf.buffer_view(), 0, self.mapping.max_backend_count
+            )
+        wp.launch(
+            _gather_body_affine_kernel,
+            dim=self.mapping.num_mapped_bodies,
+            inputs=[
+                self.mapping.backend_offsets_wp,
+                self.mapping.body_indices_wp,
+                self._abd_transform_buf.warp(),
+                self._body_affine,
+                self._body_affine_valid,
+            ],
+            device=self.model.device,
+        )
 
     @override
     def step(
@@ -1808,6 +1857,7 @@ class SolverUIPC(SolverBase):
 
         # Single push into UIPC — triggers one `update_dof_attributes`.
         self._abd_accessor.copy_from(state_geo)
+        self._update_body_affine_transforms()
         if check_sanity:
             self.world.retrieve()
             self._raise_if_sanity_check_failed()
@@ -2062,6 +2112,7 @@ class SolverUIPC(SolverBase):
             buf_count = self.mapping.max_backend_count
             self._abd_accessor.copy_transform_to(self._abd_transform_buf.buffer_view(), 0, buf_count)
             self._abd_accessor.copy_velocity_to(self._abd_velocity_buf.buffer_view(), 0, buf_count)
+            self._update_body_affine_transforms(copy_from_backend=False)
 
             wp.launch(
                 _read_from_backend_kernel,
