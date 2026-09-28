@@ -1,10 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
+import builtins
 import os
+import re
 import subprocess
 import sys
 import unittest
+import warnings
 from unittest import mock
 
 import numpy as np
@@ -12,7 +15,6 @@ import warp as wp
 
 import newton
 import newton.tests.unittest_utils
-from newton._src import warp_compat
 from newton._src.solvers.semi_implicit import kernels_particle as semi_implicit_particle_kernels
 from newton._src.solvers.solver import _set_module_options_if_changed
 from newton._src.solvers.vbd import particle_vbd_kernels, vbd_coupling_kernels
@@ -20,13 +22,6 @@ from newton._src.solvers.xpbd import kernels as xpbd_kernels
 from newton.tests.unittest_utils import add_function_test, get_cuda_test_devices
 
 DETERMINISTIC_MODE = wp.DeterministicMode.RUN_TO_RUN
-
-# The whole module exercises Warp 1.15's determinism API. On the fork's pinned
-# Warp 1.14 it is back-filled as an inert no-op (see newton._src.warp_compat),
-# so run-to-run identity cannot hold and the option plumbing is not real.
-_skip_if_shimmed = unittest.skipIf(
-    warp_compat.is_shimmed(), "Warp 1.14 lacks real run-to-run determinism (back-filled as no-op)"
-)
 
 
 def _run_isolated(test, function_name, *args):
@@ -36,10 +31,14 @@ def _run_isolated(test, function_name, *args):
 
     env = os.environ.copy()
     env.pop("PYTHONWARNINGS", None)
-    warning_args = []
+    warning_args = newton.tests.unittest_utils.get_strict_warning_args()
     if newton.tests.unittest_utils.strict_warnings:
-        warning_args = ["-W", "error::DeprecationWarning"]
-        code = f"import warnings; warnings.filterwarnings('error', module=r'newton(\\.|$)'); {code}"
+        policy = "import warnings; warnings.filterwarnings('error', module=r'newton(\\.|$)'); "
+        for message in newton.tests.unittest_utils.allowed_deprecation_warnings:
+            policy += (
+                f"warnings.filterwarnings('default', message={re.escape(message)!r}, category=DeprecationWarning); "
+            )
+        code = policy + code
 
     result = subprocess.run(
         [sys.executable, *warning_args, "-c", code],
@@ -54,6 +53,7 @@ def _run_isolated(test, function_name, *args):
         0,
         f"{function_name} subprocess failed\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}",
     )
+    sys.stderr.write(result.stderr)
 
 
 def _snapshot(state, fields):
@@ -237,12 +237,31 @@ def test_articulation_determinism(test, device, solver_name):
     _run_isolated(test, "_check_articulation_determinism", str(device), solver_name)
 
 
-@_skip_if_shimmed
 class TestSolverDeterminism(unittest.TestCase):
     pass
 
 
-@_skip_if_shimmed
+def _emit_warning_for_policy_test(category_name, message):
+    warnings.warn_explicit(message, getattr(builtins, category_name), __file__, 1, module=__name__)
+
+
+class TestSolverDeterminismWarnings(unittest.TestCase):
+    def test_allowlisted_deprecations_override_newton_error_filter(self):
+        """Allow only acknowledged deprecations ahead of the Newton error filter."""
+        allowed_prefix = "dependency.old_api is deprecated"
+        with (
+            mock.patch.object(newton.tests.unittest_utils, "strict_warnings", True),
+            mock.patch.object(newton.tests.unittest_utils, "allowed_deprecation_warnings", (allowed_prefix,)),
+        ):
+            _run_isolated(self, "_emit_warning_for_policy_test", "DeprecationWarning", f"{allowed_prefix}; use new_api")
+            for category, message in (
+                ("DeprecationWarning", "unexpected deprecation"),
+                ("UserWarning", allowed_prefix),
+            ):
+                with self.subTest(category=category), self.assertRaisesRegex(AssertionError, category):
+                    _run_isolated(self, "_emit_warning_for_policy_test", category, message)
+
+
 class TestSolverDeterminismOptions(unittest.TestCase):
     def setUp(self):
         self._modules = (
