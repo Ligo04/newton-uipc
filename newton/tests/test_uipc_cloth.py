@@ -80,7 +80,7 @@ class TestUIPCClothConfiguration(unittest.TestCase):
 class TestUIPCClothSoftPosition(unittest.TestCase):
     def test_disconnected_cloth_grids_use_authored_ranges(self):
         """Build one UIPC cloth geometry per authored custom-frequency row."""
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
         for i in range(2):
             builder.add_cloth_grid(
@@ -127,7 +127,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
 
     def test_register_custom_attributes_adds_default_cloth_model(self):
         """Materialize default constitutions and range metadata for cloth rows."""
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
         self._add_minimal_cloth(builder)
         self._add_minimal_cloth(builder)
@@ -143,7 +143,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
 
     def test_late_registration_materializes_cloth_group_rows(self):
         """Resolve cloth rows when SolverUIPC metadata is registered after authoring."""
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         self._add_minimal_cloth(builder)
         self._add_minimal_cloth(builder)
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
@@ -156,7 +156,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
 
     def test_replicated_cloth_group_rows_are_offset_and_prefixed(self):
         """Preserve cloth ranges, worlds, and labels through batched replication."""
-        source = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        source = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         source.add_cloth_grid(
             pos=wp.vec3(0.0, 0.0, 0.0),
             rot=wp.quat_identity(),
@@ -168,7 +168,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
             mass=0.01,
             label="sheet",
         )
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
         builder.replicate(source, 2, label_prefixes=["left", "right"])
 
@@ -180,7 +180,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
         np.testing.assert_array_equal(model.uipc.cloth_particle_last.numpy(), [3, 7])
 
     def test_cloth_model_custom_attribute_selects_per_range_constitution(self):
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
         self._add_minimal_cloth(builder)
         self._add_minimal_cloth(builder)
@@ -201,7 +201,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
     def test_fixed_cloth_grid_edges_mark_uipc_vertices_fixed(self):
         dim_x = 4
         dim_y = 3
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         builder.add_cloth_grid(
             pos=wp.vec3(0.0, 0.0, 0.0),
             rot=wp.quat_identity(),
@@ -243,7 +243,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
         dim_x = 4
         dim_y = 3
         with wp.ScopedDevice(_CUDA_TEST_DEVICES[0]):
-            builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=-9.81)
+            builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, -9.81))
             builder.add_cloth_grid(
                 pos=wp.vec3(0.0, 0.0, 1.0),
                 rot=wp.quat_identity(),
@@ -284,7 +284,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
 
     def test_particle_radius_sets_uipc_thickness(self):
         """Use authored surface density together with per-particle thickness."""
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
         builder.add_cloth_grid(
             pos=wp.vec3(0.0, 0.0, 0.0),
@@ -312,7 +312,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
         np.testing.assert_allclose(thickness, np.full(model.particle_count, 2.5e-4), rtol=1.0e-6)
 
     def test_closed_cloth_mesh_is_rejected(self):
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         builder.add_cloth_mesh(
             pos=wp.vec3(0.0, 0.0, 0.0),
             rot=wp.quat_identity(),
@@ -350,7 +350,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
             solver.initialize(model.state())
 
     def test_triangle_materials_are_copied_per_triangle(self):
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         for vertex in [
             wp.vec3(0.0, 0.0, 0.0),
             wp.vec3(0.1, 0.0, 0.0),
@@ -382,7 +382,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
         np.testing.assert_allclose(view(lambda_attr), np.asarray(tri_ka, dtype=np.float32), rtol=0.0, atol=1.0e-5)
 
     def test_bending_stiffness_is_copied_per_edge(self):
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         for vertex in [
             wp.vec3(0.0, 0.0, 0.0),
             wp.vec3(0.1, 0.0, 0.0),
@@ -428,7 +428,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
             self.assertAlmostEqual(bending_by_edge[edge], expected)
 
     def test_soft_position_constraint_attributes_are_writable(self):
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         builder.add_cloth_grid(
             pos=wp.vec3(0.0, 0.0, 0.0),
             rot=wp.quat_identity(),

@@ -342,7 +342,7 @@ class TestUIPCShapelessProxyInertia(unittest.TestCase):
     def test_shapeless_proxy_uses_authored_mass_com_inertia(self):
         """A shapeless link's ABD proxy must carry the Newton-authored mass
         properties, not the historical hardcoded ``mass=1.0`` / zero COM."""
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
 
         # link0 has a shape -> real geometry ABD body.
         link0 = builder.add_link(mass=1.0)
@@ -406,7 +406,7 @@ class TestUIPCRevoluteArmatureInertia(unittest.TestCase):
         axis directly -- no extra rotation to account for when checking the
         folded inertia.
         """
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         child = builder.add_link()
         builder.add_shape_box(child, hx=0.1, hy=0.08, hz=0.06)
         joint = builder.add_joint_revolute(parent=-1, child=child, axis=newton.Axis.Z, armature=armature)
@@ -444,7 +444,7 @@ class TestUIPCArmatureInertiaSyncSymmetry(unittest.TestCase):
         """World-anchored revolute pendulum with a cubic child of the given
         half-extent; ``half_extent`` small enough drives ``mesh_vol`` below the
         ``1e-12`` custom-inertia gate."""
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         child = builder.add_link()
         builder.add_shape_box(child, hx=half_extent, hy=half_extent, hz=half_extent)
         joint = builder.add_joint_revolute(parent=-1, child=child, axis=newton.Axis.Z, armature=armature)
@@ -498,7 +498,7 @@ class TestUIPCImplicitPD(unittest.TestCase):
 
     @staticmethod
     def _run_pendulum(kp: float, kd: float, frames: int = 180, gravity_comp: bool = False):
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=-9.81)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, -9.81))
         link = builder.add_link()
         builder.add_shape_box(link, hx=0.5, hy=0.02, hz=0.02, xform=wp.transform(wp.vec3(0.5, 0.0, 0.0)))
         j = builder.add_joint_revolute(parent=-1, child=link, axis=newton.Axis.Y)
@@ -573,7 +573,7 @@ class TestUIPCImplicitPD(unittest.TestCase):
         """VELOCITY mode must act as a velocity servo: a rotor spinning about
         a gravity-parallel axis (zero gravity torque) converges to the
         commanded joint velocity."""
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=-9.81)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, -9.81))
         link = builder.add_link()
         builder.add_shape_box(link, hx=0.5, hy=0.02, hz=0.02, xform=wp.transform(wp.vec3(0.5, 0.0, 0.0)))
         j = builder.add_joint_revolute(parent=-1, child=link, axis=newton.Axis.Z)
@@ -611,7 +611,7 @@ class TestUIPCImplicitPD(unittest.TestCase):
     def test_notify_joint_dof_properties_refreshes_drive_strength(self):
         """Runtime ke/kd edits must re-derive the ``driving/strength_ratio``
         edge attribute and the aim-blend weight via notify_model_changed."""
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         link = builder.add_link()
         builder.add_shape_box(link, hx=0.5, hy=0.02, hz=0.02, xform=wp.transform(wp.vec3(0.5, 0.0, 0.0)))
         j = builder.add_joint_revolute(parent=-1, child=link, axis=newton.Axis.Y)
@@ -655,7 +655,7 @@ class TestUIPCImplicitPD(unittest.TestCase):
     def test_runtime_gain_update_changes_steady_state(self):
         """A live ke change through notify_model_changed must move the
         gravity sag to tau_g / ke_new — the MJWarp-style DR gain path."""
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=-9.81)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, -9.81))
         link = builder.add_link()
         builder.add_shape_box(link, hx=0.5, hy=0.02, hz=0.02, xform=wp.transform(wp.vec3(0.5, 0.0, 0.0)))
         j = builder.add_joint_revolute(parent=-1, child=link, axis=newton.Axis.Y)
@@ -714,7 +714,7 @@ class TestUIPCPrismaticArmature(unittest.TestCase):
 
     @staticmethod
     def _run_slider(kp: float, kd: float, armature: float | None, frames: int = 180):
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=-9.81)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, -9.81))
         link = builder.add_link()
         builder.add_shape_box(link, hx=0.05, hy=0.05, hz=0.05)
         j = builder.add_joint_prismatic(parent=-1, child=link, axis=newton.Axis.Z, armature=armature)
@@ -778,7 +778,7 @@ class TestUIPCPrismaticArmature(unittest.TestCase):
         (it only folded into the drive channel of POSITION/PD joints); the
         ExternalArticulationConstraint applies regardless of drive mode.
         """
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=-9.81)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, -9.81))
         link = builder.add_link()
         builder.add_shape_box(link, hx=0.05, hy=0.05, hz=0.05)
         j = builder.add_joint_prismatic(parent=-1, child=link, axis=newton.Axis.Z, armature=armature)
@@ -860,7 +860,7 @@ class TestUIPCRevoluteArmature(unittest.TestCase):
         free-fall test recover the initial angular acceleration here.
         """
         hx = 0.05
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=-9.81)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, -9.81))
         link = builder.add_link()
         builder.add_shape_box(link, hx=hx, hy=hx, hz=hx, xform=wp.transform(wp.vec3(0.0, arm_length, 0.0)))
         j = builder.add_joint_revolute(parent=-1, child=link, axis=newton.Axis.X, armature=armature)
@@ -973,7 +973,7 @@ class TestUIPCArmatureRuntimeRefresh(unittest.TestCase):
 
     def test_revolute_effort_tracks_armature_refresh_and_target_mode(self):
         """Apply torque once across positive, zero and restored armature, and stop it in NONE mode."""
-        builder = newton.ModelBuilder(gravity=0.0)
+        builder = newton.ModelBuilder(gravity=wp.vec3(0.0, 0.0, 0.0))
         body = builder.add_link()
         builder.add_shape_box(body, hx=0.05, hy=0.05, hz=0.05)
         joint = builder.add_joint_revolute(parent=-1, child=body, axis=newton.Axis.Z, armature=0.01)
@@ -1015,7 +1015,7 @@ class TestUIPCArmatureRuntimeRefresh(unittest.TestCase):
         """Passive (NONE-mode) vertical slider under gravity, as in
         ``TestUIPCPrismaticArmature._run_passive_slider``, but returning the
         live model/solver so the test can edit armature mid-run."""
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=-9.81)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, -9.81))
         link = builder.add_link()
         builder.add_shape_box(link, hx=0.05, hy=0.05, hz=0.05)
         j = builder.add_joint_prismatic(parent=-1, child=link, axis=newton.Axis.Z, armature=armature)
@@ -1102,7 +1102,7 @@ class TestUIPCCacheControlGraphCapture(unittest.TestCase):
         if not wp.get_device().is_cuda:
             self.skipTest("CUDA device required for graph capture")
 
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=-9.81)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, -9.81))
         link = builder.add_link()
         builder.add_shape_box(link, hx=0.5, hy=0.02, hz=0.02, xform=wp.transform(wp.vec3(0.5, 0.0, 0.0)))
         j = builder.add_joint_revolute(parent=-1, child=link, axis=newton.Axis.Y)

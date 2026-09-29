@@ -84,7 +84,7 @@ class TestUIPCReset(unittest.TestCase):
         for device in _CUDA_TEST_DEVICES:
             with self.subTest(device=str(device)):
                 with wp.ScopedDevice(device):
-                    world = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=-9.8)
+                    world = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, -9.8))
                     newton.solvers.SolverUIPC.register_custom_attributes(world)
                     world.add_cloth_grid(
                         pos=wp.vec3(0.0, 0.0, 0.5),
@@ -99,7 +99,7 @@ class TestUIPCReset(unittest.TestCase):
                         tri_ka=1.0e3,
                         tri_kd=0.0,
                     )
-                    builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=-9.8)
+                    builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, -9.8))
                     newton.solvers.SolverUIPC.register_custom_attributes(builder)
                     builder.replicate(world, world_count=2, spacing=(1.0, 0.0, 0.0))
                     model = builder.finalize(device=device)

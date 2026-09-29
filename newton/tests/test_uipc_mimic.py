@@ -81,7 +81,7 @@ class TestUIPCMimicResolution(unittest.TestCase):
 
     def test_mimic_resolved_into_constraints(self):
         """Resolve the scalar relation and disable the follower's independent drive."""
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         j_leader, j_follower = _add_joint_pair(builder, y=0.0)
         builder.add_constraint_mimic(joint0=j_follower, joint1=j_leader, coef0=0.1, coef1=-1.0)
 
@@ -102,7 +102,7 @@ class TestUIPCMimicResolution(unittest.TestCase):
 
     def test_disabled_mimic_skipped(self):
         """Preserve ordinary control when the mimic relation is disabled."""
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         j_leader, j_follower = _add_joint_pair(builder, y=0.0)
         builder.add_constraint_mimic(joint0=j_follower, joint1=j_leader, enabled=False)
 
@@ -114,7 +114,7 @@ class TestUIPCMimicResolution(unittest.TestCase):
 
     def test_mimic_with_inactive_joint_skipped_with_warning(self):
         """Warn and skip relations referencing unsupported joint coordinates."""
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         _, j_follower = _add_joint_pair(builder, y=0.0)
         # The fixed anchor joint (index 0) is not an active UIPC joint.
         builder.add_constraint_mimic(joint0=j_follower, joint1=0, coef1=1.0)
@@ -144,7 +144,7 @@ class TestUIPCMimicTracking(unittest.TestCase):
     ):
         """Drive the leader while its undriven follower maintains the authored relation."""
         wp.set_device(device)
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         j_leader, j_follower = _add_joint_pair(builder, y=0.0, prismatic=prismatic)
         if joint_owned:
             builder.set_joint_mimic(j_follower, j_leader, coeffs=(coef0, coef1))

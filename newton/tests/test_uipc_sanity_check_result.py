@@ -72,7 +72,7 @@ class TestUIPCSanityCheckResult(unittest.TestCase):
 @unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
 class TestUIPCFEMSyncToBackend(unittest.TestCase):
     def test_particle_state_sync_to_uipc_round_trips(self):
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         builder.add_cloth_grid(
             pos=wp.vec3(0.0, 0.0, 1.0),
             rot=wp.quat_identity(),
@@ -121,7 +121,7 @@ class TestUIPCFreeJointSoftTransformConstraint(unittest.TestCase):
             def apply_to(self, geometry):
                 self.applied_geometries.append(geometry)
 
-        builder = newton.ModelBuilder(gravity=0.0)
+        builder = newton.ModelBuilder(gravity=wp.vec3(0.0, 0.0, 0.0))
         body_a = builder.add_link()
         body_b = builder.add_link()
         joint_a = builder.add_joint_free(child=body_a)
@@ -148,7 +148,7 @@ class TestUIPCFreeJointSoftTransformConstraint(unittest.TestCase):
         self.assertEqual(_SoftTransformConstraint.applied_geometries, [shared_geometry])
 
     def test_free_joint_enables_dynamic_aim_target(self):
-        builder = newton.ModelBuilder(gravity=0.0)
+        builder = newton.ModelBuilder(gravity=wp.vec3(0.0, 0.0, 0.0))
         body = builder.add_link(is_kinematic=False)
         cfg = newton.ModelBuilder.ShapeConfig()
         cfg.density = 1000.0

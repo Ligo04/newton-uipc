@@ -47,7 +47,7 @@ class TestUIPCRigidBodyKappa(unittest.TestCase):
         self.assertAlmostEqual(float(values[body_b]), -1.0)
 
     def test_body_abd_kappa_splits_instancing_and_sets_uipc_kappa(self):
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
         body_soft = self._add_box_body(builder, 0.0, 1.0e8)
         body_stiff = self._add_box_body(builder, 0.3, 1.0e10)
@@ -77,7 +77,7 @@ class TestUIPCRigidBodyKappa(unittest.TestCase):
         )
 
     def test_negative_body_abd_kappa_uses_solver_default_and_preserves_instancing(self):
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
         body_a = self._add_box_body(builder, 0.0)
         body_b = self._add_box_body(builder, 0.3)
