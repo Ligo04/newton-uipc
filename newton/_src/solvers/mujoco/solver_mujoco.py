@@ -5990,7 +5990,6 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
         # fills unused zero components. Keep those edits isolated from the model's
         # CPU-backed Warp array, for which ``numpy()`` may return a writable view.
         shape_size = model.shape_scale.numpy().copy()
-        shape_is_solid = model.shape_is_solid.numpy()
         shape_flags = model.shape_flags.numpy()
         shape_collision_group = model.shape_collision_group.numpy()
         shape_world = model.shape_world.numpy()
@@ -6560,8 +6559,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                             or (not use_preserved_collision_masks and int(shape_collision_group[shape]) != 0)
                         )
                     ) or shape in mujoco_pair_contact_shapes
-                    preserve_surface = self._use_mujoco_contacts and not disable_contacts and uses_mujoco_contacts
-                    key = (*_mesh_scale_key(mesh_src, size), preserve_surface)
+                    key = _mesh_scale_key(mesh_src, size)
                     mesh_export = mesh_export_cache.get(key)
                     if mesh_export is None:
                         vertices = mesh_src.vertices * size
@@ -6571,34 +6569,30 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                         is_planar = _mujoco_mesh_vertices_are_planar(vertices, extent_axis)
                         if is_planar:
                             # MuJoCo compiles every mesh geom through its convex-hull path,
-                            # which rejects lower-dimensional vertex clouds. Preserve the
-                            # authored surface with a symmetric thin proxy when MuJoCo owns
-                            # contacts; otherwise one off-plane triangle is sufficient.
+                            # which rejects lower-dimensional vertex clouds. When Newton
+                            # supplies contacts, the MuJoCo mesh only needs to compile and
+                            # keep a stable geom id, so add a tiny referenced off-plane
+                            # vertex to the exported asset.
                             vertices, indices, maxhullvert = _make_nonplanar_mujoco_mesh(
-                                vertices,
-                                indices,
-                                maxhullvert,
-                                extent_axis,
-                                preserve_surface=preserve_surface,
+                                vertices, indices, maxhullvert, extent_axis
                             )
-                        mesh_export = (vertices, indices, maxhullvert)
+                        mesh_export = (vertices, indices, maxhullvert, is_planar)
                         mesh_export_cache[key] = mesh_export
 
-                    vertices, indices, maxhullvert = mesh_export
-                    # Newton writes body inertia explicitly. Thin components from a convex
-                    # decomposition therefore need shell mesh inertia only to compile
-                    # reliably, without changing the body's authored mass properties.
-                    mesh_inertia = (
-                        mujoco.mjtMeshInertia.mjMESH_INERTIA_SHELL
-                        if stype == GeoType.CONVEX_MESH or not shape_is_solid[shape]
-                        else mujoco.mjtMeshInertia.mjMESH_INERTIA_CONVEX
-                    )
+                    vertices, indices, maxhullvert, is_planar = mesh_export
+                    if is_planar and self._use_mujoco_contacts and not disable_contacts and uses_mujoco_contacts:
+                        raise ValueError(
+                            f"MuJoCo contact generation does not support planar mesh collider "
+                            f"{model.shape_label[shape]!r} (shape {shape}). Use use_mujoco_contacts=False so "
+                            "Newton's collision pipeline handles this mesh, or replace it with a plane/box/thick mesh."
+                        )
                     spec.add_mesh(
                         name=name,
                         uservert=vertices.flatten(),
                         userface=indices.flatten(),
-                        inertia=mesh_inertia,
                         maxhullvert=maxhullvert,
+                        # Newton supplies body inertia, so MuJoCo need not compute volume inertia.
+                        inertia=mujoco.mjtMeshInertia.mjMESH_INERTIA_SHELL,
                     )
                     geom_params["meshname"] = name
                 geom_params["pos"] = tf.p
