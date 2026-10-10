@@ -344,9 +344,11 @@ class TestSoftBody(unittest.TestCase):
             label="soft_grid",
         )
 
-        self.assertEqual(builder._soft_label, ["soft_grid"])
-        self.assertEqual((builder._soft_particle_start[0], builder._soft_particle_end[0]), (0, builder.particle_count))
-        self.assertEqual((builder._soft_tet_start[0], builder._soft_tet_end[0]), (0, builder.tet_count))
+        self.assertEqual(builder.volume_label, ["soft_grid"])
+        self.assertEqual(
+            (builder._volume_particle_start[0], builder._volume_particle_end[0]), (0, builder.particle_count)
+        )
+        self.assertEqual((builder._volume_tet_start[0], builder._volume_tet_end[0]), (0, builder.tet_count))
         self.assertEqual((builder._soft_tri_start[0], builder._soft_tri_end[0]), (0, builder.tri_count))
         self.assertEqual((builder._soft_edge_start[0], builder._soft_edge_end[0]), (0, builder.edge_count))
         self.assertEqual(builder._soft_density, [1000.0])
@@ -374,9 +376,11 @@ class TestSoftBody(unittest.TestCase):
             label="soft_mesh",
         )
 
-        self.assertEqual(builder._soft_label, ["soft_mesh"])
-        self.assertEqual((builder._soft_particle_start[0], builder._soft_particle_end[0]), (0, builder.particle_count))
-        self.assertEqual((builder._soft_tet_start[0], builder._soft_tet_end[0]), (0, builder.tet_count))
+        self.assertEqual(builder.volume_label, ["soft_mesh"])
+        self.assertEqual(
+            (builder._volume_particle_start[0], builder._volume_particle_end[0]), (0, builder.particle_count)
+        )
+        self.assertEqual((builder._volume_tet_start[0], builder._volume_tet_end[0]), (0, builder.tet_count))
         self.assertEqual((builder._soft_tri_start[0], builder._soft_tri_end[0]), (0, builder.tri_count))
         self.assertEqual((builder._soft_edge_start[0], builder._soft_edge_end[0]), (0, builder.edge_count))
         self.assertEqual(builder._soft_density, [1000.0])
@@ -424,13 +428,13 @@ class TestSoftBody(unittest.TestCase):
         prefix_edge_end = builder.edge_count
         builder.add_builder(source, label_prefix="copy")
 
-        self.assertEqual(builder._soft_label, ["prefix", "copy/source"])
-        self.assertEqual(builder._soft_particle_start[1], prefix_particle_end)
-        self.assertEqual(builder._soft_tet_start[1], prefix_tet_end)
+        self.assertEqual(builder.volume_label, ["prefix", "copy/source"])
+        self.assertEqual(builder._volume_particle_start[1], prefix_particle_end)
+        self.assertEqual(builder._volume_tet_start[1], prefix_tet_end)
         self.assertEqual(builder._soft_tri_start[1], prefix_tri_end)
         self.assertEqual(builder._soft_edge_start[1], prefix_edge_end)
-        self.assertEqual(builder._soft_particle_end[1], prefix_particle_end + source.particle_count)
-        self.assertEqual(builder._soft_tet_end[1], prefix_tet_end + source.tet_count)
+        self.assertEqual(builder._volume_particle_end[1], prefix_particle_end + source.particle_count)
+        self.assertEqual(builder._volume_tet_end[1], prefix_tet_end + source.tet_count)
         self.assertEqual(builder._soft_tri_end[1], prefix_tri_end + source.tri_count)
         self.assertEqual(builder._soft_edge_end[1], prefix_edge_end + source.edge_count)
 

@@ -702,9 +702,8 @@ class ModelBuilder:
             compaction_policy="passthrough",
         ),
         # UIPC keeps only the topology domains that are not represented by the
-        # solver-agnostic deformable registries.  The legacy ``_cloth_*`` and
-        # ``_soft_*`` accessors below expose the shared fields as compatibility
-        # aliases; these sidecar lists are the only additional per-row state.
+        # solver-agnostic deformable registries. These sidecar lists are the
+        # additional per-row state used by SolverUIPC.
         "_cloth_spring_start": Model.AttributeSpec(
             "surface",
             references=Model.AttributeFrequency.SPRING,
@@ -3323,10 +3322,7 @@ class ModelBuilder:
         """
         return len(self.articulation_start)
 
-    # UIPC compatibility aliases.  These names were the original solver
-    # specific registry and remain readable during the transition to the
-    # solver-agnostic curve/surface/volume registry.  They intentionally return
-    # the canonical lists rather than maintaining a second copy of each row.
+    # Legacy cable aliases retained for the rod importer transition.
     @property
     def _cable_label(self) -> list[str]:
         return self.curve_label
@@ -3374,118 +3370,6 @@ class ModelBuilder:
     @_cable_joint_end.setter
     def _cable_joint_end(self, value: list[int]) -> None:
         self._curve_joint_end = value
-
-    @property
-    def _cloth_label(self) -> list[str]:
-        return self.surface_label
-
-    @_cloth_label.setter
-    def _cloth_label(self, value: list[str]) -> None:
-        self.surface_label = value
-
-    @property
-    def _cloth_world(self) -> list[int]:
-        return self.surface_world
-
-    @_cloth_world.setter
-    def _cloth_world(self, value: list[int]) -> None:
-        self.surface_world = value
-
-    @property
-    def _cloth_particle_start(self) -> list[int]:
-        return self._surface_particle_start
-
-    @_cloth_particle_start.setter
-    def _cloth_particle_start(self, value: list[int]) -> None:
-        self._surface_particle_start = value
-
-    @property
-    def _cloth_particle_end(self) -> list[int]:
-        return self._surface_particle_end
-
-    @_cloth_particle_end.setter
-    def _cloth_particle_end(self, value: list[int]) -> None:
-        self._surface_particle_end = value
-
-    @property
-    def _cloth_tri_start(self) -> list[int]:
-        return self._surface_tri_start
-
-    @_cloth_tri_start.setter
-    def _cloth_tri_start(self, value: list[int]) -> None:
-        self._surface_tri_start = value
-
-    @property
-    def _cloth_tri_end(self) -> list[int]:
-        return self._surface_tri_end
-
-    @_cloth_tri_end.setter
-    def _cloth_tri_end(self, value: list[int]) -> None:
-        self._surface_tri_end = value
-
-    @property
-    def _cloth_edge_start(self) -> list[int]:
-        return self._surface_edge_start
-
-    @_cloth_edge_start.setter
-    def _cloth_edge_start(self, value: list[int]) -> None:
-        self._surface_edge_start = value
-
-    @property
-    def _cloth_edge_end(self) -> list[int]:
-        return self._surface_edge_end
-
-    @_cloth_edge_end.setter
-    def _cloth_edge_end(self, value: list[int]) -> None:
-        self._surface_edge_end = value
-
-    @property
-    def _soft_label(self) -> list[str]:
-        return self.volume_label
-
-    @_soft_label.setter
-    def _soft_label(self, value: list[str]) -> None:
-        self.volume_label = value
-
-    @property
-    def _soft_world(self) -> list[int]:
-        return self.volume_world
-
-    @_soft_world.setter
-    def _soft_world(self, value: list[int]) -> None:
-        self.volume_world = value
-
-    @property
-    def _soft_particle_start(self) -> list[int]:
-        return self._volume_particle_start
-
-    @_soft_particle_start.setter
-    def _soft_particle_start(self, value: list[int]) -> None:
-        self._volume_particle_start = value
-
-    @property
-    def _soft_particle_end(self) -> list[int]:
-        return self._volume_particle_end
-
-    @_soft_particle_end.setter
-    def _soft_particle_end(self, value: list[int]) -> None:
-        self._volume_particle_end = value
-
-    @property
-    def _soft_tet_start(self) -> list[int]:
-        return self._volume_tet_start
-
-    @_soft_tet_start.setter
-    def _soft_tet_start(self, value: list[int]) -> None:
-        self._volume_tet_start = value
-
-    @property
-    def _soft_tet_end(self) -> list[int]:
-        return self._volume_tet_end
-
-    @_soft_tet_end.setter
-    def _soft_tet_end(self, value: list[int]) -> None:
-        self._volume_tet_end = value
 
     def _validate_deformable_registry_alignment(self) -> None:
         """Check that canonical and UIPC deformable rows remain one-to-one."""
@@ -4477,38 +4361,6 @@ class ModelBuilder:
         self._soft_edge_end.append(edge_range[1])
         self._soft_density.append(density)
         self._validate_deformable_registry_alignment()
-
-    # Compatibility entry points retained for callers that used the original
-    # UIPC-specific recording helpers.  They now append a canonical row and its
-    # sidecar atomically.
-    def _record_cloth_group(
-        self,
-        label: str | None,
-        particle_range: tuple[int, int],
-        tri_range: tuple[int, int],
-        edge_range: tuple[int, int],
-        spring_range: tuple[int, int] = (0, 0),
-        surface_density: float | None = None,
-    ) -> None:
-        self._record_surface_deformable_object(
-            label,
-            particle_range,
-            tri_range,
-            edge_range,
-            spring_range,
-            surface_density,
-        )
-
-    def _record_soft_group(
-        self,
-        label: str | None,
-        particle_range: tuple[int, int],
-        tet_range: tuple[int, int],
-        tri_range: tuple[int, int] = (0, 0),
-        edge_range: tuple[int, int] = (0, 0),
-        density: float | None = None,
-    ) -> None:
-        self._record_volume_deformable_object(label, particle_range, tet_range, tri_range, edge_range, density)
 
     # region importers
     def add_urdf(

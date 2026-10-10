@@ -1215,12 +1215,12 @@ class TestCloth(unittest.TestCase):
             label="cloth_grid",
         )
 
-        self.assertEqual(builder._cloth_label, ["cloth_grid"])
+        self.assertEqual(builder.surface_label, ["cloth_grid"])
         self.assertEqual(
-            (builder._cloth_particle_start[0], builder._cloth_particle_end[0]), (0, builder.particle_count)
+            (builder._surface_particle_start[0], builder._surface_particle_end[0]), (0, builder.particle_count)
         )
-        self.assertEqual((builder._cloth_tri_start[0], builder._cloth_tri_end[0]), (0, builder.tri_count))
-        self.assertEqual((builder._cloth_edge_start[0], builder._cloth_edge_end[0]), (0, builder.edge_count))
+        self.assertEqual((builder._surface_tri_start[0], builder._surface_tri_end[0]), (0, builder.tri_count))
+        self.assertEqual((builder._surface_edge_start[0], builder._surface_edge_end[0]), (0, builder.edge_count))
         self.assertEqual((builder._cloth_spring_start[0], builder._cloth_spring_end[0]), (0, builder.spring_count))
         self.assertEqual(builder._cloth_surface_density, [4.0])
 
@@ -1244,12 +1244,12 @@ class TestCloth(unittest.TestCase):
             label="cloth_mesh",
         )
 
-        self.assertEqual(builder._cloth_label, ["cloth_mesh"])
+        self.assertEqual(builder.surface_label, ["cloth_mesh"])
         self.assertEqual(
-            (builder._cloth_particle_start[0], builder._cloth_particle_end[0]), (0, builder.particle_count)
+            (builder._surface_particle_start[0], builder._surface_particle_end[0]), (0, builder.particle_count)
         )
-        self.assertEqual((builder._cloth_tri_start[0], builder._cloth_tri_end[0]), (0, builder.tri_count))
-        self.assertEqual((builder._cloth_edge_start[0], builder._cloth_edge_end[0]), (0, builder.edge_count))
+        self.assertEqual((builder._surface_tri_start[0], builder._surface_tri_end[0]), (0, builder.tri_count))
+        self.assertEqual((builder._surface_edge_start[0], builder._surface_edge_end[0]), (0, builder.edge_count))
 
     def test_add_builder_offsets_cloth_groups(self):
         """Offset every cloth-group index domain when merging builders."""
@@ -1286,14 +1286,14 @@ class TestCloth(unittest.TestCase):
         prefix_spring_end = builder.spring_count
         builder.add_builder(source, label_prefix="copy")
 
-        self.assertEqual(builder._cloth_label, ["prefix", "copy/source"])
-        self.assertEqual(builder._cloth_particle_start[1], prefix_particle_end)
-        self.assertEqual(builder._cloth_tri_start[1], prefix_tri_end)
-        self.assertEqual(builder._cloth_edge_start[1], prefix_edge_end)
+        self.assertEqual(builder.surface_label, ["prefix", "copy/source"])
+        self.assertEqual(builder._surface_particle_start[1], prefix_particle_end)
+        self.assertEqual(builder._surface_tri_start[1], prefix_tri_end)
+        self.assertEqual(builder._surface_edge_start[1], prefix_edge_end)
         self.assertEqual(builder._cloth_spring_start[1], prefix_spring_end)
-        self.assertEqual(builder._cloth_particle_end[1], prefix_particle_end + source.particle_count)
-        self.assertEqual(builder._cloth_tri_end[1], prefix_tri_end + source.tri_count)
-        self.assertEqual(builder._cloth_edge_end[1], prefix_edge_end + source.edge_count)
+        self.assertEqual(builder._surface_particle_end[1], prefix_particle_end + source.particle_count)
+        self.assertEqual(builder._surface_tri_end[1], prefix_tri_end + source.tri_count)
+        self.assertEqual(builder._surface_edge_end[1], prefix_edge_end + source.edge_count)
         self.assertEqual(builder._cloth_spring_end[1], prefix_spring_end + source.spring_count)
 
 
