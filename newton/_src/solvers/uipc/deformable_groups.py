@@ -1,7 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-"""UIPC custom-frequency metadata for authored cloth and soft-body groups."""
+"""UIPC custom-frequency metadata for authored cloth and soft-body groups.
+
+The builder's ``surface`` and ``volume`` registries own shared identity and
+topology.  UIPC reads only its sidecar columns here: cloth springs and surface
+density, plus volume surface triangle/edge ranges and volume density.
+"""
 
 from __future__ import annotations
 
@@ -19,32 +24,32 @@ DEFORMABLE_BODY_FREQUENCY = "uipc:deformable_body"
 
 def _cloth_group_count(builder: ModelBuilder) -> int:
     """Return the number of authored cloth groups."""
-    return len(builder._cloth_label)
+    return len(builder.surface_label)
 
 
 def _deformable_body_group_count(builder: ModelBuilder) -> int:
     """Return the number of authored soft-body groups."""
-    return len(builder._soft_label)
+    return len(builder.volume_label)
 
 
 _GROUP_ATTRIBUTE_SOURCES: dict[str, tuple[str, str | None, str]] = {
-    "uipc:cloth_label": ("_cloth_label", None, "direct"),
-    "uipc:cloth_world": ("_cloth_world", None, "direct"),
-    "uipc:cloth_particle_first": ("_cloth_particle_start", "_cloth_particle_end", "first"),
-    "uipc:cloth_particle_last": ("_cloth_particle_start", "_cloth_particle_end", "last"),
-    "uipc:cloth_triangle_first": ("_cloth_tri_start", "_cloth_tri_end", "first"),
-    "uipc:cloth_triangle_last": ("_cloth_tri_start", "_cloth_tri_end", "last"),
-    "uipc:cloth_edge_first": ("_cloth_edge_start", "_cloth_edge_end", "first"),
-    "uipc:cloth_edge_last": ("_cloth_edge_start", "_cloth_edge_end", "last"),
+    "uipc:cloth_label": ("surface_label", None, "direct"),
+    "uipc:cloth_world": ("surface_world", None, "direct"),
+    "uipc:cloth_particle_first": ("_surface_particle_start", "_surface_particle_end", "first"),
+    "uipc:cloth_particle_last": ("_surface_particle_start", "_surface_particle_end", "last"),
+    "uipc:cloth_triangle_first": ("_surface_tri_start", "_surface_tri_end", "first"),
+    "uipc:cloth_triangle_last": ("_surface_tri_start", "_surface_tri_end", "last"),
+    "uipc:cloth_edge_first": ("_surface_edge_start", "_surface_edge_end", "first"),
+    "uipc:cloth_edge_last": ("_surface_edge_start", "_surface_edge_end", "last"),
     "uipc:cloth_spring_first": ("_cloth_spring_start", "_cloth_spring_end", "first"),
     "uipc:cloth_spring_last": ("_cloth_spring_start", "_cloth_spring_end", "last"),
     "uipc:cloth_surface_density": ("_cloth_surface_density", None, "optional_float"),
-    "uipc:deformable_body_label": ("_soft_label", None, "direct"),
-    "uipc:deformable_body_world": ("_soft_world", None, "direct"),
-    "uipc:deformable_body_particle_first": ("_soft_particle_start", "_soft_particle_end", "first"),
-    "uipc:deformable_body_particle_last": ("_soft_particle_start", "_soft_particle_end", "last"),
-    "uipc:deformable_body_tetrahedron_first": ("_soft_tet_start", "_soft_tet_end", "first"),
-    "uipc:deformable_body_tetrahedron_last": ("_soft_tet_start", "_soft_tet_end", "last"),
+    "uipc:deformable_body_label": ("volume_label", None, "direct"),
+    "uipc:deformable_body_world": ("volume_world", None, "direct"),
+    "uipc:deformable_body_particle_first": ("_volume_particle_start", "_volume_particle_end", "first"),
+    "uipc:deformable_body_particle_last": ("_volume_particle_start", "_volume_particle_end", "last"),
+    "uipc:deformable_body_tetrahedron_first": ("_volume_tet_start", "_volume_tet_end", "first"),
+    "uipc:deformable_body_tetrahedron_last": ("_volume_tet_start", "_volume_tet_end", "last"),
     "uipc:deformable_body_triangle_first": ("_soft_tri_start", "_soft_tri_end", "first"),
     "uipc:deformable_body_triangle_last": ("_soft_tri_start", "_soft_tri_end", "last"),
     "uipc:deformable_body_edge_first": ("_soft_edge_start", "_soft_edge_end", "first"),

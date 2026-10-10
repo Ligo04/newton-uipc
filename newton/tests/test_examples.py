@@ -34,6 +34,7 @@ from unittest.mock import call, create_autospec, patch
 import numpy as np
 import warp as wp
 
+import newton.examples
 import newton.tests.unittest_utils
 from newton.examples.robot.example_robot_cartpole import Example as RobotCartpoleExample
 from newton.tests.unittest_utils import (
@@ -155,6 +156,7 @@ _EXAMPLE_ALLOW_OUTPUT_REGEXES = [
     (_NEWTON_ASSET_DOWNLOAD_OUTPUT_RE, "stdout"),
 ]
 _OutputRegexSpec = str | tuple[str, str]
+_registered_examples: set[str] = set()
 
 
 def _build_command_line_options(test_options: dict[str, Any]) -> list:
@@ -204,6 +206,8 @@ def add_example_test(
     _examples_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "examples")
     if not os.path.exists(os.path.join(_examples_dir, f"{name.replace('.', '/')}.py")):
         raise ValueError(f"Example {name} does not exist")
+
+    _registered_examples.add(name)
 
     if test_options is None:
         test_options = {}
@@ -629,6 +633,14 @@ add_basic_example_test(
     allow_output_regexes=[(_WARP_SDF_CONSTANT_CONVERSION_WARNING_RE, "stderr")],
 )
 add_basic_example_test(
+    name="basic.example_basic_conveyor",
+    devices=cuda_test_devices,
+    use_viewer=True,
+    test_options={"num-frames": 100, "solver": "kamino"},
+    test_suffix="kamino",
+    allow_output_regexes=[(_WARP_SDF_CONSTANT_CONVERSION_WARNING_RE, "stderr")],
+)
+add_basic_example_test(
     name="basic.example_basic_conveyor_forces",
     devices=test_devices,
     use_viewer=True,
@@ -653,6 +665,14 @@ add_basic_example_test(
     allow_output_regexes=[(_WARP_SDF_CONSTANT_CONVERSION_WARNING_RE, "stderr")],
 )
 add_basic_example_test(
+    name="basic.example_basic_conveyor_forces",
+    devices=cuda_test_devices,
+    use_viewer=True,
+    test_options={"num-frames": 100, "solver": "kamino"},
+    test_suffix="kamino",
+    allow_output_regexes=[(_WARP_SDF_CONSTANT_CONVERSION_WARNING_RE, "stderr")],
+)
+add_basic_example_test(
     name="basic.example_basic_dzhanibekov",
     devices=test_devices,
     use_viewer=True,
@@ -672,6 +692,13 @@ add_basic_example_test(
     use_viewer=True,
     test_options={"num-frames": 230, "solver": "mujoco"},
     test_suffix="mujoco",
+)
+add_basic_example_test(
+    name="basic.example_basic_dzhanibekov",
+    devices=cuda_test_devices,
+    use_viewer=True,
+    test_options={"num-frames": 230, "solver": "kamino"},
+    test_suffix="kamino",
 )
 
 add_basic_example_test(
@@ -914,6 +941,14 @@ add_example_test(
 )
 add_example_test(
     TestRobotExamples,
+    name="robot.example_robot_anymal_d",
+    devices=cuda_test_devices,
+    test_options={"usd_required": True, "num-frames": 500, "world-count": 1, "solver": "kamino"},
+    use_viewer=True,
+    test_suffix="kamino",
+)
+add_example_test(
+    TestRobotExamples,
     name="robot.example_robot_g1",
     devices=cuda_test_devices,
     test_options={"usd_required": True, "num-frames": 500},
@@ -933,6 +968,14 @@ add_example_test(
     devices=cuda_test_devices,
     test_options={"usd_required": True, "num-frames": 500},
     use_viewer=True,
+)
+add_example_test(
+    TestRobotExamples,
+    name="robot.example_robot_h1",
+    devices=cuda_test_devices,
+    test_options={"usd_required": True, "num-frames": 500, "world-count": 4, "solver": "kamino"},
+    use_viewer=True,
+    test_suffix="kamino",
 )
 add_example_test(
     TestRobotExamples,
@@ -966,10 +1009,26 @@ add_example_test(
 )
 add_example_test(
     TestRobotExamples,
+    name="robot.example_robot_ur10",
+    devices=cuda_test_devices,
+    test_options={"usd_required": True, "num-frames": 100, "world-count": 2, "solver": "kamino"},
+    use_viewer=True,
+    test_suffix="kamino",
+)
+add_example_test(
+    TestRobotExamples,
     name="robot.example_robot_allegro_hand",
     devices=cuda_test_devices,
     test_options={"usd_required": True, "num-frames": 500},
     use_viewer=True,
+)
+add_example_test(
+    TestRobotExamples,
+    name="robot.example_robot_allegro_hand",
+    devices=cuda_test_devices,
+    test_options={"usd_required": True, "num-frames": 500, "world-count": 1, "solver": "kamino"},
+    use_viewer=True,
+    test_suffix="kamino",
 )
 add_example_test(
     TestRobotExamples,
@@ -1105,6 +1164,14 @@ add_example_test(
 )
 add_example_test(
     TestSelectionAPIExamples,
+    name="selection.example_selection_articulations",
+    devices=cuda_test_devices,
+    test_options={"num-frames": 100, "world-count": 2, "solver": "kamino"},
+    use_viewer=True,
+    test_suffix="kamino",
+)
+add_example_test(
+    TestSelectionAPIExamples,
     name="selection.example_selection_cartpole",
     devices=test_devices,
     test_options={"num-frames": 100},
@@ -1137,11 +1204,27 @@ add_example_test(
 )
 add_example_test(
     TestSelectionAPIExamples,
+    name="selection.example_selection_materials",
+    devices=cuda_test_devices,
+    test_options={"num-frames": 100, "world-count": 2, "solver": "kamino"},
+    use_viewer=True,
+    test_suffix="kamino",
+)
+add_example_test(
+    TestSelectionAPIExamples,
     name="selection.example_selection_multiple",
     devices=test_devices,
     test_options={"num-frames": 100},
     test_options_cpu={"num-frames": 10},
     use_viewer=True,
+)
+add_example_test(
+    TestSelectionAPIExamples,
+    name="selection.example_selection_multiple",
+    devices=cuda_test_devices,
+    test_options={"num-frames": 100, "world-count": 2, "solver": "kamino"},
+    use_viewer=True,
+    test_suffix="kamino",
 )
 
 
@@ -1231,7 +1314,7 @@ add_example_test(
 
 add_example_test(
     TestSensorExamples,
-    name="sensors.example_sensor_tiled_camera",
+    name="sensors.example_sensor_camera",
     devices=cuda_test_devices,
     test_options={"num-frames": 4 * 36},  # train_iters * sim_steps
     use_viewer=True,
@@ -1353,6 +1436,43 @@ class TestContactsExamples(NewtonTestCase):
     pass
 
 
+def test_pyramid_kamino_impact(test, device):
+    """Check Kamino pyramid ground clearance through the wrecking-ball impact."""
+    from newton.examples.contacts.example_pyramid import CUBE_HALF, Y_STACK, Example  # noqa: PLC0415
+
+    with contextlib.redirect_stdout(io.StringIO()), wp.ScopedDevice(device):
+        example = Example(
+            ViewerNull(),
+            SimpleNamespace(
+                test=False,
+                world_count=1,
+                solver="kamino",
+                num_pyramids=1,
+                pyramid_size=20,
+                broad_phase="sap",
+            ),
+        )
+        for frame in range(451):
+            poses = example.state_0.body_q.numpy()[: example.box_count]
+            bottom = min(
+                pose[2] - CUBE_HALF * np.abs(np.asarray(wp.quat_to_matrix(wp.quat(*pose[3:7]))).reshape(3, 3)[2]).sum()
+                for pose in poses
+            )
+            test.assertGreater(bottom, -0.1, f"Frame {frame}: a cube penetrated the ground by {-bottom:.3f} m")
+            if frame < 450:
+                example.step()
+        ball_y = example.state_0.body_q.numpy()[example.box_count, 1]
+        test.assertLess(ball_y, Y_STACK - 5.0, "The wrecking ball did not pass through the pyramid")
+
+
+add_function_test(
+    TestContactsExamples,
+    "test_pyramid_kamino_impact",
+    test_pyramid_kamino_impact,
+    devices=cuda_test_devices,
+)
+
+
 _CONTACT_EXAMPLE_ALLOW_OUTPUT_REGEXES = [
     (_PXR_WORK_THREAD_LIMIT_OUTPUT_RE, "stderr"),
 ]
@@ -1391,10 +1511,34 @@ add_contact_example_test(
     allow_output_regexes=[(_ISAACGYM_ASSET_DOWNLOAD_OUTPUT_RE, "stdout")],
 )
 add_contact_example_test(
+    name="contacts.example_nut_bolt_sdf",
+    devices=cuda_test_devices,
+    test_options={"num-frames": 120, "world-count": 1, "solver": "kamino"},
+    use_viewer=True,
+    test_suffix="kamino",
+    expect_output_regexes=[
+        (_NUT_BOLT_DOWNLOAD_START_OUTPUT_RE, "stdout"),
+        (_NUT_BOLT_DOWNLOAD_DONE_OUTPUT_RE, "stdout"),
+    ],
+    allow_output_regexes=[(_ISAACGYM_ASSET_DOWNLOAD_OUTPUT_RE, "stdout")],
+)
+add_contact_example_test(
     name="contacts.example_nut_bolt_hydro",
     devices=cuda_test_devices,
     test_options={"num-frames": 120, "world-count": 1},
     use_viewer=True,
+    expect_output_regexes=[
+        (_NUT_BOLT_DOWNLOAD_START_OUTPUT_RE, "stdout"),
+        (_NUT_BOLT_DOWNLOAD_DONE_OUTPUT_RE, "stdout"),
+    ],
+    allow_output_regexes=[(_ISAACGYM_ASSET_DOWNLOAD_OUTPUT_RE, "stdout")],
+)
+add_contact_example_test(
+    name="contacts.example_nut_bolt_hydro",
+    devices=cuda_test_devices,
+    test_options={"num-frames": 120, "world-count": 1, "solver": "kamino"},
+    use_viewer=True,
+    test_suffix="kamino",
     expect_output_regexes=[
         (_NUT_BOLT_DOWNLOAD_START_OUTPUT_RE, "stdout"),
         (_NUT_BOLT_DOWNLOAD_DONE_OUTPUT_RE, "stdout"),
@@ -1413,6 +1557,14 @@ add_contact_example_test(
     devices=cuda_test_devices,
     test_options={"num-frames": 120, "num-pyramids": 3, "pyramid-size": 5},
     use_viewer=True,
+    expect_output_regexes=[(_PYRAMID_BUILD_OUTPUT_RE, "stdout")],
+)
+add_contact_example_test(
+    name="contacts.example_pyramid",
+    devices=cuda_test_devices,
+    test_options={"num-frames": 120, "num-pyramids": 3, "pyramid-size": 5, "solver": "kamino"},
+    use_viewer=True,
+    test_suffix="kamino",
     expect_output_regexes=[(_PYRAMID_BUILD_OUTPUT_RE, "stdout")],
 )
 
@@ -2346,6 +2498,14 @@ add_example_test(
 )
 add_example_test(
     TestControllersExamples,
+    name="controllers.example_controller_joint_impedance_heterogeneous",
+    devices=cuda_test_devices,
+    test_options={"num-frames": 360, "solver": "kamino"},
+    use_viewer=True,
+    test_suffix="kamino",
+)
+add_example_test(
+    TestControllersExamples,
     name="controllers.example_controller_operational_space_hybrid_force_motion",
     devices=cuda_test_devices,
     test_options={"usd_required": True, "num-frames": 600},
@@ -2358,6 +2518,47 @@ add_example_test(
     test_options={"usd_required": True, "num-frames": 100},
     use_viewer=True,
 )
+
+
+class TestUSDDependentExamples(unittest.TestCase):
+    pass
+
+
+add_example_test(
+    TestUSDDependentExamples,
+    name="softbody.example_softbody_franka",
+    devices=cuda_test_devices,
+    test_options={"usd_required": True},
+    use_viewer=True,
+)
+for example_name in (
+    "contacts.example_contacts_rj45_plug",
+    "vbd.example_vbd_rigid_rigid_contact",
+    "vbd.example_vbd_soft_rigid_contact",
+    "vbd.example_vbd_soft_rigid_mix_contact",
+):
+    add_example_test(
+        TestUSDDependentExamples,
+        name=example_name,
+        devices=cuda_test_devices,
+        test_options={"usd_required": True},
+        use_viewer=True,
+    )
+
+
+class TestAutoDiscoveredExamples(unittest.TestCase):
+    pass
+
+
+for example_module in newton.examples.get_examples().values():
+    example_name = example_module.removeprefix("newton.examples.")
+    if example_name not in _registered_examples:
+        add_example_test(
+            TestAutoDiscoveredExamples,
+            name=example_name,
+            devices=cuda_test_devices,
+            use_viewer=True,
+        )
 
 
 if __name__ == "__main__":

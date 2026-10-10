@@ -244,12 +244,10 @@ def _deformable_import_volume(ctx: _DeformableImportContext) -> None:
             "particle": (soft_p0, builder.particle_count),
             "tet": (soft_t0, builder.tet_count),
         }
-        # Group registration happens inside add_soft_mesh (which records the full
-        # tri/edge/density row), so the importer must not register a second time.
-        # The density actually used mirrors add_soft_mesh's own resolution order:
-        # explicit override, else the TetMesh's material density, else the builder
-        # default. Marked proposal deformables always supply the resolved density
-        # explicitly; bare TetMeshes retain the legacy material-then-default path.
+        # Group registration happens inside add_soft_mesh, which records the
+        # canonical volume row and its UIPC triangle/edge/density sidecar.  The
+        # density used there follows the same precedence as this result map:
+        # explicit override, TetMesh material, then the builder default.
         effective_density = add_soft_mesh_kwargs.get("density", tetmesh_for_builder.density)
         if effective_density is None:
             effective_density = builder.default_tet_density
