@@ -81,6 +81,7 @@ __all__ += [
 from ._src.sim import (  # noqa: E402
     BodyFlags,
     CollisionPipeline,
+    CollisionSubstepScheduler,
     Contacts,
     Control,
     JointTargetMode,
@@ -105,6 +106,7 @@ from ._src.sim import (  # noqa: E402
 __all__ += [
     "BodyFlags",
     "CollisionPipeline",
+    "CollisionSubstepScheduler",
     "Contacts",
     "Control",
     "JointTargetMode",
