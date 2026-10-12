@@ -24,7 +24,7 @@ from newton import Model
 
 from .converter import UIpcMappingInfo
 from .deformable_groups import cloth_groups_from_model
-from .utils import _view_attr
+from .utils import _clone_geometry_with_positions, _rest_positions_from_model, _view_attr
 
 
 class ClothBuilder:
@@ -279,9 +279,15 @@ class ClothBuilder:
             spc = SoftPositionConstraint()
             spc.apply_to(sc, self._soft_position_strength_ratio)
 
+        rest_vertices = _rest_positions_from_model(model, cloth_particle_indices)
+        rest_sc = _clone_geometry_with_positions(sc, rest_vertices) if rest_vertices is not None else None
+
         # Create scene object
         obj = self._scene.objects().create(f"cloth_{len(self._mapping.cloth_geo_slots)}")
-        geo_slot, rest_geo_slot = obj.geometries().create(sc)
+        if rest_sc is None:
+            geo_slot, rest_geo_slot = obj.geometries().create(sc)
+        else:
+            geo_slot, rest_geo_slot = obj.geometries().create(sc, rest_sc)
 
         # Store mapping for state sync
         self._mapping.cloth_geo_slots.append(geo_slot)

@@ -78,6 +78,61 @@ class TestUIPCClothConfiguration(unittest.TestCase):
 
 @unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
 class TestUIPCClothSoftPosition(unittest.TestCase):
+    @staticmethod
+    def _register_rest_position_attributes(builder: newton.ModelBuilder) -> None:
+        builder.add_custom_attribute(
+            newton.ModelBuilder.CustomAttribute(
+                name="rest_position",
+                dtype=wp.vec3f,
+                frequency=newton.Model.AttributeFrequency.PARTICLE,
+                namespace="uipc",
+                default=wp.vec3f(0.0, 0.0, 0.0),
+            )
+        )
+        builder.add_custom_attribute(
+            newton.ModelBuilder.CustomAttribute(
+                name="rest_position_valid",
+                dtype=wp.int32,
+                frequency=newton.Model.AttributeFrequency.PARTICLE,
+                namespace="uipc",
+                default=0,
+            )
+        )
+
+    def test_authored_rest_positions_are_passed_to_uipc(self):
+        """Keep a deformed current mesh while passing a separate UIPC rest geometry."""
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
+        newton.solvers.SolverUIPC.register_custom_attributes(builder)
+        self._register_rest_position_attributes(builder)
+        vertices = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)), dtype=np.float32)
+        rest_vertices = vertices.copy()
+        rest_vertices[1, 0] = 0.5
+        builder.add_cloth_mesh(
+            pos=wp.vec3(0.0, 0.0, 0.0),
+            rot=wp.quat_identity(),
+            scale=1.0,
+            vel=wp.vec3(0.0, 0.0, 0.0),
+            vertices=vertices,
+            indices=[0, 1, 2],
+            density=1.0,
+            tri_ke=1.0e3,
+            tri_ka=1.0e3,
+            tri_kd=0.0,
+            custom_attributes_particles={
+                "uipc:rest_position": rest_vertices,
+                "uipc:rest_position_valid": np.ones(3, dtype=np.int32),
+            },
+        )
+
+        model = builder.finalize("cpu")
+        solver = newton.solvers.SolverUIPC(model, backend="none", dt=1.0 / 60.0)
+        solver.initialize(model.state())
+
+        current = np.asarray(view(solver.mapping.cloth_geo_slots[0].geometry().positions())).reshape(-1, 3)
+        rest = np.asarray(view(solver.mapping.cloth_rest_geo_slots[0].geometry().positions())).reshape(-1, 3)
+        np.testing.assert_allclose(current, vertices)
+        np.testing.assert_allclose(rest, rest_vertices)
+
     def test_disconnected_cloth_grids_use_authored_ranges(self):
         """Build one UIPC cloth geometry per authored custom-frequency row."""
         builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))

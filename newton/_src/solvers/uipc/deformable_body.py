@@ -18,7 +18,7 @@ from newton import Model
 
 from .converter import UIpcMappingInfo
 from .deformable_groups import deformable_body_groups_from_model
-from .utils import _view_attr
+from .utils import _clone_geometry_with_positions, _rest_positions_from_model, _view_attr
 
 
 class DeformableBodyBuilder:
@@ -156,8 +156,14 @@ class DeformableBodyBuilder:
             spc = SoftPositionConstraint()
             spc.apply_to(sc)
 
+        rest_vertices = _rest_positions_from_model(model, selected_particle_indices)
+        rest_sc = _clone_geometry_with_positions(sc, rest_vertices) if rest_vertices is not None else None
+
         obj = self._scene.objects().create(f"deformable_{len(self._mapping.deformable_geo_slots)}")
-        geo_slot, rest_geo_slot = obj.geometries().create(sc)
+        if rest_sc is None:
+            geo_slot, rest_geo_slot = obj.geometries().create(sc)
+        else:
+            geo_slot, rest_geo_slot = obj.geometries().create(sc, rest_sc)
 
         self._mapping.deformable_geo_slots.append(geo_slot)
         self._mapping.deformable_rest_geo_slots.append(rest_geo_slot)
