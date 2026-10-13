@@ -5,11 +5,11 @@ import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from . import style3d
+    from . import mujoco, style3d
     from .featherstone import SolverFeatherstone
     from .implicit_mpm import SolverImplicitMPM
     from .kamino import SolverKamino
-    from .mujoco import SolverMuJoCo
+    from .mujoco.solver_mujoco import SolverMuJoCo
     from .observables import SolverObservableFlags, SolverObservables
     from .semi_implicit import SolverSemiImplicit
     from .solver import SolverBase
@@ -31,6 +31,7 @@ __all__ = [
     "SolverUIPC",
     "SolverVBD",
     "SolverXPBD",
+    "mujoco",
     "style3d",
 ]
 
@@ -43,7 +44,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str | None]] = {
     "SolverFeatherstone": (".featherstone", "SolverFeatherstone"),
     "SolverImplicitMPM": (".implicit_mpm", "SolverImplicitMPM"),
     "SolverKamino": (".kamino", "SolverKamino"),
-    "SolverMuJoCo": (".mujoco", "SolverMuJoCo"),
+    "SolverMuJoCo": (".mujoco.solver_mujoco", "SolverMuJoCo"),
     "SolverObservableFlags": (".observables", "SolverObservableFlags"),
     "SolverObservables": (".observables", "SolverObservables"),
     "SolverSemiImplicit": (".semi_implicit", "SolverSemiImplicit"),
@@ -51,6 +52,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str | None]] = {
     "SolverUIPC": (".uipc", "SolverUIPC"),
     "SolverVBD": (".vbd", "SolverVBD"),
     "SolverXPBD": (".xpbd", "SolverXPBD"),
+    "mujoco": (".mujoco", None),
     "style3d": (".style3d", None),
 }
 
