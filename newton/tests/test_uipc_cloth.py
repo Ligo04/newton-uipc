@@ -362,7 +362,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
         geo = solver.mapping.cloth_geo_slots[0].geometry()
         mass_density_attr = geo.meta().find("mass_density")
         self.assertIsNotNone(mass_density_attr)
-        self.assertAlmostEqual(float(view(mass_density_attr)[0]), 9000.0, places=3)
+        self.assertAlmostEqual(float(view(mass_density_attr)[0]), 4500.0, places=3)
         thickness = view(geo.vertices().find("thickness"))
         np.testing.assert_allclose(thickness, np.full(model.particle_count, 2.5e-4), rtol=1.0e-6)
 
@@ -405,6 +405,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
             solver.initialize(model.state())
 
     def test_triangle_materials_are_copied_per_triangle(self):
+        """Convert each triangle's Lamé parameters without averaging materials."""
         builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
         for vertex in [
             wp.vec3(0.0, 0.0, 0.0),
@@ -434,7 +435,10 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
         self.assertIsNotNone(mu_attr)
         self.assertIsNotNone(lambda_attr)
         np.testing.assert_allclose(view(mu_attr), np.asarray(tri_ke, dtype=np.float32), rtol=0.0, atol=1.0e-5)
-        np.testing.assert_allclose(view(lambda_attr), np.asarray(tri_ka, dtype=np.float32), rtol=0.0, atol=1.0e-5)
+        radii = model.particle_radius.numpy()
+        full_thickness = 2.0 * np.mean(radii[model.tri_indices.numpy()], axis=1)
+        expected_stretch = (np.asarray(tri_ka) + 2.0 * np.asarray(tri_ke)) * full_thickness
+        np.testing.assert_allclose(view(lambda_attr), expected_stretch, rtol=1.0e-6)
 
     def test_bending_stiffness_is_copied_per_edge(self):
         builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))

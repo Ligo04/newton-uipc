@@ -35,15 +35,21 @@ class ClothBuilder:
 
     Newton stores cloth as particles with triangle connectivity and material
     parameters (``tri_ke``, ``tri_ka``, ``tri_kd``, ``tri_drag``, ``tri_lift``).
-    This builder maps those to UIPC's ``ElasticModuli2D`` (Young's modulus,
-    Poisson's ratio) and shell bending stiffness.
+    The elastic inputs are Newton's per-triangle Lamé parameters, not Young's
+    modulus and Poisson's ratio. The two UIPC membrane models store different
+    coefficients and therefore require different conversions.
 
     Material mapping:
-        - ``tri_ke`` -> Young's modulus [Pa]
-        - Poisson's ratio defaults to 0.3
-        - Bending stiffness from ``edge_bending_properties`` or default
-        - ``particle_mass`` -> mass density [kg/m^2]
-        - ``particle_radius`` -> UIPC shell thickness [m]
+        - ``tri_ke``, ``tri_ka`` -> Lamé ``mu``, ``lambda`` [Pa] for NeoHookeanShell
+        - Baraff-Witkin stores shear ``mu`` and stretch ``(lambda + 2*mu) * h``,
+          matching UIPC's native ElasticModuli2D conversion, with full thickness ``h``
+        - ``edge_ke`` -> discrete-shell bending coefficient [N*m]
+        - Areal density [kg/m^2] -> volumetric density [kg/m^3] using ``h = 2*r``
+        - ``particle_radius`` -> one-sided UIPC thickness radius ``r`` [m]
+
+    Triangle damping, drag/lift, and edge damping are not transferred by this
+    adapter. The default Poisson ratio is only used when triangle materials are
+    unavailable; it does not override authored Lamé inputs.
 
     By default the membrane model is UIPC's
     ``StrainLimitingBaraffWitkinShell``.  Set an entry in
@@ -243,6 +249,11 @@ class ClothBuilder:
         density_thickness = (
             float(np.mean(thickness_values)) if thickness_values is not None else self._default_thickness
         )
+        if thickness_values is not None and model.tri_areas is not None:
+            areas = np.asarray(model.tri_areas.numpy()[selected_tri_ids], dtype=np.float64)
+            if np.sum(areas) > 0.0:
+                # A vertex's contribution to shell volume depends on its incident areas.
+                density_thickness = float(np.average(np.mean(thickness_values[cloth_faces], axis=1), weights=areas))
         applied_thickness = self._default_thickness
 
         # Compute mass density from particle masses and mesh area
@@ -261,9 +272,9 @@ class ClothBuilder:
         else:
             membrane = StrainLimitingBaraffWitkinShell()
         membrane.apply_to(sc, moduli, mass_density=mass_density, thickness=applied_thickness)
-        self._write_tri_elastic_moduli(sc, model, selected_tri_ids)
         if thickness_values is not None:
             self._write_vertex_thickness(sc, thickness_values, applied_thickness)
+        self._write_tri_elastic_moduli(sc, model, selected_tri_ids, cloth_model)
 
         # Apply DiscreteShellBending constitution
         dsb = DiscreteShellBending()
@@ -294,8 +305,8 @@ class ClothBuilder:
         self._mapping.cloth_rest_geo_slots.append(rest_geo_slot)
         self._mapping.cloth_particle_indices.append(cloth_particle_indices)
 
-    def _write_tri_elastic_moduli(self, sc: Any, model: Model, selected_tri_ids: np.ndarray) -> None:
-        """Copy authored per-triangle membrane stiffness onto UIPC triangle attributes."""
+    def _write_tri_elastic_moduli(self, sc: Any, model: Model, selected_tri_ids: np.ndarray, cloth_model: str) -> None:
+        """Convert per-triangle Lamé inputs to the selected UIPC membrane convention."""
         if model.tri_materials is None or selected_tri_ids.size == 0:
             return
 
@@ -307,8 +318,15 @@ class ClothBuilder:
 
         mu_view = _view_attr(mu_attr)
         lambda_view = _view_attr(lambda_attr)
-        mu_view[:] = np.asarray(tri_materials_np[:, 0], dtype=mu_view.dtype)
-        lambda_view[:] = np.asarray(tri_materials_np[:, 1], dtype=lambda_view.dtype)
+        mu = np.asarray(tri_materials_np[:, 0], dtype=np.float64)
+        lam = np.asarray(tri_materials_np[:, 1], dtype=np.float64)
+        if cloth_model == self.CLOTH_MODEL_STRAIN_LIMITING_BARAFF_WITKIN:
+            radii = np.asarray(_view_attr(sc.vertices().find("thickness")), dtype=np.float64).reshape(-1)
+            faces = np.asarray(_view_attr(sc.triangles().topo()), dtype=np.int32).reshape(-1, 3)
+            full_thickness = 2.0 * np.mean(radii[faces], axis=1)
+            lam = (lam + 2.0 * mu) * full_thickness
+        mu_view[:] = np.asarray(mu, dtype=mu_view.dtype)
+        lambda_view[:] = np.asarray(lam, dtype=lambda_view.dtype)
 
     def _write_edge_bending_stiffness(
         self,
@@ -373,12 +391,15 @@ class ClothBuilder:
         thickness: float,
         authored_surface_density: float | None,
     ) -> float:
-        """Estimate surface mass density [kg/m^2] from particle masses and areas.
+        """Convert areal mass to volume density [kg/m^3] using full thickness 2*r.
 
         Falls back to a default of 100 kg/m^3 volumetric density if estimation fails.
+        ``thickness`` is the area-weighted one-sided radius [m].
         """
+        if not np.isfinite(thickness) or thickness <= 0.0:
+            raise ValueError("UIPC cloth thickness radius must be finite and positive.")
         if authored_surface_density is not None:
-            return float(authored_surface_density) / thickness
+            return float(authored_surface_density) / (2.0 * thickness)
         if model.particle_mass is not None:
             particle_mass_np = model.particle_mass.numpy()
             total_mass = float(np.sum(particle_mass_np[particle_indices]))
@@ -386,7 +407,7 @@ class ClothBuilder:
                 total_area = float(np.sum(model.tri_areas.numpy()[selected_tri_ids]))
                 if total_area > 0:
                     # Compute surface density from mass and area.
-                    return total_mass / total_area / thickness
+                    return total_mass / total_area / (2.0 * thickness)
         return 100.0  # Default: 100 kg/m^3
 
     @staticmethod
@@ -399,10 +420,10 @@ class ClothBuilder:
         return pstart <= start and end <= pend
 
     def _get_thickness_values(self, model: Model, particle_indices: np.ndarray) -> np.ndarray | None:
-        """Return per-cloth-particle UIPC shell thickness values [m].
+        """Return per-cloth-particle UIPC one-sided thickness radii [m].
 
         Thickness is derived directly from ``model.particle_radius`` so cloth
-        shell thickness and particle collision radius stay identical. The
+        thickness radius and particle collision radius stay identical. The
         constructor fallback thickness is only used when particle radius data
         is unavailable.
         """
@@ -412,8 +433,8 @@ class ClothBuilder:
 
         radius_np = np.asarray(particle_radius.numpy(), dtype=np.float64).reshape(-1)
         values = radius_np[particle_indices]
-        if np.any(values < 0.0):
-            raise ValueError("particle_radius must be non-negative for all UIPC cloth particles.")
+        if not np.all(np.isfinite(values)) or np.any(values <= 0.0):
+            raise ValueError("particle_radius must be finite and positive for all UIPC cloth particles.")
         return values
 
     @staticmethod
