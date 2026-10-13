@@ -8,7 +8,6 @@ import warp as wp
 
 import newton
 import newton.examples
-from newton import Contacts
 from newton.sensors import SensorContact
 from newton.tests.unittest_utils import find_nonfinite_members
 
@@ -46,16 +45,19 @@ class Example:
 
         self.model = builder.finalize()
 
-        self.flap_contact_sensor = SensorContact(self.model, sensing_obj_shapes="*Flap", verbose=True)
+        self.flap_contact_sensor = SensorContact(
+            self.model, sensing_shapes="*Flap", verbose=True, request_contact_attributes=False
+        )
 
         plate_labels = ["*Plate1", "*Plate2"]
         counterpart_labels = ["*Cube*", "*Sphere*"]
         self.plate_contact_sensor = SensorContact(
             self.model,
-            sensing_obj_shapes=plate_labels,
+            sensing_shapes=plate_labels,
             counterpart_shapes=counterpart_labels,
             measure_total=False,
             verbose=True,
+            request_contact_attributes=False,
         )
 
         import uipc  # noqa: PLC0415
@@ -71,10 +73,14 @@ class Example:
         self.solver.set_contact(True, d_hat=contact_d_hat)
         self.solver.initialize()
 
-        self.contacts = Contacts(
-            256,
+        self.contacts = newton.CollisionPipeline(
+            self.model,
+            rigid_contact_max=self.solver.get_max_contact_count(),
             soft_contact_max=0,
-            requested_attributes=self.model.get_requested_contact_attributes(),
+        ).contacts()
+        self.solver_observables = self.solver.observables(
+            self.flap_contact_sensor.solver_observable_kinds | self.plate_contact_sensor.solver_observable_kinds,
+            contacts=self.contacts,
         )
 
         self.viewer.set_model(self.model)
@@ -115,8 +121,9 @@ class Example:
     def simulate(self):
         self.state_0.clear_forces()
         self.viewer.apply_forces(self.state_0)
-        self.solver.step(self.state_0, self.state_1, self.control, None, self.sim_dt)
-        self.solver.update_contacts(self.contacts, self.state_1)
+        self.solver.step(
+            self.state_0, self.state_1, self.control, self.contacts, self.sim_dt, observables=self.solver_observables
+        )
         self.state_0, self.state_1 = self.state_1, self.state_0
 
     def step(self):
@@ -128,7 +135,7 @@ class Example:
 
         self.simulate()
 
-        self.plate_contact_sensor.update(self.state_0, self.contacts)
+        self.plate_contact_sensor.update(self.state_0, self.contacts, observables=self.solver_observables)
 
         net_force = self.plate_contact_sensor.force_matrix.numpy()
         for i in range(2):
@@ -136,7 +143,7 @@ class Example:
                 continue
             if np.abs(net_force[i, self.counterpart_col[i]]).max() == 0:
                 continue
-            plate_shape = self.plate_contact_sensor.sensing_obj_idx[i]
+            plate_shape = self.plate_contact_sensor.sensing_indices[i]
             counterpart_shape = self.plate_contact_sensor.counterpart_indices[i][self.counterpart_col[i]]
             self.plates_touched[i] = True
             plate_label = self.model.shape_label[plate_shape]
@@ -144,7 +151,7 @@ class Example:
             print(f"Plate {plate_label} was touched by counterpart {counterpart_label}")
             self._set_shape_colors({plate_shape: self.shape_colors[counterpart_label]})
 
-        self.flap_contact_sensor.update(self.state_0, self.contacts)
+        self.flap_contact_sensor.update(self.state_0, self.contacts, observables=self.solver_observables)
         self.viewer.log_scalar(
             "Flap Contact Force",
             np.abs(self.flap_contact_sensor.total_force.numpy()[0, 2]),
@@ -167,7 +174,7 @@ class Example:
     def render(self):
         self.viewer.begin_frame(self.sim_time)
         self.viewer.log_state(self.state_0)
-        self.viewer.log_contacts(self.contacts, self.state_0)
+        self.viewer.log_contacts(self.contacts, self.state_0, observables=self.solver_observables)
         self.viewer.end_frame()
 
     def test_post_step(self):
@@ -185,8 +192,8 @@ class Example:
         )
         assert len(find_nonfinite_members(self.flap_contact_sensor)) == 0
         assert len(find_nonfinite_members(self.plate_contact_sensor)) == 0
-        assert self.model.shape_label[self.plate_contact_sensor.sensing_obj_idx[0]] == "/env/Plate1"
-        assert self.model.shape_label[self.plate_contact_sensor.sensing_obj_idx[1]] == "/env/Plate2"
+        assert self.model.shape_label[self.plate_contact_sensor.sensing_indices[0]] == "/env/Plate1"
+        assert self.model.shape_label[self.plate_contact_sensor.sensing_indices[1]] == "/env/Plate2"
 
 
 if __name__ == "__main__":

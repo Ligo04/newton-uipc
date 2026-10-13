@@ -50,6 +50,7 @@ solver.configure_scene(
     }
 )
 
+
 # Optional: customize contact pairs before initialize().
 def setup_contacts(tabular, world_index, ground_elem, env_elem, robo_elem, actor_elem):
     gripper_elem = tabular.create(f"gripper_{world_index}")
@@ -63,11 +64,14 @@ solver.initialize()
 state_in = model.state()
 state_out = model.state()
 control = model.control()
-contacts = model.contacts()
+# Allocate reporting buffers; UIPC performs collision detection internally.
+contacts = newton.CollisionPipeline(
+    model, rigid_contact_max=solver.get_max_contact_count(), soft_contact_max=0
+).contacts()
+observables = solver.observables({solver.ObservableKind.CONTACT_F}, contacts=contacts)
 
 for _ in range(100):
-    solver.step(state_in, state_out, control, dt=dt)
-    solver.update_contacts(contacts, state_out)
+    solver.step(state_in, state_out, control, contacts, dt, observables=observables)
     state_in, state_out = state_out, state_in
 ```
 
@@ -329,9 +333,11 @@ form as `drive_strength_ratio`), decoupled from `joint_limit_ke`.
 
 ## Contact pipeline
 
-`SolverUIPC` computes contact inside UIPC. Contacts passed to `step` are ignored;
-call `update_contacts` after `step` when Newton-side force or contact buffers
-are needed.
+`SolverUIPC` computes contact inside UIPC. When `CONTACT_F` is requested,
+`step` writes UIPC contact records into the bound `Contacts` and forces into
+`observables.contact_f`. Newton's collision pipeline is used to allocate the
+reporting buffers; do not call `collide()` on them before reading the results.
+Without an observable request, `step` skips contact readback.
 
 Global contact is disabled in the default Newton UIPC scene config:
 
@@ -387,21 +393,45 @@ individual body assignment.
 
 ### Contact readback
 
-`update_contacts(contacts, state)` pulls UIPC contact gradients back into
-Newton form:
+`SolverUIPC` supports the experimental `ObservableKind.CONTACT_F` output.
+Allocate it once, then pass it to each `step` that needs contact diagnostics:
 
-- `state.body_f` receives per-rigid-body contact wrenches when allocated.
-- `state.particle_f` receives per-particle cloth/deformable contact forces when
-  allocated.
-- `contacts.force` and rigid-contact pair arrays are populated when those
-  buffers are present. Each UIPC contact stencil (PT/EE/PE/PP/PH) becomes one
-  rigid-contact entry: the pair of touching shapes, the force on the first
-  shape, and per-contact points (`rigid_contact_point0/1`), so
-  `newton.sensors.SensorContact` reports per-counterpart forces and
-  `position_matrix` contact positions. Contacts against a FEM counterpart or
-  the ground are attributed to the ground-plane shape; contact positions are
-  vertex-level representatives, so a face-face interface localizes to within
-  the contact face rather than its exact centroid.
+```python
+sensor = newton.sensors.SensorContact(model, sensing_shapes="box", request_contact_attributes=False)
+contacts = newton.CollisionPipeline(
+    model, rigid_contact_max=solver.get_max_contact_count(), soft_contact_max=0
+).contacts()
+observables = solver.observables(sensor.solver_observable_kinds, contacts=contacts)
+
+solver.step(state_in, state_out, control, contacts, dt, observables=observables)
+sensor.update(state_out, contacts, observables=observables)
+viewer.log_contacts(contacts, state_out, observables=observables)
+```
+
+Use the same `Contacts` instance for allocation, stepping, sensors, and the
+viewer. The base allocator validates its device and capacities and freezes
+the model's contact capacities. The reporting capacity can be smaller than
+UIPC's native contact count; excess entries are dropped. For multiple
+substeps, pass `observables` only on the final substep when only frame-end
+readings are needed. Omitted requests leave the previous report unchanged;
+a requested readback with no contacts clears the report.
+
+Each UIPC contact stencil (PT/EE/PE/PP/PH) anchored on a rigid body becomes
+one rigid-contact entry. `observables.contact_f` contains the world-space
+force [N] on the first shape, with zero torque components [N·m]. Pair arrays
+contain the touching shapes and representative points
+(`rigid_contact_point0/1`), so `SensorContact` reports per-counterpart forces
+and `position_matrix` contact positions. FEM counterparts and the ground
+are attributed to the ground-plane shape. Contact positions are vertex-level
+representatives, so a face-face interface localizes to within the contact
+face rather than its exact centroid. The soft-contact segment is unused and
+zeroed; FEM-only contact stencils are not exported by `CONTACT_F`.
+
+Contact diagnostics are available only through observables. Migrate
+`update_contacts(contacts, state)` calls to the `step(..., observables=...)`
+workflow above. UIPC no longer writes contact forces into `contacts.force`,
+`state.body_f`, or `state.particle_f`. `BODY_QDD` and `BODY_PARENT_F` are not
+supported by UIPC.
 
 For CPU diagnostics, `_get_contact_forces` returns the lower-level per-body,
 per-primitive UIPC contact-force buckets. It is intentionally an internal
@@ -432,7 +462,7 @@ Each call to `SolverUIPC.step` uses the same three-phase cycle:
 3. **Pull UIPC → Newton.** AffineBody transforms / velocities and FEM particle
    positions / velocities are copied into `state_out`; active joint positions
    and velocities are written into `state_out.joint_q` / `joint_qd`; force
-   buffers are cleared until `update_contacts` is called.
+   buffers are cleared. Requested contact observables are exported separately.
 
 `dt` is fixed by the constructor. If the first `step` receives a different
 `dt`, Newton warns; UIPC still uses the constructor-configured time step.
@@ -551,8 +581,8 @@ change.
 - `SolverUIPC.initialize` — Newton `Model` → UIPC `Engine` / `World` / `Scene`
   construction and multi-world setup.
 - `SolverUIPC.step` — per-step UIPC integration entry point.
-- `SolverUIPC.update_contacts` — explicit pull of UIPC contact forces into
-  Newton `State` and `Contacts` buffers.
+- `SolverUIPC.observables` — allocate contact-force outputs for
+  `step(..., observables=...)`, contact sensors, and the viewer.
 - `SolverUIPC.sync_model_inertia_from_uipc` /
   `sync_uipc_inertia_with_model` — bidirectional AffineBody mass/inertia bridge.
 - `SolverUIPC.notify_model_changed` — runtime updates supported by the UIPC

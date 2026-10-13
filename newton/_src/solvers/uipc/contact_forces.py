@@ -4,8 +4,8 @@
 """Per-body contact force extraction from UIPC.
 
 Two paths:
-  - GPU (hot path): ``prepare_contact_gpu_data`` → warp kernels scatter forces
-    directly into ``state.body_f`` / ``state.particle_f`` / ``Contacts``.
+  - GPU (hot path): ``prepare_contact_gpu_data`` → warp kernels export contact
+    records and forces into solver observables.
   - CPU (diagnostic): ``retrieve_contact_forces`` → ``ContactForceReadback``
     for ``get_contact_forces()`` readback API.
 """
@@ -309,43 +309,6 @@ def build_gpu_vertex_maps(mapping: UIpcMappingInfo, body_count: int, device: wp.
 
 
 @wp.kernel
-def _scatter_contact_forces_kernel(
-    vertex_indices: wp.array[wp.int32],
-    forces: wp.array[wp.vec3],
-    vertex_to_body: wp.array[wp.int32],
-    vertex_to_particle: wp.array[wp.int32],
-    body_q: wp.array[wp.transform],
-    body_com: wp.array[wp.vec3],
-    body_count: int,
-    max_global_vertex: int,
-    body_f: wp.array[wp.spatial_vector],
-    particle_f: wp.array[wp.vec3],
-):
-    tid = wp.tid()
-    gv = vertex_indices[tid]
-    if gv < 0 or gv >= max_global_vertex:
-        return
-
-    f = forces[tid]
-
-    body_idx = vertex_to_body[gv]
-    if body_idx >= 0 and body_idx < body_count:
-        q = body_q[body_idx]
-        pos = wp.transform_get_translation(q)
-        rot = wp.transform_get_rotation(q)
-        com_local = body_com[body_idx]
-        com_world = pos + wp.quat_rotate(rot, com_local)
-        r = pos - com_world
-        tau = wp.cross(r, f)
-        wp.atomic_add(body_f, body_idx, wp.spatial_vector(f[0], f[1], f[2], tau[0], tau[1], tau[2]))
-        return
-
-    particle_idx = vertex_to_particle[gv]
-    if particle_idx >= 0:
-        wp.atomic_add(particle_f, particle_idx, f)
-
-
-@wp.kernel
 def _populate_contact_pairs_kernel(
     vert_a: wp.array[wp.int32],
     vert_b: wp.array[wp.int32],
@@ -428,9 +391,6 @@ def _populate_contact_pairs_kernel(
 class GpuContactData:
     """Packed contact data ready for GPU transfer."""
 
-    vertex_indices: np.ndarray  # (N,) int32 — all vertices with forces
-    forces: np.ndarray  # (N, 3) float32 — force per vertex
-
     vert_a: np.ndarray  # (M,) int32 — per-instance body-A representative vertex
     vert_b: np.ndarray  # (M,) int32 — per-instance body-B representative vertex
     forces_n: np.ndarray  # (M, 3) float32 — normal channel force sum per instance
@@ -458,8 +418,6 @@ def prepare_contact_gpu_data(
     Returns None if no contact data is available.
     """
     inv_dt2 = 1.0 / (dt * dt) if dt != 0.0 else 1.0
-    all_verts: list[np.ndarray] = []
-    all_forces: list[np.ndarray] = []
 
     # Per-instance data for contact pairs (keyed by primitive type)
     inst_vert_a: list[np.ndarray] = []
@@ -481,11 +439,9 @@ def prepare_contact_gpu_data(
 
             verts_flat = i_view.reshape(-1).astype(np.int32)
             forces_flat = (-grad_flat.reshape(-1, 3) * inv_dt2).astype(np.float32)
-            all_verts.append(verts_flat)
-            all_forces.append(forces_flat)
 
             if verts_flat.shape[0] % arity != 0:
-                continue  # unexpected layout: keep scatter data, skip pair export
+                continue  # unexpected layout: skip pair export
             sv = verts_flat.reshape(-1, arity)
             sf = forces_flat.reshape(-1, arity, 3)
             n_stencils = sv.shape[0]
@@ -526,22 +482,8 @@ def prepare_contact_gpu_data(
         else:
             inst_force_f.append(np.zeros_like(fn))
 
-    if not all_verts:
+    if not inst_vert_a:
         return None
-
-    vertex_indices = np.concatenate(all_verts)
-    forces = np.concatenate(all_forces)
-
-    n_pairs = sum(len(a) for a in inst_vert_a)
-    if n_pairs == 0:
-        return GpuContactData(
-            vertex_indices=vertex_indices,
-            forces=forces,
-            vert_a=np.empty(0, dtype=np.int32),
-            vert_b=np.empty(0, dtype=np.int32),
-            forces_n=np.empty((0, 3), dtype=np.float32),
-            forces_f=np.empty((0, 3), dtype=np.float32),
-        )
 
     vert_a_cat = np.concatenate(inst_vert_a)
     vert_b_cat = np.concatenate(inst_vert_b)
@@ -549,8 +491,6 @@ def prepare_contact_gpu_data(
     forces_f_cat = np.concatenate(inst_force_f)
 
     return GpuContactData(
-        vertex_indices=vertex_indices,
-        forces=forces,
         vert_a=vert_a_cat,
         vert_b=vert_b_cat,
         forces_n=forces_n_cat,

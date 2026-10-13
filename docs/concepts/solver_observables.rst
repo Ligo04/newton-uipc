@@ -140,8 +140,15 @@ Standard observables
    * - ``CONTACT_F`` / ``observables.contact_f``
      - Contact spatial forces aligned with the bound contacts
      - :class:`~newton.solvers.SolverMuJoCo` with MuJoCo Warp,
-       :class:`~newton.solvers.SolverXPBD`, :class:`~newton.solvers.SolverVBD`, and
-       :class:`~newton.solvers.SolverKamino`
+       :class:`~newton.solvers.SolverXPBD`, :class:`~newton.solvers.SolverVBD`,
+       :class:`~newton.solvers.SolverKamino`, and :class:`~newton.solvers.SolverUIPC`
+
+:class:`~newton.solvers.SolverUIPC` exports rigid-anchored UIPC contact stencils
+into the bound rigid contact records when ``CONTACT_F`` is requested. It uses
+the Newton pipeline only to allocate reporting storage; contact detection
+remains internal to UIPC. UIPC no longer implements the deprecated
+``update_contacts()`` method. See :doc:`../integrations/uipc` for the reporting
+limitations and sensor workflow.
 
 :class:`~newton.solvers.SolverKamino` computes acceleration as the discrete
 step-average ``(body_qd_out - body_qd_in) / dt``. Across an impact, this includes

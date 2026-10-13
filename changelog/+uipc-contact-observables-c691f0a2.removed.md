@@ -1,0 +1,1 @@
+Remove the UIPC `update_contacts()` implementation and contact-force writes to `Contacts.force`, `State.body_f`, and `State.particle_f`. Request `ObservableKind.CONTACT_F` from `SolverUIPC.observables()` and pass the resulting container to `step()` and contact consumers instead.

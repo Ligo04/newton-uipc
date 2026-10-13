@@ -1,0 +1,1 @@
+Add `SolverUIPC` support for `ObservableKind.CONTACT_F` through `step(..., observables=...)`, including contact sensor and viewer examples. Allocate reporting contacts with `CollisionPipeline` and pass the same contacts and observables to stepping and consumers.

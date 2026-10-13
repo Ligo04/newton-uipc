@@ -48,7 +48,6 @@ if TYPE_CHECKING:
     from .contact_forces import (
         ContactForceReadback,
         _populate_contact_pairs_kernel,
-        _scatter_contact_forces_kernel,
         build_gpu_vertex_maps,
         prepare_contact_gpu_data,
         retrieve_contact_forces,
@@ -157,6 +156,8 @@ class SolverUIPC(SolverBase):
     _backend_imported: bool = False
     """Whether :meth:`import_uipc` has already loaded the libuipc backend."""
 
+    SUPPORTED_OBSERVABLES = frozenset({SolverBase.ObservableKind.CONTACT_F})
+
     ADAPTIVE_KAPPA_MIN: float = UIPC_ADAPTIVE_KAPPA_MIN
     """Scene-derived lower bound for adaptive contact resistance [Pa]."""
 
@@ -236,7 +237,7 @@ class SolverUIPC(SolverBase):
         global FiniteElementStateAccessorFeature, SceneIO
         global ArticulationBuilder, ClothBuilder, DeformableBodyBuilder, RigidBodyBuilder
         global ContactForceReadback, UIpcMappingInfo, _view_attr
-        global _populate_contact_pairs_kernel, _scatter_contact_forces_kernel
+        global _populate_contact_pairs_kernel
         global build_gpu_vertex_maps, prepare_contact_gpu_data, retrieve_contact_forces
         global _read_fem_particle_positions_from_backend_kernel, _read_fem_particles_from_backend_kernel
         global _read_from_backend_kernel, _spatial_to_vel_mat44_kernel, _transform_to_mat44_kernel
@@ -262,7 +263,6 @@ class SolverUIPC(SolverBase):
             from .contact_forces import (
                 ContactForceReadback,
                 _populate_contact_pairs_kernel,
-                _scatter_contact_forces_kernel,
                 build_gpu_vertex_maps,
                 prepare_contact_gpu_data,
                 retrieve_contact_forces,
@@ -1333,6 +1333,8 @@ class SolverUIPC(SolverBase):
         control: Control | None,
         contacts: Contacts | None = None,
         dt: float | None = None,
+        *,
+        observables: SolverBase.Observables | None = None,
     ) -> None:
         """Simulate one time step using UIPC.
 
@@ -1343,13 +1345,19 @@ class SolverUIPC(SolverBase):
             state_in: The input state.
             state_out: The output state.
             control: The control input. ``None`` uses model defaults.
-            contacts: Unused. UIPC computes contacts internally; call
-                :meth:`update_contacts` after stepping to read them back.
-            dt: Time step [s]. When omitted, the fourth positional argument must
-                be the time step.
+            contacts: Output storage for UIPC contact records when ``CONTACT_F``
+                is requested. Must be the instance bound to ``observables``.
+                UIPC computes contacts internally and does not consume these records.
+            dt: Time step [s], matching the fixed value configured at construction.
+            observables: Optional solver-owned arrays. Request ``CONTACT_F`` to
+                export contact wrenches [N, N·m] and their contact records after
+                stepping. This does not write the deprecated ``contacts.force``
+                array or accumulate contact forces into the output state.
         """
         if dt is None:
             raise TypeError("SolverUIPC.step() missing required time step 'dt'.")
+
+        self.validate_observables(observables, contacts)
 
         if not self._initialized:
             self.initialize(state_in)
@@ -1397,6 +1405,11 @@ class SolverUIPC(SolverBase):
         if state_out.particle_f is not None:
             state_out.particle_f.zero_()
         self._current_state_out = state_out
+
+        if observables is not None and observables.is_requested(self.ObservableKind.CONTACT_F):
+            assert contacts is not None
+            assert observables.contact_f is not None
+            self._export_contacts(contacts, state_out, observables.contact_f)
 
         self._step_count += 1
         self._articulation_builder.increment_step()
@@ -1974,122 +1987,74 @@ class SolverUIPC(SolverBase):
         size as there is for solvers driving Newton's collision pipeline. The
         returned value is the ``rigid_contact_max`` passed at construction, or
         :attr:`CONTACTS_PER_ENV` times ``Model.num_envs`` when that was ``None``.
-        Contacts reported beyond this capacity by :meth:`update_contacts` are
-        dropped.
+        Use this estimate as ``CollisionPipeline(..., rigid_contact_max=...)``
+        when allocating contact observables. The supplied :class:`~newton.Contacts`
+        determines the actual reporting capacity; entries beyond it are dropped.
         """
         if self._rigid_contact_max is not None:
             return self._rigid_contact_max
         num_envs = max(int(getattr(self.model, "num_envs", 0) or 0), 1)
         return self.CONTACTS_PER_ENV * num_envs
 
-    @override
-    def update_contacts(self, contacts: Contacts, state: State | None = None) -> None:
-        """Write UIPC contact forces into Newton state and Contacts.
+    def _export_contacts(
+        self,
+        contacts: Contacts,
+        state_out: State,
+        contact_f: wp.array[wp.spatial_vector],
+    ) -> None:
+        """Export native contact records and forces into the requested observables."""
+        contacts.rigid_contact_count.zero_()
+        contacts.soft_contact_count.zero_()
+        contact_f.zero_()
 
-        Populates ``state.body_f`` with per-rigid-body total contact wrench
-        and ``state.particle_f`` with per-particle contact forces for
-        cloth/deformable bodies. Per-body spatial forces are also written
-        into ``contacts.force`` if allocated, along with per-contact points
-        (``rigid_contact_point0/1``) so :class:`~newton.sensors.SensorContact`
-        can report per-counterpart contact positions.
-        """
-        state_out: State | None = state if state is not None else getattr(self, "_current_state_out", None)
-
-        if self._csf is None:
-            return
-        if self.mapping.vertex_to_body_wp is None:
+        if self._csf is None or self.mapping.vertex_to_body_wp is None:
             return
 
         gpu_data = prepare_contact_gpu_data(self._csf, dt=self._dt, vertex_to_body=self.mapping.vertex_to_body_np)
         if gpu_data is None:
-            if hasattr(contacts, "rigid_contact_count"):
-                contacts.rigid_contact_count.zero_()
             return
 
-        n_verts = gpu_data.vertex_indices.shape[0]
         n_inst = gpu_data.vert_a.shape[0]
-        if n_verts == 0 and n_inst == 0:
-            if hasattr(contacts, "rigid_contact_count"):
-                contacts.rigid_contact_count.zero_()
+        if n_inst == 0:
             return
 
         device = self.model.device
         mapping = self.mapping
+        fn_wp = wp.from_numpy(gpu_data.forces_n, dtype=wp.vec3f, device=device)
+        ff_wp = wp.from_numpy(gpu_data.forces_f, dtype=wp.vec3f, device=device)
+        va_wp = wp.from_numpy(gpu_data.vert_a, dtype=wp.int32, device=device)
+        vb_wp = wp.from_numpy(gpu_data.vert_b, dtype=wp.int32, device=device)
 
-        if n_verts > 0 and state_out is not None:
-            vi_wp = wp.from_numpy(gpu_data.vertex_indices, dtype=wp.int32, device=device)
-            f_wp = wp.from_numpy(gpu_data.forces, dtype=wp.vec3f, device=device)
-
-            body_f = state_out.body_f
-            particle_f = state_out.particle_f
-            body_q = state_out.body_q if state_out.body_q is not None else self.model.body_q
-
-            if body_f is not None and particle_f is not None and body_q is not None:
-                wp.launch(
-                    kernel=_scatter_contact_forces_kernel,
-                    dim=n_verts,
-                    inputs=[
-                        vi_wp,
-                        f_wp,
-                        mapping.vertex_to_body_wp,
-                        mapping.vertex_to_particle_wp,
-                        body_q,
-                        self.model.body_com,
-                        self.model.body_count,
-                        mapping.max_global_vertex,
-                    ],
-                    outputs=[body_f, particle_f],
-                    device=device,
-                )
-
-        if n_inst > 0 and hasattr(contacts, "rigid_contact_shape0") and contacts.force is not None:
-            fn_wp = wp.from_numpy(gpu_data.forces_n, dtype=wp.vec3f, device=device)
-            ff_wp = wp.from_numpy(gpu_data.forces_f, dtype=wp.vec3f, device=device)
-            va_wp = wp.from_numpy(gpu_data.vert_a, dtype=wp.int32, device=device)
-            vb_wp = wp.from_numpy(gpu_data.vert_b, dtype=wp.int32, device=device)
-
-            contacts.rigid_contact_count.zero_()
-            ground_shape = self._ground_shape_index()
-
-            body_q = state_out.body_q if state_out is not None and state_out.body_q is not None else self.model.body_q
-            particle_q = (
-                state_out.particle_q
-                if state_out is not None and state_out.particle_q is not None
-                else self.model.particle_q
-            )
-
-            wp.launch(
-                kernel=_populate_contact_pairs_kernel,
-                dim=n_inst,
-                inputs=[
-                    va_wp,
-                    vb_wp,
-                    fn_wp,
-                    ff_wp,
-                    mapping.vertex_to_body_wp,
-                    mapping.vertex_to_particle_wp,
-                    mapping.vertex_local_pos_wp,
-                    body_q,
-                    particle_q,
-                    mapping.body_to_first_shape_wp,
-                    self.model.body_count,
-                    mapping.max_global_vertex,
-                    ground_shape,
-                ],
-                outputs=[
-                    contacts.rigid_contact_shape0,
-                    contacts.rigid_contact_shape1,
-                    contacts.rigid_contact_point0,
-                    contacts.rigid_contact_point1,
-                    contacts.rigid_contact_normal,
-                    contacts.force,
-                    contacts.rigid_contact_count,
-                    contacts.rigid_contact_max,
-                ],
-                device=device,
-            )
-        elif hasattr(contacts, "rigid_contact_count"):
-            contacts.rigid_contact_count.zero_()
+        wp.launch(
+            kernel=_populate_contact_pairs_kernel,
+            dim=n_inst,
+            inputs=[
+                va_wp,
+                vb_wp,
+                fn_wp,
+                ff_wp,
+                mapping.vertex_to_body_wp,
+                mapping.vertex_to_particle_wp,
+                mapping.vertex_local_pos_wp,
+                state_out.body_q,
+                state_out.particle_q,
+                mapping.body_to_first_shape_wp,
+                self.model.body_count,
+                mapping.max_global_vertex,
+                self._ground_shape_index(),
+            ],
+            outputs=[
+                contacts.rigid_contact_shape0,
+                contacts.rigid_contact_shape1,
+                contacts.rigid_contact_point0,
+                contacts.rigid_contact_point1,
+                contacts.rigid_contact_normal,
+                contact_f,
+                contacts.rigid_contact_count,
+                contacts.rigid_contact_max,
+            ],
+            device=device,
+        )
 
     # GPU batch sync methods
 

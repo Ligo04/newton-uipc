@@ -43,7 +43,7 @@ Use this skill to work on Newton's UIPC solver integration with repo-local evide
 
 ## UIPC behavior guardrails
 
-- Contact is computed inside UIPC; `step` does not consume Newton contacts. Use `update_contacts` for Newton-side force/contact buffers.
+- Contact is computed inside UIPC. Allocate reporting contacts with `CollisionPipeline`, request `ObservableKind.CONTACT_F`, and pass the same contacts and observables to `step` and consumers. UIPC no longer implements `update_contacts` or writes contact forces into state/legacy contact buffers.
 - Global UIPC contact is disabled by default; examples usually call `solver.set_contact(True, d_hat=...)`.
 - UIPC uses a fixed constructor `dt`; do not imply per-step `dt` retunes UIPC.
 - Active driven/read-back joints are revolute and prismatic. Ball joints constrain anchors but are not active UIPC articulation controls.

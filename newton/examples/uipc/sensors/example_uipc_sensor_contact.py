@@ -7,7 +7,6 @@ import warp as wp
 
 import newton
 import newton.examples
-from newton import Contacts
 from newton.sensors import SensorContact
 
 BOX_HALF = 0.5
@@ -72,15 +71,19 @@ class Example:
             sensing_shapes=["shape_bottom"],
             counterpart_shapes=["ground_plane", "shape_top"],
             verbose=True,
+            request_contact_attributes=False,
         )
 
         rigid_contact_max = (
             self.solver.get_max_contact_count() if hasattr(self.solver, "get_max_contact_count") else 256
         )
-        self.contacts = Contacts(
-            rigid_contact_max,
+        self.contacts = newton.CollisionPipeline(
+            self.model,
+            rigid_contact_max=rigid_contact_max,
             soft_contact_max=0,
-            requested_attributes=self.model.get_requested_contact_attributes(),
+        ).contacts()
+        self.solver_observables = self.solver.observables(
+            self.contact_sensor.solver_observable_kinds, contacts=self.contacts
         )
 
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
@@ -119,19 +122,22 @@ class Example:
         raise ValueError(f"unsupported --solver: {name!r}")
 
     def simulate(self):
-        for _ in range(self.sim_substeps):
+        for substep in range(self.sim_substeps):
             self.state_0.clear_forces()
+            observables = self.solver_observables if substep == self.sim_substeps - 1 else None
             if self._use_two_states:
-                self.solver.step(self.state_0, self.state_1, self.control, self.contacts, self.sim_dt)
+                self.solver.step(
+                    self.state_0, self.state_1, self.control, self.contacts, self.sim_dt, observables=observables
+                )
                 self.state_0, self.state_1 = self.state_1, self.state_0
             else:
-                self.solver.step(self.state_0, self.state_0, self.control, self.contacts, self.sim_dt)
+                self.solver.step(
+                    self.state_0, self.state_0, self.control, self.contacts, self.sim_dt, observables=observables
+                )
 
     def step(self):
         self.simulate()
-        self.solver.update_contacts(self.contacts, self.state_0)
-
-        self.contact_sensor.update(self.state_0, self.contacts)
+        self.contact_sensor.update(self.state_0, self.contacts, observables=self.solver_observables)
         sensor_force = self.contact_sensor.total_force.numpy()[0]
         force_matrix = self.contact_sensor.force_matrix.numpy()[0]
 
@@ -150,8 +156,7 @@ class Example:
 
     def test_final(self):
         """Verify contact forces are non-zero after settling."""
-        self.solver.update_contacts(self.contacts, self.state_0)
-        self.contact_sensor.update(self.state_0, self.contacts)
+        self.contact_sensor.update(self.state_0, self.contacts, observables=self.solver_observables)
         sensor_force = self.contact_sensor.total_force.numpy()[0]
         assert abs(sensor_force[2]) > 0.1, (
             f"Expected non-zero contact force on bottom box, got Fz={sensor_force[2]:.4f}"
