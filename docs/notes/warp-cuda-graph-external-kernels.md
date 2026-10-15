@@ -7,10 +7,12 @@ Conclusion: NVIDIA Warp CUDA graph capture can include external CUDA kernels, as
 ```python
 import warp as wp
 
+
 @wp.kernel
 def step(x: wp.array[float]):
     i = wp.tid()
     x[i] += 1.0
+
 
 device = "cuda:0"
 n = 1024

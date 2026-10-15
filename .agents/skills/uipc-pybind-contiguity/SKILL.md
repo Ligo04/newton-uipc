@@ -54,12 +54,16 @@ Quick check inside a debug wrapper around `uipc.geometry.trimesh`:
 
 ```python
 _orig = rb.uipc_trimesh
+
+
 def _wrap(verts, faces):
     sc = _orig(verts, faces)
     pv = np.asarray(sc.positions().view()).reshape(-1, 3)
     if not np.allclose(pv, verts):
-        print(f"MISMATCH! contig={verts.flags['C_CONTIGUOUS']} max_dv={np.abs(pv-verts).max()}")
+        print(f"MISMATCH! contig={verts.flags['C_CONTIGUOUS']} max_dv={np.abs(pv - verts).max()}")
     return sc
+
+
 rb.uipc_trimesh = _wrap
 ```
 

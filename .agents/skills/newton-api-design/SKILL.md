@@ -96,6 +96,7 @@ Document units and shape in the docstring.
 
 ```python
 """Rigid body velocities [m/s, rad/s], shape [body_count]."""
+
 """Joint forces [N or N·m], shape [joint_dof_count]."""
 """Contact points [m], shape [count, 3]."""
 ```

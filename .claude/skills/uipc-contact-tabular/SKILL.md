@@ -40,15 +40,15 @@ Inserted automatically by `SolverUIPC.initialize()` in
 contact_tabular.insert(ground_elem, ground_elem, 0.5, 1.0 * GPa, False)
 
 # Per-world (repeated for every Newton world):
-contact_tabular.insert(env_elem,    env_elem,    0.5, 1.0 * GPa, False)
-contact_tabular.insert(env_elem,    robo_elem,   0.5, 1.0 * GPa, True )
-contact_tabular.insert(env_elem,    actor_elem,  0.5, 1.0 * GPa, True )
-contact_tabular.insert(ground_elem, env_elem,    0.5, 1.0 * GPa, False)  # ← note: False!
-contact_tabular.insert(ground_elem, robo_elem,   0.5, 1.0 * GPa, True )
-contact_tabular.insert(ground_elem, actor_elem,  0.5, 1.0 * GPa, True )
-contact_tabular.insert(robo_elem,   robo_elem,   0.5, 1.0 * GPa, False)  # ← self-collision off
-contact_tabular.insert(robo_elem,   actor_elem,  0.5, 1.0 * GPa, True )
-contact_tabular.insert(actor_elem,  actor_elem,  0.5, 1.0 * GPa, True )
+contact_tabular.insert(env_elem, env_elem, 0.5, 1.0 * GPa, False)
+contact_tabular.insert(env_elem, robo_elem, 0.5, 1.0 * GPa, True)
+contact_tabular.insert(env_elem, actor_elem, 0.5, 1.0 * GPa, True)
+contact_tabular.insert(ground_elem, env_elem, 0.5, 1.0 * GPa, False)  # ← note: False!
+contact_tabular.insert(ground_elem, robo_elem, 0.5, 1.0 * GPa, True)
+contact_tabular.insert(ground_elem, actor_elem, 0.5, 1.0 * GPa, True)
+contact_tabular.insert(robo_elem, robo_elem, 0.5, 1.0 * GPa, False)  # ← self-collision off
+contact_tabular.insert(robo_elem, actor_elem, 0.5, 1.0 * GPa, True)
+contact_tabular.insert(actor_elem, actor_elem, 0.5, 1.0 * GPa, True)
 ```
 
 **Critical defaults to remember**
@@ -69,12 +69,12 @@ contact_tabular.insert(actor_elem,  actor_elem,  0.5, 1.0 * GPa, True )
 
 ```python
 contact_tabular.insert(
-    element_a,   # ContactElement
-    element_b,   # ContactElement (order does not matter, symmetric)
-    mu,          # float — Coulomb friction coefficient
-    kappa,       # float — barrier stiffness in Pa. `GPa = 1e9` is imported
-                 #         from `newton._src.solvers.uipc.solver_uipc`.
-    enable,      # bool — True to enable contact, False to skip this pair
+    element_a,  # ContactElement
+    element_b,  # ContactElement (order does not matter, symmetric)
+    mu,  # float — Coulomb friction coefficient
+    kappa,  # float — barrier stiffness in Pa. `GPa = 1e9` is imported
+    #         from `newton._src.solvers.uipc.solver_uipc`.
+    enable,  # bool — True to enable contact, False to skip this pair
 )
 ```
 
@@ -91,14 +91,14 @@ def setup_contacts(tabular, world_index, ground_elem, env_elem, robo_elem, actor
     gripper_elem = tabular.create(f"gripper_{world_index}")
 
     # Patch defaults and declare new pairs.
-    tabular.insert(gripper_elem, env_elem,    0.8, 1e9, True)
+    tabular.insert(gripper_elem, env_elem, 0.8, 1e9, True)
     tabular.insert(gripper_elem, ground_elem, 0.8, 1e9, True)
-    tabular.insert(gripper_elem, actor_elem,  0.8, 1e9, True)
+    tabular.insert(gripper_elem, actor_elem, 0.8, 1e9, True)
 
     # (Optional) return a dict mapping body_index → element to override
     # the default element assignment of specific bodies.
     return {
-        left_finger_body_idx:  gripper_elem,
+        left_finger_body_idx: gripper_elem,
         right_finger_body_idx: gripper_elem,
     }
 
@@ -147,12 +147,11 @@ harder without affecting everything else.
 ```python
 def setup(tabular, wi, ground, env, robo, actor):
     pad = tabular.create(f"pad_{wi}")
-    tabular.insert(pad, actor,  0.9, 1e9, True)   # grip objects
-    tabular.insert(pad, env,    0.9, 1e9, True)   # grip table edge
+    tabular.insert(pad, actor, 0.9, 1e9, True)  # grip objects
+    tabular.insert(pad, env, 0.9, 1e9, True)  # grip table edge
     tabular.insert(pad, ground, 0.9, 1e9, True)
-    tabular.insert(pad, robo,   0.5, 1e9, False)  # no self-collision with arm
-    return {left_finger_idx + wi * bodies_per_world: pad,
-            right_finger_idx + wi * bodies_per_world: pad}
+    tabular.insert(pad, robo, 0.5, 1e9, False)  # no self-collision with arm
+    return {left_finger_idx + wi * bodies_per_world: pad, right_finger_idx + wi * bodies_per_world: pad}
 ```
 
 ### Enabling robot self-collision on a subset of links
@@ -169,12 +168,11 @@ def setup(tabular, wi, ground, env, robo, actor):
     team_b = tabular.create(f"team_b_{wi}")
     for t in (team_a, team_b):
         tabular.insert(t, ground, 0.5, 1e9, True)
-        tabular.insert(t, env,    0.5, 1e9, True)
-        tabular.insert(t, robo,   0.5, 1e9, True)
-        tabular.insert(t, t,      0.5, 1e9, True)
+        tabular.insert(t, env, 0.5, 1e9, True)
+        tabular.insert(t, robo, 0.5, 1e9, True)
+        tabular.insert(t, t, 0.5, 1e9, True)
     # team_a ↔ team_b NOT inserted → no contact between teams.
-    return { **{b: team_a for b in team_a_bodies},
-             **{b: team_b for b in team_b_bodies} }
+    return {**{b: team_a for b in team_a_bodies}, **{b: team_b for b in team_b_bodies}}
 ```
 
 ### Disabling a noisy default pair
