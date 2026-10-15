@@ -40,7 +40,6 @@ from newton.actuators import (
     DrivePID,
     DriveStablePD,
     JointSpaceResponse,
-    ResponseOracle,
     parse_actuator_prim,
 )
 from newton.selection import ArticulationView
@@ -3953,7 +3952,7 @@ class TestJointSpaceResponse(unittest.TestCase):
             np.testing.assert_allclose(blocks[art, :n, :n], blocks[0, :n, :n], rtol=1e-5, atol=1e-6)
 
     def test_armature_enters_the_response(self):
-        """Include joint armature exactly once in both response implementations."""
+        """Include joint armature exactly once in the joint-space response."""
         device = wp.get_device()
         q0 = np.array([0.3, -0.8], dtype=np.float32)
         bare_model = _two_link_builder(armature=0.0).finalize(device=device)
@@ -3966,15 +3965,13 @@ class TestJointSpaceResponse(unittest.TestCase):
         H = newton.eval_mass_matrix(m, st).numpy()[0, :2, :2]
         expected = np.linalg.inv(H)
 
-        for response_type in (JointSpaceResponse, ResponseOracle):
-            with self.subTest(response=response_type.__name__):
-                bare = response_type(bare_model)
-                bare.refresh(bare_state)
-                response = response_type(m)
-                response.refresh(st)
-                with_armature = response.inverse_blocks.numpy()[0, :2, :2]
-                self.assertTrue(np.all(np.diag(with_armature) < np.diag(bare.inverse_blocks.numpy()[0, :2, :2])))
-                np.testing.assert_allclose(with_armature, expected, rtol=1e-4, atol=1e-6)
+        bare = JointSpaceResponse(bare_model)
+        bare.refresh(bare_state)
+        response = JointSpaceResponse(m)
+        response.refresh(st)
+        with_armature = response.inverse_blocks.numpy()[0, :2, :2]
+        self.assertTrue(np.all(np.diag(with_armature) < np.diag(bare.inverse_blocks.numpy()[0, :2, :2])))
+        np.testing.assert_allclose(with_armature, expected, rtol=1e-4, atol=1e-6)
 
     def test_refresh_does_not_mutate_state(self):
         """``refresh()`` must not write back into the caller's state.

@@ -388,15 +388,11 @@ def _make_nonplanar_mujoco_mesh(
     maxhullvert: int,
     extent_axis: np.ndarray | None = None,
     eps: float = 1.0e-6,
-    *,
-    preserve_surface: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Give a planar mesh enough thickness for MuJoCo's convex-hull compiler.
 
-    When MuJoCo owns contact generation, ``preserve_surface`` creates a thin
-    symmetric prism so the authored plane stays at the center of the contact
-    proxy. Otherwise a single off-plane triangle is sufficient because Newton's
-    collision pipeline still owns the contacts.
+    A single off-plane triangle lets the mesh compile while Newton's collision
+    pipeline handles contacts using the original mesh.
     """
     vertices = np.asarray(vertices).reshape(-1, 3)
     indices = np.asarray(indices, dtype=np.int32).flatten()
@@ -425,44 +421,6 @@ def _make_nonplanar_mujoco_mesh(
         if normal_length <= eps:
             raise ValueError("Unable to build a temporary non-planar MuJoCo mesh from coincident vertices")
         normal /= normal_length
-
-    if preserve_surface:
-        faces = indices.reshape(-1, 3)
-        for tri in faces:
-            face_normal = np.cross(vertices[tri[1]] - vertices[tri[0]], vertices[tri[2]] - vertices[tri[0]])
-            if np.linalg.norm(face_normal) > edge_tolerance:
-                if np.dot(face_normal, normal) < 0.0:
-                    normal = -normal
-                break
-
-        half_thickness = 0.5 * max(1.0e-3, 1.0e-3 * extent)
-        top_vertices = vertices + normal * half_thickness
-        bottom_vertices = vertices - normal * half_thickness
-        vertex_count = len(vertices)
-
-        top_faces = faces
-        bottom_faces = faces[:, ::-1] + vertex_count
-        edge_counts: dict[tuple[int, int], tuple[int, int, int]] = {}
-        for tri in faces:
-            for raw_a, raw_b in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
-                a = int(raw_a)
-                b = int(raw_b)
-                edge_key = (min(a, b), max(a, b))
-                count, first_a, first_b = edge_counts.get(edge_key, (0, a, b))
-                edge_counts[edge_key] = (count + 1, first_a, first_b)
-
-        side_faces = []
-        for count, a, b in edge_counts.values():
-            if count != 1:
-                continue
-            side_faces.extend(((a, a + vertex_count, b + vertex_count), (a, b + vertex_count, b)))
-
-        inflated_vertices = np.vstack((top_vertices, bottom_vertices))
-        face_groups = [top_faces, bottom_faces]
-        if side_faces:
-            face_groups.append(np.asarray(side_faces, dtype=np.int32))
-        inflated_indices = np.concatenate(face_groups).astype(np.int32, copy=False).flatten()
-        return inflated_vertices, inflated_indices, max(maxhullvert, len(inflated_vertices))
 
     apex = vertices.mean(axis=0, dtype=np.float64) + normal * max(1.0e-3, 1.0e-3 * extent)
 
@@ -7169,7 +7127,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                         actuator_required_shapes.add(site_shape_by_label[label])
 
         required_shapes = tendon_required_shapes | actuator_required_shapes | mujoco_pair_contact_shapes
-        mesh_export_cache: dict[tuple[int, tuple[float, float, float], bool], tuple[np.ndarray, np.ndarray, int]] = {}
+        mesh_export_cache: dict[tuple[int, tuple[float, float, float]], tuple[np.ndarray, np.ndarray, int, bool]] = {}
 
         def add_geoms(newton_body_id: int):
             body = mj_bodies[body_mapping[newton_body_id]]

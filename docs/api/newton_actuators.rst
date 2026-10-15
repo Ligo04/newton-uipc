@@ -41,7 +41,6 @@ construction.
    DrivePD
    DrivePID
    DriveStablePD
-   ResponseOracle
    JointSpaceResponse
    SchemaNames
 

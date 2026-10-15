@@ -1,1 +1,1 @@
-Migrate UIPC StablePD and `ResponseOracle` to the armature-inclusive mass matrix so rotor inertia is counted once. Remove `newton.add_armature_to_mass_matrix`; use `newton.eval_mass_matrix` directly.
+Migrate UIPC StablePD and `JointSpaceResponse` to the armature-inclusive mass matrix so rotor inertia is counted once. Remove `newton.add_armature_to_mass_matrix`; use `newton.eval_mass_matrix` directly.
