@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import warp as wp
 
 from ..math import quat_decompose, transform_twist, velocity_at_point
@@ -1412,12 +1414,14 @@ def eval_articulation_mass_matrix(
     joint_qd_start: wp.array[int],
     body_I_s: wp.array[wp.spatial_matrix],
     J: wp.array3d[float],
+    joint_armature: wp.array[float],
     # outputs
     H: wp.array3d[float],
 ):
     """Compute generalized mass matrix H = J^T * M * J.
 
     The mass matrix H relates joint accelerations to joint forces/torques.
+    If ``joint_armature`` is provided, it is added to the diagonal.
     Output shape: (articulation_count, max_dofs, max_dofs)
     """
     art_idx = wp.tid()
@@ -1462,28 +1466,9 @@ def eval_articulation_mass_matrix(
 
                 H[art_idx, dof_i, dof_j] = H[art_idx, dof_i, dof_j] + sum_val
 
-
-@wp.kernel
-def _add_armature_to_mass_matrix(
-    articulation_start: wp.array[int],
-    articulation_end: wp.array[int],
-    joint_qd_start: wp.array[int],
-    articulation_mask: wp.array[bool],
-    joint_armature: wp.array[float],
-    # outputs
-    H: wp.array3d[float],
-):
-    """Add per-DOF armature to the mass matrix diagonal (H += diag(armature))."""
-    art_idx, i = wp.tid()
-
-    if articulation_mask:
-        if not articulation_mask[art_idx]:
-            return
-
-    dof_start = joint_qd_start[articulation_start[art_idx]]
-    dof_end = joint_qd_start[articulation_end[art_idx]]
-    if dof_start + i < dof_end:
-        H[art_idx, i, i] = H[art_idx, i, i] + joint_armature[dof_start + i]
+    if joint_armature:
+        for dof in range(articulation_dof_count):
+            H[art_idx, dof, dof] = H[art_idx, dof, dof] + joint_armature[articulation_dof_start + dof]
 
 
 @wp.kernel
@@ -1699,6 +1684,13 @@ def eval_inverse_dynamics_force(
     )
 
 
+_INCLUDE_ARMATURE_DEPRECATION_MSG = (
+    "The include_armature argument of {name} is deprecated in Newton 1.8 and will be removed. "
+    "Model.joint_armature is now always added to the mass matrix by default. "
+    "To get the rigid-body matrix, subtract Model.joint_armature from the diagonal."
+)
+
+
 def eval_mass_matrix(
     model: Model,
     state: State,
@@ -1707,6 +1699,8 @@ def eval_mass_matrix(
     body_I_s: wp.array | None = None,
     joint_S_s: wp.array | None = None,
     mask: wp.array[bool] | None = None,
+    *,
+    include_armature: bool = True,
 ) -> wp.array | None:
     """Evaluate generalized mass matrix for articulations.
 
@@ -1715,9 +1709,13 @@ def eval_mass_matrix(
     relates joint accelerations to joint forces/torques and is consistent with
     kinetic energy computed from COM-referenced body twists.
 
-    Reflected rotor inertia (:attr:`~newton.Model.joint_armature`) is *not*
-    included; call :func:`add_armature_to_mass_matrix` on the result when a
-    control/dynamics plant model needs it.
+    :attr:`~newton.Model.joint_armature` is added to the diagonal, so H is the
+    joint-space inertia that solvers supporting armature
+    (:class:`~newton.solvers.SolverMuJoCo`,
+    :class:`~newton.solvers.SolverFeatherstone` and
+    :class:`~newton.solvers.SolverKamino`) integrate. Solver-specific
+    overrides, such as the large armature some solvers assign to kinematic
+    bodies, are not included.
 
     Args:
         model: The model containing articulation definitions.
@@ -1733,10 +1731,45 @@ def eval_mass_matrix(
         mask: Optional one-dimensional mask of shape (articulation_count,) selecting
               which articulations to compute. If None, computes for all articulations.
               Two-dimensional per-world masks are not supported.
+        include_armature: Deprecated in Newton 1.8. If True (default), add
+              :attr:`~newton.Model.joint_armature` to the diagonal. Passing
+              False returns the rigid-body matrix and emits a
+              :class:`DeprecationWarning`. This argument will be removed in a
+              future minor release.
 
     Returns:
         The mass matrix array H, or None if the model has no articulations.
     """
+    if not include_armature:
+        warnings.warn(
+            _INCLUDE_ARMATURE_DEPRECATION_MSG.format(name="eval_mass_matrix()"),
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    return _eval_mass_matrix(
+        model,
+        state,
+        H,
+        J=J,
+        body_I_s=body_I_s,
+        joint_S_s=joint_S_s,
+        mask=mask,
+        include_armature=include_armature,
+    )
+
+
+def _eval_mass_matrix(
+    model: Model,
+    state: State,
+    H: wp.array | None = None,
+    J: wp.array | None = None,
+    body_I_s: wp.array | None = None,
+    joint_S_s: wp.array | None = None,
+    mask: wp.array[bool] | None = None,
+    *,
+    include_armature: bool = True,
+) -> wp.array | None:
+    """Implement :func:`eval_mass_matrix` without the deprecation warning."""
     if model.articulation_count == 0:
         return None
 
@@ -1796,49 +1829,10 @@ def eval_mass_matrix(
             model.joint_qd_start,
             body_I_s,
             J,
+            model.joint_armature if include_armature else None,
         ],
         outputs=[H],
         device=model.device,
     )
 
-    return H
-
-
-def add_armature_to_mass_matrix(
-    model: Model,
-    H: wp.array,
-    mask: wp.array | None = None,
-) -> wp.array:
-    """Add reflected rotor inertia to a generalized mass matrix in place.
-
-    Adds :attr:`~newton.Model.joint_armature` to the diagonal of ``H``
-    (``H += diag(joint_armature)`` per articulation), turning the pure
-    link-inertia output of :func:`eval_mass_matrix` into the plant model used
-    by joint-space controllers (e.g. :class:`~newton.actuators.DriveStablePD`).
-    Runs entirely on device, so it is safe to call inside a CUDA-graph capture.
-
-    Args:
-        model: The model providing :attr:`~newton.Model.joint_armature`.
-        H: Generalized mass matrix from :func:`eval_mass_matrix`, shape
-           (articulation_count, max_dofs, max_dofs). Modified in place.
-        mask: Optional boolean mask to select which articulations to update.
-              Shape [articulation_count]. If None, updates all articulations.
-
-    Returns:
-        The same array ``H``, with armature added to its diagonal.
-    """
-    if model.joint_armature is not None:
-        wp.launch(
-            kernel=_add_armature_to_mass_matrix,
-            dim=(model.articulation_count, H.shape[1]),
-            inputs=[
-                model.articulation_start,
-                model.articulation_end,
-                model.joint_qd_start,
-                mask,
-                model.joint_armature,
-            ],
-            outputs=[H],
-            device=model.device,
-        )
     return H

@@ -1,14 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-from .articulation import (
-    add_armature_to_mass_matrix,
-    eval_fk,
-    eval_ik,
-    eval_inverse_dynamics_force,
-    eval_jacobian,
-    eval_mass_matrix,
-)
+from .articulation import eval_fk, eval_ik, eval_inverse_dynamics_force, eval_jacobian, eval_mass_matrix
 from .builder import ModelBuilder
 from .collide import CollisionPipeline
 from .collision_schedule import CollisionSubstepScheduler
@@ -27,6 +20,7 @@ from .joint_mimic import eval_mimic
 from .model import Model
 from .rod import Rod
 from .state import State
+from .tendon import TendonGuide, TendonGuideFlags, TendonGuideType
 
 __all__ = [
     "BodyFlags",
@@ -42,7 +36,9 @@ __all__ = [
     "Rod",
     "State",
     "StateFlags",
-    "add_armature_to_mass_matrix",
+    "TendonGuide",
+    "TendonGuideFlags",
+    "TendonGuideType",
     "eval_fk",
     "eval_ik",
     "eval_inverse_dynamics_force",

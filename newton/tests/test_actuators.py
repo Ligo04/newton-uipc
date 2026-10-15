@@ -11,6 +11,7 @@ import shutil
 import tempfile
 import types
 import unittest
+import zipfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,7 @@ from newton.actuators import (
     DrivePID,
     DriveStablePD,
     JointSpaceResponse,
+    ResponseOracle,
     parse_actuator_prim,
 )
 from newton.selection import ArticulationView
@@ -3951,29 +3953,28 @@ class TestJointSpaceResponse(unittest.TestCase):
             np.testing.assert_allclose(blocks[art, :n, :n], blocks[0, :n, :n], rtol=1e-5, atol=1e-6)
 
     def test_armature_enters_the_response(self):
-        """Joint armature is rotor inertia the solver feels, so it must reduce alpha."""
+        """Include joint armature exactly once in both response implementations."""
         device = wp.get_device()
         q0 = np.array([0.3, -0.8], dtype=np.float32)
-
-        def alpha_for(armature: float) -> np.ndarray:
-            m = _two_link_builder(armature=armature).finalize(device=device)
-            st = m.state()
-            st.joint_q.assign(q0)
-            o = JointSpaceResponse(m)
-            o.refresh(st)
-            return np.diag(o.inverse_blocks.numpy()[0, :2, :2]).copy()
-
-        bare = alpha_for(0.0)
-        with_armature = alpha_for(0.5)
-        self.assertTrue(np.all(with_armature < bare))
-
-        # alpha must match a dense inverse of (H + diag(armature)).
+        bare_model = _two_link_builder(armature=0.0).finalize(device=device)
+        bare_state = bare_model.state()
+        bare_state.joint_q.assign(q0)
         m = _two_link_builder(armature=0.5).finalize(device=device)
         st = m.state()
         st.joint_q.assign(q0)
         newton.eval_fk(m, st.joint_q, st.joint_qd, st)
-        H = newton.eval_mass_matrix(m, st).numpy()[0, :2, :2] + np.diag([0.5, 0.5])
-        np.testing.assert_allclose(with_armature, np.diag(np.linalg.inv(H)), rtol=1e-4)
+        H = newton.eval_mass_matrix(m, st).numpy()[0, :2, :2]
+        expected = np.linalg.inv(H)
+
+        for response_type in (JointSpaceResponse, ResponseOracle):
+            with self.subTest(response=response_type.__name__):
+                bare = response_type(bare_model)
+                bare.refresh(bare_state)
+                response = response_type(m)
+                response.refresh(st)
+                with_armature = response.inverse_blocks.numpy()[0, :2, :2]
+                self.assertTrue(np.all(np.diag(with_armature) < np.diag(bare.inverse_blocks.numpy()[0, :2, :2])))
+                np.testing.assert_allclose(with_armature, expected, rtol=1e-4, atol=1e-6)
 
     def test_refresh_does_not_mutate_state(self):
         """``refresh()`` must not write back into the caller's state.
@@ -5277,7 +5278,7 @@ class TestDriveStateGraphCapture(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-@unittest.skipUnless(HAS_USD and _HAS_ONNX, "pxr or onnx not installed")
+@unittest.skipUnless(HAS_USD, "pxr not installed")
 class TestNeuralActuatorUsdParsing(unittest.TestCase):
     """Verify ``parse_actuator_prim`` correctly handles neural drive
     prims with asset-typed ``newton:modelPath`` attributes.
@@ -5361,6 +5362,7 @@ class TestNeuralActuatorUsdParsing(unittest.TestCase):
 
         return stage
 
+    @unittest.skipUnless(_HAS_ONNX, "onnx not installed")
     def test_parse_mlp_from_usd(self):
         """parse_actuator_prim resolves Sdf.AssetPath for MLP checkpoint."""
         model_path = self._make_mlp_checkpoint(metadata={"model_type": "mlp"})
@@ -5378,6 +5380,7 @@ class TestNeuralActuatorUsdParsing(unittest.TestCase):
         self.assertEqual(cls, ClampingDCMotor)
         self.assertAlmostEqual(kwargs["saturation_effort"], 100.0)
 
+    @unittest.skipUnless(_HAS_ONNX, "onnx not installed")
     def test_parse_lstm_from_usd(self):
         """parse_actuator_prim resolves Sdf.AssetPath for LSTM checkpoint."""
         model_path = self._make_lstm_checkpoint(metadata={"model_type": "lstm"})
@@ -5388,6 +5391,40 @@ class TestNeuralActuatorUsdParsing(unittest.TestCase):
         self.assertIsNotNone(parsed)
         self.assertEqual(parsed.drive_class, DriveNeuralLSTM)
         self.assertEqual(parsed.drive_kwargs["model_path"], model_path)
+
+    def test_usd_torch_checkpoint_requires_opt_in(self):
+        """Require a valid model path and trust before importing a Torch checkpoint."""
+        from pxr import Sdf
+
+        model_path = os.path.join(self._tmp_dir, "mlp.pt2")
+        with zipfile.ZipFile(model_path, "w") as archive:
+            archive.writestr("archive/archive_format", "pt2")
+            archive.writestr("archive/extra/metadata.json", json.dumps({"model_type": "mlp"}))
+
+        stage_path = os.path.join(self._tmp_dir, "robot.usda")
+        stage = self._build_neural_stage("mlp.pt2")
+        stage.GetRootLayer().Export(stage_path)
+
+        with self.assertRaisesRegex(ValueError, "allow_unsafe_torch_checkpoints"):
+            newton.ModelBuilder().add_usd(stage_path)
+
+        builder = newton.ModelBuilder()
+        result = builder.add_usd(stage_path, allow_unsafe_torch_checkpoints=True)
+        self.assertEqual(result["actuator_count"], 1)
+        self.assertEqual(next(iter(builder.actuator_entries.values())).drive_shared_kwargs["model_path"], model_path)
+
+        prim = stage.GetPrimAtPath("/World/Robot/NeuralActuator")
+        prim.GetAttribute("newton:modelPath").Set(Sdf.AssetPath(""))
+        message = (
+            "Actuator prim '/World/Robot/NeuralActuator': "
+            "NewtonNeuralControlAPI requires a non-empty newton:modelPath attribute"
+        )
+        for allow_unsafe in (False, True):
+            with self.subTest(allow_unsafe_torch_checkpoints=allow_unsafe):
+                with self.assertRaisesRegex(ValueError, message):
+                    parse_actuator_prim(prim, allow_unsafe_torch_checkpoints=allow_unsafe)
+                with self.assertRaisesRegex(ValueError, message):
+                    newton.ModelBuilder().add_usd(stage, allow_unsafe_torch_checkpoints=allow_unsafe)
 
 
 @unittest.skipUnless(HAS_USD, "pxr not installed")
