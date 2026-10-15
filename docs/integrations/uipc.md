@@ -504,7 +504,7 @@ Important constructor arguments:
 | `backend` | `"cuda"` | Passed to `uipc.Engine(backend_name=...)`. |
 | `workspace` | `"/tmp/newton_uipc"` | UIPC engine workspace, surface-dump directory, and default performance-report root. |
 | `dt` | `1.0 / 60.0` | Fixed UIPC scene time step [s]. |
-| `scene_config` | `uipc.Scene.default_config()` | Defaults to FusedPCG, full-GPU CUDA Graph mode 2, the MAS FEM preconditioner, and IPC contact, then applies Newton overrides for `dt`, gravity, contact, and Newton tolerances. Explicit scene configs retain these solver choices. |
+| `scene_config` | `None` | Defaults to FusedPCG, full-GPU CUDA Graph mode 2, the MAS FEM preconditioner, and IPC contact, then applies Newton overrides for `dt`, gravity, contact, and Newton tolerances. Explicit scene configs retain their solver choices; an omitted FEM preconditioner defaults to MAS. |
 | `kappa` | `1 GPa` | Solver-level AffineBody stiffness [Pa]. |
 | `default_mass_density` | `1000.0` | Fallback density [kg/m³] for rigid/deformable construction. |
 | `dump_enable` | `False` | Dumps UIPC surface OBJ snapshots before each physics advance. |
@@ -514,6 +514,21 @@ Important constructor arguments:
 
 Use `configure_scene` for UIPC scene configuration not exposed as constructor
 arguments. It deep-merges nested dictionaries before initialization.
+
+FEM preconditioning defaults to `"mas"` when an explicit config omits
+`linear_system` or `linear_system.fem_preconditioner`. A config created with
+`uipc.Scene.default_config()` includes UIPC's native `"diag"` selection, which
+Newton preserves. To enable MAS in that config, set it before constructing the
+solver:
+
+```python
+import uipc
+from newton.solvers import SolverUIPC
+
+scene_config = uipc.Scene.default_config()
+scene_config["linear_system"]["fem_preconditioner"] = "mas"
+solver = SolverUIPC(model, scene_config=scene_config)
+```
 
 ### FusedPCG CUDA Graph scope
 

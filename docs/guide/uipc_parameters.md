@@ -20,7 +20,7 @@
 | `backend` | `"cuda"` | `uipc.Engine(backend_name=...)` | 选择 UIPC engine backend。 |
 | `workspace` | `"/tmp/newton_uipc"` | `uipc.Engine(..., workspace=...)` | UIPC 输出目录，也用于 dump 和 profile 报告。 |
 | `dt` | `1.0 / 60.0` | `scene_config["dt"]` | UIPC 固定步长 [s]。 |
-| `scene_config` | `UScene.default_config()` | `uipc.Scene(scene_config)` | 未传入时启用全 GPU FusedPCG CUDA Graph；显式传入的配置会保留其 linear solver、graph mode 和 contact constitution。构造时仍会覆盖 `dt`、`gravity`、部分 contact/newton 默认值。 |
+| `scene_config` | `None` | `uipc.Scene(scene_config)` | 未传入时启用全 GPU FusedPCG CUDA Graph 和 MAS；显式传入的配置会保留已指定的 linear solver、graph mode、FEM preconditioner 和 contact constitution，省略 FEM preconditioner 时默认使用 MAS。构造时仍会覆盖 `dt`、`gravity`、部分 contact/newton 默认值。 |
 | `SolverUIPC.ADAPTIVE_KAPPA_MIN` | `9.538500988573645e9 Pa` | 当前 UIPC 0.9.0 brick scene 的 adaptive corridor 下限 | 场景质量、尺度、`d_hat` 或时间步改变后该值可能变化；brick example 用它作为固定接触刚度。 |
 | `SolverUIPC.ADAPTIVE_KAPPA_MAX` | `9.538500988573645e11 Pa` | 当前 UIPC 0.9.0 brick scene 的 adaptive corridor 上限 | 与下限成 100 倍关系；其他场景应重新读取或计算自己的 corridor。 |
 | `kappa` | `100 * MPa` | `AffineBodyConstitution`、关节 builder | 刚体 AffineBody stiffness 参数 [Pa]。 |
@@ -49,6 +49,17 @@
 | 默认 contact pair `stiffness` | `-1.0` | 启用 UIPC scene-adaptive kappa；有效刚度由场景质量、尺度、`d_hat` 和时间步计算。 |
 | `uipc_brick_stacking` contact `stiffness` | `SolverUIPC.ADAPTIVE_KAPPA_MIN` | 显式使用可接受的最小正值，避免该固定互锁场景注册 adaptive reporter。 |
 | 默认 contact pair `ccd` | 按 pair 设置 | `env-robot`、`env-actor`、`ground-robot`、`ground-actor`、`robot-actor`、`actor-actor` 默认开启 CCD；同类静态/机器人 pair 多数关闭。 |
+
+显式配置省略 `linear_system` 或其中的 `fem_preconditioner` 时，同样默认使用 MAS。从 `uipc.Scene.default_config()` 创建的完整配置包含原生默认值 `"diag"`，Newton 会保留它；要启用 MAS，在构造 solver 前补上对应设置：
+
+```python
+import uipc
+from newton.solvers import SolverUIPC
+
+scene_config = uipc.Scene.default_config()
+scene_config["linear_system"]["fem_preconditioner"] = "mas"
+solver = SolverUIPC(model, scene_config=scene_config)
+```
 
 Mode 2 只捕获一次 FusedPCG 求解，不捕获整帧仿真。Newton 外层迭代、碰撞检测与动态接触集合生成、梯度/Hessian 装配、CCD、CFL、line search、Newton 收敛判断和 scene retrieve 仍由 CPU 编排。CUDA 条件图节点不可用时会退回 Mode 1；捕获失败时会退回 block replay 或普通 kernel launch。Mode 1 通常具有更低的帧耗时，Mode 2 的主要用途是让 CPU 不参与 PCG 内层循环。
 

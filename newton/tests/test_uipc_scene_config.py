@@ -50,6 +50,30 @@ class TestUIPCSceneConfig(unittest.TestCase):
         self.assertEqual(solver._scene_config["linear_system"]["fem_preconditioner"], "diag")
         self.assertEqual(solver._scene_config["contact"]["constitution"], "al-ipc")
 
+    def test_explicit_scene_config_defaults_missing_fem_preconditioner_to_mas(self):
+        """Use MAS in the UIPC scene when an explicit config omits its selector."""
+        model = newton.ModelBuilder().finalize(device="cpu")
+
+        for missing_key in ("fem_preconditioner", "linear_system"):
+            with self.subTest(missing_key=missing_key), tempfile.TemporaryDirectory() as workspace:
+                scene_config = uipc.Scene.default_config()
+                if missing_key == "linear_system":
+                    scene_config.pop("linear_system")
+                else:
+                    scene_config["linear_system"].pop("fem_preconditioner")
+
+                solver = newton.solvers.SolverUIPC(
+                    model,
+                    backend="none",
+                    workspace=workspace,
+                    scene_config=scene_config,
+                    logger_level=uipc.Logger.Error,
+                )
+                solver.initialize()
+
+                selector = solver.scene.config().find("linear_system/fem_preconditioner")
+                self.assertEqual(uipc.view(selector)[0], "mas")
+
     def test_default_contact_pairs_use_adaptive_kappa(self):
         """Use UIPC's adaptive-kappa sentinel for built-in contact pairs."""
         model = newton.ModelBuilder().finalize()
