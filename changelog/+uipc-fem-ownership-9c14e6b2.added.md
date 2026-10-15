@@ -1,0 +1,1 @@
+Add independent cloth and deformable contact elements with `SolverUIPC.configure_contact_tabular(..., include_fem=True)`, and Newton particle-index selection in `SolverUIPC.reset()` while preserving independent position/velocity and world selections.

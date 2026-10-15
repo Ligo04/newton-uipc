@@ -4,7 +4,10 @@
 """Tests for UIPC scene configuration defaults."""
 
 import importlib.util
+import tempfile
 import unittest
+
+import warp as wp
 
 import newton
 
@@ -76,3 +79,64 @@ class TestUIPCSceneConfig(unittest.TestCase):
         """Expose the measured UIPC adaptive contact corridor on SolverUIPC."""
         self.assertEqual(newton.solvers.SolverUIPC.ADAPTIVE_KAPPA_MIN, 9538500988.573645)
         self.assertEqual(newton.solvers.SolverUIPC.ADAPTIVE_KAPPA_MAX, 953850098857.3645)
+
+    def test_fem_contact_elements_are_independent_per_world(self):
+        """Bind cloth and volume geometries to independently configurable world elements."""
+        world = newton.ModelBuilder(up_axis=newton.Axis.Z)
+        newton.solvers.SolverUIPC.register_custom_attributes(world)
+        world.add_cloth_mesh(
+            pos=wp.vec3(0.0, 0.0, 0.5),
+            rot=wp.quat_identity(),
+            scale=1.0,
+            vel=wp.vec3(0.0),
+            vertices=[wp.vec3(0.0), wp.vec3(0.1, 0.0, 0.0), wp.vec3(0.0, 0.1, 0.0)],
+            indices=[0, 1, 2],
+            density=0.2,
+            particle_radius=0.0002,
+        )
+        world.add_soft_mesh(
+            pos=wp.vec3(0.3, 0.0, 0.5),
+            rot=wp.quat_identity(),
+            scale=1.0,
+            vel=wp.vec3(0.0),
+            vertices=[wp.vec3(0.0), wp.vec3(0.1, 0.0, 0.0), wp.vec3(0.0, 0.1, 0.0), wp.vec3(0.0, 0.0, 0.1)],
+            indices=[0, 1, 2, 3],
+            density=1000.0,
+            k_mu=50000.0,
+            k_lambda=50000.0,
+            k_damp=0.0,
+        )
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
+        newton.solvers.SolverUIPC.register_custom_attributes(builder)
+        builder.replicate(world, world_count=2, spacing=(1.0, 0.0, 0.0))
+        model = builder.finalize(device="cpu")
+        elements = {}
+
+        def configure(tabular, world_index, ground, env, robot, actor, cloth, deformable):
+            elements[world_index] = (actor, cloth, deformable)
+            tabular.insert(cloth, actor, 0.7, -1.0, False)
+
+        with tempfile.TemporaryDirectory() as workspace:
+            solver = newton.solvers.SolverUIPC(
+                model, backend="none", workspace=workspace, logger_level=uipc.Logger.Error
+            )
+            solver.configure_contact_tabular(configure, include_fem=True)
+            solver.initialize(model.state())
+            self.assertEqual(len(solver.mapping.cloth_geo_slots), 2)
+            self.assertEqual(len(solver.mapping.deformable_geo_slots), 2)
+            ids = []
+            for world_index in range(2):
+                actor, cloth, deformable = elements[world_index]
+                ids.extend(element.id() for element in (actor, cloth, deformable))
+                for slot, element in (
+                    (solver.mapping.cloth_geo_slots[world_index], cloth),
+                    (solver.mapping.deformable_geo_slots[world_index], deformable),
+                ):
+                    actual = int(uipc.view(slot.geometry().meta().find("contact_element_id"))[0])
+                    self.assertEqual(actual, element.id())
+                tabular = solver.scene.contact_tabular()
+                self.assertFalse(tabular.at(cloth.id(), actor.id()).is_enabled())
+                self.assertTrue(tabular.at(deformable.id(), actor.id()).is_enabled())
+                self.assertTrue(tabular.at(cloth.id(), deformable.id()).is_enabled())
+                self.assertEqual(tabular.at(cloth.id(), deformable.id()).resistance(), -1.0)
+            self.assertEqual(len(set(ids)), 6)

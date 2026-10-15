@@ -502,6 +502,7 @@ class SolverUIPC(SolverBase):
 
         # User-registered callbacks (set via configure_* methods)
         self._contact_tabular_fn: Callable | None = None
+        self._contact_tabular_include_fem = False
         self._subscene_tabular_fn: Callable | None = None
 
         # Track bodies with Newton-authored inertia overrides.
@@ -631,17 +632,22 @@ class SolverUIPC(SolverBase):
             raise ValueError(f"substep must be >= 1, got {substep}")
         self.scene.animator().substep(substep)
 
-    def configure_contact_tabular(self, fn: Callable) -> None:
+    def configure_contact_tabular(self, fn: Callable, *, include_fem: bool = False) -> None:
         """Register a callback to configure the UIPC contact tabular before initialization.
 
         The solver creates a shared **ground_elem** and, for each Newton world,
         three additional contact elements:
 
         - **ground_elem** - applied to ground planes, shared across all worlds.
-        - **env_elem** - applied to non-articulated rigid bodies, kinematic
-          bodies, cloth, and deformable objects.
+        - **env_elem** - applied to non-articulated and kinematic rigid bodies.
         - **robo_elem** - applied to articulated robot links (non-free joints).
-        - **actor_elem** - applied to bodies attached via free joints.
+        - **actor_elem** - applied to bodies attached via free joints, and to
+          cloth and deformable objects unless ``include_fem=True``.
+
+        With ``include_fem=True``, each world also has **cloth_elem** and
+        **deformable_elem**, bound to its cloth and volume geometries respectively.
+        Their default pairs with every built-in element (including themselves)
+        are enabled with friction ``0.5`` and adaptive stiffness ``-1.0``.
 
         Default contact pairs use friction ``0.5`` and UIPC's adaptive contact
         stiffness (``kappa=-1.0``). They are inserted for all combinations,
@@ -653,13 +659,19 @@ class SolverUIPC(SolverBase):
 
         Args:
             fn: A callable with signature
-                ``fn(tabular, world_index, ground_elem, env_elem, robo_elem, actor_elem) -> None``.
+                ``fn(tabular, world_index, ground_elem, env_elem, robo_elem, actor_elem)``.
                 ``tabular`` is the UIPC ``ContactTabular`` obtained from
                 ``scene.contact_tabular()``.  ``world_index`` is the Newton
                 world index (``0`` for single-world models).  ``ground_elem``
                 is the shared ground element.  ``env_elem``, ``robo_elem``,
                 and ``actor_elem`` are the pre-created contact elements for
-                that world.
+                that world. The callback may return a dictionary mapping Newton
+                body indices to contact elements, or ``None`` to retain their
+                default elements.
+            include_fem: Create independent cloth and deformable elements and
+                append ``cloth_elem, deformable_elem`` to the callback's positional
+                arguments. The default preserves the six-argument callback and
+                the existing actor element binding for FEM geometries.
 
         Raises:
             RuntimeError: If the solver has already been initialized.
@@ -682,6 +694,7 @@ class SolverUIPC(SolverBase):
         if self._initialized:
             raise RuntimeError("Cannot configure contact tabular after initialization.")
         self._contact_tabular_fn = fn
+        self._contact_tabular_include_fem = include_fem
 
     def is_contact_enabled(self, body_a: int, body_b: int) -> bool:
         """Query whether contact is enabled between two bodies.
@@ -1013,6 +1026,8 @@ class SolverUIPC(SolverBase):
         env_elems: list[ContactElement] = []
         robo_elems: list[ContactElement] = []
         actor_elems: list[ContactElement] = []
+        cloth_elems: list[ContactElement] = []
+        deformable_elems: list[ContactElement] = []
         body_element_overrides: dict[int, ContactElement] = {}
 
         for world_index in range(model.world_count):
@@ -1030,9 +1045,21 @@ class SolverUIPC(SolverBase):
             contact_tabular.insert(robo_elem, actor_elem, 0.5, _UIPC_ADAPTIVE_KAPPA, True)
             contact_tabular.insert(actor_elem, actor_elem, 0.5, _UIPC_ADAPTIVE_KAPPA, True)
 
+            fem_elems: list[ContactElement] = []
+            if self._contact_tabular_include_fem:
+                builtins = [ground_elem, env_elem, robo_elem, actor_elem]
+                for name in ("cloth", "deformable"):
+                    elem = contact_tabular.create(f"{name}{suffix}")
+                    for other in (*builtins, elem):
+                        contact_tabular.insert(elem, other, 0.5, _UIPC_ADAPTIVE_KAPPA, True)
+                    builtins.append(elem)
+                    fem_elems.append(elem)
+            cloth_elems.append(fem_elems[0] if fem_elems else actor_elem)
+            deformable_elems.append(fem_elems[1] if fem_elems else actor_elem)
+
             if self._contact_tabular_fn is not None:
                 overrides = self._contact_tabular_fn(
-                    contact_tabular, world_index, ground_elem, env_elem, robo_elem, actor_elem
+                    contact_tabular, world_index, ground_elem, env_elem, robo_elem, actor_elem, *fem_elems
                 )
                 if overrides is not None:
                     body_element_overrides.update(overrides)
@@ -1184,9 +1211,9 @@ class SolverUIPC(SolverBase):
             self._rigid_body_builder.build_static_colliders(env_elems[world_index], se)
             self._articulation_builder.build_joints(robo_elems[world_index], joint_range, se)
             if self._cloth_builder.has_cloth:
-                self._cloth_builder.build(actor_elems[world_index], particle_range, se)
+                self._cloth_builder.build(cloth_elems[world_index], particle_range, se)
             if self._deformable_builder.has_deformable:
-                self._deformable_builder.build(actor_elems[world_index], particle_range, se)
+                self._deformable_builder.build(deformable_elems[world_index], particle_range, se)
 
         # Build coupled mimic energies after registering all world joints.
         self._articulation_builder.setup_mimic_constraints()
@@ -1690,6 +1717,8 @@ class SolverUIPC(SolverBase):
         state: State,
         world_mask: wp.array | None = None,
         flags: StateFlags | int | None = None,
+        *,
+        particle_indices: wp.array[wp.int32] | np.ndarray | None = None,
     ) -> None:
         """Re-push masked-world state into the live UIPC scene without rebuild.
 
@@ -1697,6 +1726,21 @@ class SolverUIPC(SolverBase):
         by *world_mask* with the poses in *state*, leaving every other world at
         its current simulated configuration.  See
         :meth:`~newton.solvers.SolverBase.reset` for argument semantics.
+
+        Args:
+            state: Source Newton state.
+            world_mask: Optional world selection, as in :meth:`~newton.solvers.SolverBase.reset`.
+            flags: State channels to publish. ``PARTICLE_Q`` and ``PARTICLE_QD``
+                independently select particle position [m] and velocity [m/s].
+            particle_indices: Optional one-dimensional integer array of Newton
+                particle indices. Restricts particle writes to this subset,
+                intersected with ``world_mask`` when supplied. Unmapped particles
+                are ignored; an empty selection leaves particle state unchanged.
+                Body and joint writes remain governed by ``flags`` and ``world_mask``.
+
+        Raises:
+            ValueError: If ``particle_indices`` is not a one-dimensional integer
+                array of in-range Newton particle indices.
 
         Note:
             After a body push UIPC's internal revolute/prismatic angle tracker
@@ -1709,6 +1753,19 @@ class SolverUIPC(SolverBase):
         model = self.model
         # Keep StateFlags as an integer for bitwise tests.
         flags = int(StateFlags.ALL) if flags is None else int(flags)
+
+        particle_indices_host = None
+        if particle_indices is not None:
+            particle_indices_host = (
+                particle_indices.numpy() if isinstance(particle_indices, wp.array) else np.asarray(particle_indices)
+            )
+            if (
+                particle_indices_host.ndim != 1
+                or not np.issubdtype(particle_indices_host.dtype, np.integer)
+                or np.any(particle_indices_host < 0)
+                or np.any(particle_indices_host >= model.particle_count)
+            ):
+                raise ValueError("particle_indices must be a one-dimensional integer array of valid Newton indices.")
 
         # Host bool view of the world mask, computed once and reused.
         mask_host = None
@@ -1768,6 +1825,13 @@ class SolverUIPC(SolverBase):
             if self._mapped_particle_world is None:
                 self._mapped_particle_world = model.particle_world.numpy()[self._fem_particle_indices_wp.numpy()]
             rows = _rows_for_world(self._mapped_particle_world)
+            if particle_indices_host is not None:
+                selected = np.isin(self._fem_particle_indices_wp.numpy(), particle_indices_host)
+                if rows is not None:
+                    selected_rows = rows[selected[rows]]
+                else:
+                    selected_rows = np.flatnonzero(selected)
+                rows = selected_rows
             if rows is None or rows.size > 0:
                 self._sync_particle_state_to_uipc(
                     particle_q=state.particle_q,
@@ -1923,7 +1987,9 @@ class SolverUIPC(SolverBase):
         # Use backend-vertex ordering for FEM buffers and views.
         if getattr(self, "_fem_backend_offsets_host", None) is None:
             self._fem_backend_offsets_host = self._fem_backend_offsets_wp.numpy().astype(np.int64, copy=False)
-        rows = slice(None) if selected_rows is None else self._fem_backend_offsets_host[selected_rows]
+        rows = (
+            self._fem_backend_offsets_host if selected_rows is None else self._fem_backend_offsets_host[selected_rows]
+        )
 
         if write_velocity and src_qd is not None and self._fem_velocity_buf is not None:
             velocity_attr = state_geo.vertices().find("velocity")
