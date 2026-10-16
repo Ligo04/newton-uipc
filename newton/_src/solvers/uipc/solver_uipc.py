@@ -1376,7 +1376,9 @@ class SolverUIPC(SolverBase):
             state_out: The output state.
             control: The control input. ``None`` uses model defaults.
             contacts: Output storage for UIPC contact records when ``CONTACT_F``
-                is requested. Must be the instance bound to ``observables``.
+                is requested. Must be on the solver device, with total capacity
+                no larger than the allocated ``observables.contact_f`` array.
+                Pass this step's storage to sensors and the viewer.
                 UIPC computes contacts internally and does not consume these records.
             dt: Time step [s], matching the fixed value configured at construction.
             observables: Optional solver-owned arrays. Request ``CONTACT_F`` to

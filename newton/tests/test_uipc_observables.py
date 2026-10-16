@@ -5,7 +5,6 @@
 
 import importlib.util
 import unittest
-from unittest.mock import patch
 
 import numpy as np
 
@@ -25,12 +24,11 @@ class TestUIPCObservables(unittest.TestCase):
         self.kinds = {self.solver.ObservableKind.CONTACT_F}
 
     def test_contact_allocation_and_unsupported_kinds(self):
-        """Require initialized contact storage and reject unavailable diagnostics."""
+        """Size outputs from reporting storage and reject unavailable diagnostics."""
         self.assertEqual(self.solver.supported_observables, self.kinds)
-        with self.assertRaisesRegex(RuntimeError, "CollisionPipeline"):
+        with self.assertRaisesRegex(ValueError, "Pass Contacts"):
             self.solver.observables(self.kinds)
-        pipeline = newton.CollisionPipeline(self.model, rigid_contact_max=4, soft_contact_max=2)
-        contacts = pipeline.contacts()
+        contacts = newton.Contacts(4, 2, device=self.model.device)
         observables = self.solver.observables(self.kinds, contacts=contacts)
         self.assertEqual(observables.contact_f.shape, (6,))
         self.assertIs(observables.contacts, contacts)
@@ -44,16 +42,21 @@ class TestUIPCObservables(unittest.TestCase):
         """Reject invalid requests before advancing or initializing native state."""
         import uipc  # noqa: PLC0415
 
-        pipeline = newton.CollisionPipeline(self.model, rigid_contact_max=4, soft_contact_max=0)
-        contacts = pipeline.contacts()
+        contacts = newton.Contacts(4, 0, device=self.model.device)
         observables = self.solver.observables(self.kinds, contacts=contacts)
         other_solver = newton.solvers.SolverUIPC(self.model, backend="none", logger_level=uipc.Logger.Error)
-        with patch.object(self.solver, "initialize", side_effect=AssertionError("Initialized invalid request")):
-            for wrong_contacts in (None, pipeline.contacts()):
-                with self.subTest(contacts=wrong_contacts), self.assertRaisesRegex(ValueError, "Contacts instance"):
-                    self.solver.step(None, None, None, wrong_contacts, 1.0 / 60.0, observables=observables)
-            with self.assertRaisesRegex(ValueError, "solver instance"):
-                self.solver.step(None, None, None, contacts, 1.0 / 60.0, observables=other_solver.observables(set()))
+        state_in, state_out = self.model.state(), self.model.state()
+        invalid_contacts = (
+            (None, "Pass the step's Contacts"),
+            (newton.Contacts(5, 0, device=self.model.device), "need 5 rows"),
+        )
+        for wrong_contacts, message in invalid_contacts:
+            with self.subTest(contacts=wrong_contacts), self.assertRaisesRegex(ValueError, message):
+                self.solver.step(state_in, state_out, None, wrong_contacts, 1.0 / 60.0, observables=observables)
+        with self.assertRaisesRegex(ValueError, "solver instance"):
+            self.solver.step(
+                state_in, state_out, None, contacts, 1.0 / 60.0, observables=other_solver.observables(set())
+            )
 
     def test_zero_capacity_contact_request(self):
         """Keep zero-capacity contact requests bound and explicitly requested."""

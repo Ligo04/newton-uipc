@@ -88,6 +88,19 @@ class TestUIPCSensorContactPositions(unittest.TestCase):
                     solver.step(state_0, state_1, control, contacts, dt, observables=observables)
                     state_0, state_1 = state_1, state_0
 
+                # Reuse the arrays with a smaller reporting buffer and a new row layout.
+                allocation_contacts = contacts
+                contact_f = observables.contact_f
+                contacts = newton.Contacts(allocation_contacts.rigid_contact_max // 2, 1, device=device)
+                observables.contact_f.fill_(wp.spatial_vector(9.0))
+                contacts.soft_contact_count.fill_(1)
+                state_0.clear_forces()
+                solver.step(state_0, state_1, control, contacts, dt, observables=observables)
+                state_0, state_1 = state_1, state_0
+                self.assertIs(observables.contacts, contacts)
+                self.assertIs(observables.contact_f, contact_f)
+                with self.assertRaisesRegex(ValueError, "produced with a different Contacts"):
+                    sensor.update(state_0, allocation_contacts, observables=observables)
                 sensor.update(state_0, contacts, observables=observables)
 
                 col_ground = sensor.counterpart_indices[0].index(ground_shape)

@@ -65,9 +65,7 @@ state_in = model.state()
 state_out = model.state()
 control = model.control()
 # Allocate reporting buffers; UIPC performs collision detection internally.
-contacts = newton.CollisionPipeline(
-    model, rigid_contact_max=solver.get_max_contact_count(), soft_contact_max=0
-).contacts()
+contacts = newton.Contacts(solver.get_max_contact_count(), 0, device=model.device)
 observables = solver.observables({solver.ObservableKind.CONTACT_F}, contacts=contacts)
 
 for _ in range(100):
@@ -334,9 +332,10 @@ form as `drive_strength_ratio`), decoupled from `joint_limit_ke`.
 ## Contact pipeline
 
 `SolverUIPC` computes contact inside UIPC. When `CONTACT_F` is requested,
-`step` writes UIPC contact records into the bound `Contacts` and forces into
-`observables.contact_f`. Newton's collision pipeline is used to allocate the
-reporting buffers; do not call `collide()` on them before reading the results.
+`step` writes UIPC contact records into the supplied `Contacts` and forces into
+`observables.contact_f`. Allocate reporting storage directly with
+`newton.Contacts` or with Newton's collision pipeline; do not call `collide()`
+on it before reading the results.
 Without an observable request, `step` skips contact readback.
 
 Global contact is disabled in the default Newton UIPC scene config:
@@ -398,9 +397,7 @@ Allocate it once, then pass it to each `step` that needs contact diagnostics:
 
 ```python
 sensor = newton.sensors.SensorContact(model, sensing_shapes="box", request_contact_attributes=False)
-contacts = newton.CollisionPipeline(
-    model, rigid_contact_max=solver.get_max_contact_count(), soft_contact_max=0
-).contacts()
+contacts = newton.Contacts(solver.get_max_contact_count(), 0, device=model.device)
 observables = solver.observables(sensor.solver_observable_kinds, contacts=contacts)
 
 solver.step(state_in, state_out, control, contacts, dt, observables=observables)
@@ -408,11 +405,17 @@ sensor.update(state_out, contacts, observables=observables)
 viewer.log_contacts(contacts, state_out, observables=observables)
 ```
 
-Use the same `Contacts` instance for allocation, stepping, sensors, and the
-viewer. The base allocator validates its device and capacities and freezes
-the model's contact capacities. The reporting capacity can be smaller than
-UIPC's native contact count; excess entries are dropped. For multiple
-substeps, pass `observables` only on the final substep when only frame-end
+Allocation uses the supplied `Contacts` capacities and does not freeze the
+model's contact capacities. Allocate for the largest reporting buffer needed:
+each step may use a different `Contacts` on the solver device if its combined
+rigid and soft capacity fits `observables.contact_f`. Sensors and the viewer
+must receive the buffer used by the step that produced the forces, available
+as `observables.contacts` (or
+`observables.contacts_for_kind(solver.ObservableKind.CONTACT_F)`).
+
+The reporting capacity can be smaller than UIPC's native contact count;
+excess entries are dropped. For multiple substeps, pass `observables` only
+on the final substep when only frame-end
 readings are needed. Omitted requests leave the previous report unchanged;
 a requested readback with no contacts clears the report.
 
