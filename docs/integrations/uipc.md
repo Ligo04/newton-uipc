@@ -442,14 +442,72 @@ debugging entry point rather than the normal public readback path.
 
 ## Multi-world support
 
-For models produced by `ModelBuilder.replicate`, `SolverUIPC` builds all Newton
-worlds into one UIPC scene. It creates one UIPC subscene per Newton world and
-places each world's bodies, cloth, and deformables into that subscene.
+For models assembled with `ModelBuilder.add_world` or `ModelBuilder.replicate`,
+`SolverUIPC` builds all Newton worlds into one UIPC scene. Worlds may contain
+different articulations and different numbers of bodies and joints. The solver
+creates one UIPC subscene per Newton world and places each world's bodies,
+cloth, and deformables into that subscene.
 
 By default, cross-subscene contact is disabled, while each world can still
 contact the default subscene used by ground planes and global objects. Use
 `configure_subscene_tabular` before initialization to opt into cross-world
 contact or other custom subscene rules.
+
+### Sparse articulation views
+
+Use :class:`~newton.selection.ArticulationView` with `homogeneous=False` to
+control and read matching robots when some worlds contain other assets or
+the robots occupy different offsets in each world's arrays. UIPC uses
+absolute Newton joint, coordinate, DOF, and body indices for control and state
+readback; no solver option is required.
+
+For example, if `robot` occurs in model worlds 0, 2, and 4, the view has three
+world rows and `world_ids` is `[0, 2, 4]`. Position targets use coordinate
+indices, while velocities and efforts use DOF indices, including when a
+floating root makes those indices differ:
+
+```python
+from newton.selection import ArticulationView
+
+robots = ArticulationView(model, "robot", homogeneous=False)
+drives = ArticulationView(
+    model,
+    "robot",
+    homogeneous=False,
+    include_joint_types=[newton.JointType.REVOLUTE, newton.JointType.PRISMATIC],
+)
+targets = drives.get_attribute("joint_target_q", control).numpy()
+targets[..., 0] = 0.2
+drives.set_attribute("joint_target_q", control, targets, mask=[True, False, True])
+
+solver.step(state_in, state_out, control, dt=dt)
+positions = drives.get_dof_positions(state_out)
+velocities = drives.get_dof_velocities(state_out)
+```
+
+Getters can return gathered copies. Use the matching setter to publish edits.
+View setters interpret masks on the view's compact world axis, so the mask
+above selects model worlds 0 and 4. `SolverUIPC.reset` instead takes a mask on
+the full model world axis. Map it through `world_ids` after editing root or
+joint state through the view:
+
+```python
+import numpy as np
+import warp as wp
+
+view_mask = np.array([True, False, True])
+model_mask = np.zeros(model.world_count, dtype=bool)
+model_mask[robots.world_ids.numpy()[view_mask]] = True
+solver.reset(
+    state_in,
+    world_mask=wp.array(model_mask, dtype=bool, device=model.device),
+    flags=newton.StateFlags.JOINT_Q | newton.StateFlags.JOINT_QD,
+)
+```
+
+Only frequencies with a common layout among the selected articulations are
+available through a view. `homogeneous=False` does not make differing joint
+counts into a rectangular tensor or extend UIPC's supported joint types.
 
 ## Runtime state synchronization
 

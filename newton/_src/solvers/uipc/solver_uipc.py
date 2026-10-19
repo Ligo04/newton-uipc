@@ -136,10 +136,13 @@ class SolverUIPC(SolverBase):
             solver.step(state_in, state_out, control, contacts, dt)
             state_in, state_out = state_out, state_in
 
-    For multi-world models produced by :meth:`~newton.ModelBuilder.replicate`,
-    the solver uses UIPC's ``subscene_tabular`` to configure contact isolation
-    between Newton worlds within a single UIPC scene. By default, bodies in
-    different Newton worlds do not contact each other. Use
+    For multi-world models assembled with :meth:`~newton.ModelBuilder.add_world`
+    or :meth:`~newton.ModelBuilder.replicate`, the solver uses UIPC's
+    ``subscene_tabular`` to configure contact isolation between Newton worlds
+    within a single UIPC scene. Worlds may have different articulation layouts;
+    :class:`~newton.selection.ArticulationView` with ``homogeneous=False`` supports
+    sparse selections and irregular model offsets for control and state access.
+    By default, bodies in different Newton worlds do not contact each other. Use
     :meth:`configure_subscene_tabular` to customize cross-world contact.
 
     .. note::
