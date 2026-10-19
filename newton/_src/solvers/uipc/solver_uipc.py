@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import warnings
 import weakref
@@ -17,6 +18,7 @@ import warp as wp
 import newton
 from newton import BodyFlags, Contacts, Control, JointType, Model, ModelBuilder, State, StateFlags
 
+from ...exceptions import NewtonWarning
 from ...sim import ModelFlags
 from ..solver import SolverBase
 from .deformable_groups import register_deformable_group_attributes
@@ -66,6 +68,8 @@ if TYPE_CHECKING:
     from .deformable_body import DeformableBodyBuilder
     from .rigid_body import RigidBodyBuilder
     from .utils import _view_attr
+
+logger = logging.getLogger(__name__)
 
 # UIPC ABD per-group metadata keys.
 _UIPC_MASS_ATTR: str = "mass"
@@ -494,10 +498,11 @@ class SolverUIPC(SolverBase):
                     output_dir = os.path.join(workspace, "perf_report")
                     result = stats.summary_report(output_dir=output_dir, workspace=workspace)
                     if result is not None:
-                        print(f"[SolverUIPC] Performance report saved to: {result}", flush=True)
+                        logger.info("[SolverUIPC] Performance report saved to: %s", result)
                 except Exception as exc:
                     warnings.warn(
                         f"SolverUIPC: save_performance_report() failed: {exc}",
+                        NewtonWarning,
                         stacklevel=1,
                     )
 
@@ -1001,7 +1006,7 @@ class SolverUIPC(SolverBase):
         self.engine = uipc.Engine(backend_name=self._backend, workspace=self._workspace)
         self.world = uipc.World(self.engine)
         self.scene = uipc.Scene(self._scene_config)
-        print(f"scene_config:{self._scene_config}")
+        logger.debug("scene_config:%s", self._scene_config)
         body_kappa = self._body_kappa_from_model(model)
 
         # Set up subscene contact isolation before contact elements.
@@ -1398,6 +1403,7 @@ class SolverUIPC(SolverBase):
             warnings.warn(
                 f"SolverUIPC: step dt={dt} differs from configured dt={self._dt}. "
                 "UIPC uses a fixed time step set at construction.",
+                NewtonWarning,
                 stacklevel=2,
             )
 
@@ -1539,6 +1545,7 @@ class SolverUIPC(SolverBase):
         if self._stats is None:
             warnings.warn(
                 "Time report not enabled — set require_profile=True when constructing SolverUIPC.",
+                NewtonWarning,
                 stacklevel=2,
             )
             return None
@@ -1546,6 +1553,7 @@ class SolverUIPC(SolverBase):
         if self._stats.num_frames == 0:
             warnings.warn(
                 "No simulation frames collected yet — call step() first.",
+                NewtonWarning,
                 stacklevel=2,
             )
             return None
@@ -1564,7 +1572,7 @@ class SolverUIPC(SolverBase):
             self._finalizer.detach()
         result_str = str(result) if result is not None else None
         if result_str is not None:
-            print(f"[SolverUIPC] Performance report saved to: {result_str}", flush=True)
+            logger.info("[SolverUIPC] Performance report saved to: %s", result_str)
         return result_str
 
     @override
@@ -1636,6 +1644,7 @@ class SolverUIPC(SolverBase):
                 "constraint, tendon, and actuator property updates are not "
                 "supported by the UIPC backend. Recreate the solver if these "
                 "properties changed.",
+                NewtonWarning,
                 stacklevel=2,
             )
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.metadata as importlib_metadata
+import logging
 import math
 import os
 import re
@@ -20,6 +21,7 @@ import numpy as np
 import warp as wp
 
 from ...core.types import MAXVAL, Axis, override, vec5, vec10
+from ...exceptions import NewtonDeprecationWarning, NewtonWarning
 from ...geometry import GeoType, Mesh, ShapeFlags
 from ...sim import (
     BodyFlags,
@@ -134,6 +136,8 @@ else:
     MjWarpModel = object
     MjWarpData = object
 
+logger = logging.getLogger(__name__)
+
 AttributeAssignment = Model.AttributeAssignment
 AttributeFrequency = Model.AttributeFrequency
 
@@ -231,7 +235,7 @@ def _warn_if_mujoco_versions_mismatch(mujoco: Any, mujoco_warp: Any) -> None:
             "MuJoCo dependency version mismatch with Newton's declared requirements: "
             + "; ".join(mismatches)
             + '. Reinstall Newton dependencies, for example `uv pip install -e ".[examples]"`.',
-            RuntimeWarning,
+            NewtonWarning,
             stacklevel=3,
         )
 
@@ -1044,6 +1048,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
             if path_idx_int < 0 or path_idx_int >= len(path_targets):
                 warnings.warn(
                     f"MjcTendon {prim.GetPath()} has out-of-range mjc:path:indices entry {path_idx_int}. Skipping.",
+                    NewtonWarning,
                     stacklevel=2,
                 )
                 continue
@@ -1054,6 +1059,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
             except ValueError:
                 warnings.warn(
                     f"MjcTendon {prim.GetPath()} references unknown joint path {joint_path}. Skipping.",
+                    NewtonWarning,
                     stacklevel=2,
                 )
                 continue
@@ -1172,7 +1178,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
         try:
             return SolverMuJoCo._parse_mjc_spatial_tendon_wrap_rows(prim, context)
         except ValueError as error:
-            warnings.warn(f"Skipping spatial MjcTendon {prim.GetPath()}: {error}.", stacklevel=2)
+            warnings.warn(f"Skipping spatial MjcTendon {prim.GetPath()}: {error}.", NewtonWarning, stacklevel=2)
             return []
 
     @staticmethod
@@ -2190,15 +2196,15 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                 pass
             context = context or {}
             prim = context.get("prim")
-            # Every frame above this parser is Newton-internal, so no stacklevel points at the
-            # offending prim or element and the message has to name it.
             source = f"prim '{prim.GetPath()}'" if prim is not None else f"actuator '{context.get('actuator_name')}'"
             fallback = next(name for name, ordinal in mapping.items() if ordinal == 0)
-            warnings.warn(
-                f"Unsupported MuJoCo actuator {attribute} {value!r} on {source}; "
-                f"falling back to {fallback!r}. Supported values are {sorted(mapping)}.",
-                RuntimeWarning,
-                stacklevel=2,
+            logger.warning(
+                "Unsupported MuJoCo actuator %s %r on %s; falling back to %r. Supported values are %s.",
+                attribute,
+                value,
+                source,
+                fallback,
+                sorted(mapping),
             )
             return 0
 
@@ -2509,7 +2515,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                             dof_names.append(f"{prim_path}:{axis_name}")
                 return dof_names
 
-            warnings.warn(f"Unsupported joint type for DOF name resolution: {prim_type}", stacklevel=2)
+            warnings.warn(f"Unsupported joint type for DOF name resolution: {prim_type}", NewtonWarning, stacklevel=2)
             return []
 
         # First we get a list of all joint DOF names from USD
@@ -3403,6 +3409,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                 warnings.warn(
                     f"Skipping pair {i}: Newton shapes ({newton_shape1}, {newton_shape2}) "
                     f"not found in MuJoCo shape mapping.",
+                    NewtonWarning,
                     stacklevel=2,
                 )
                 continue
@@ -3437,6 +3444,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                         f"to Newton's collision pipeline by constructing the "
                         f"solver with use_mujoco_contacts=False and feeding "
                         f"Newton-generated contacts into step().",
+                        NewtonWarning,
                         stacklevel=2,
                     )
             else:
@@ -3673,6 +3681,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                 if joint_num <= 0:
                     warnings.warn(
                         f"Skipping fixed tendon '{tendon_label}' during MuJoCo export because it has no joint wraps.",
+                        NewtonWarning,
                         stacklevel=2,
                     )
                     continue
@@ -3682,6 +3691,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                         f"Skipping fixed tendon '{tendon_label}': joint range "
                         f"[{joint_start}, {joint_start + joint_num}) "
                         f"out of bounds for joint entries ({joint_entry_count}).",
+                        NewtonWarning,
                         stacklevel=2,
                     )
                     continue
@@ -3695,12 +3705,14 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                     if newton_joint < 0:
                         warnings.warn(
                             f"Skipping joint entry {j} for tendon {i}: invalid joint index {newton_joint}.",
+                            NewtonWarning,
                             stacklevel=2,
                         )
                         continue
                     if model_joint_type_np[newton_joint] == JointType.D6:
                         warnings.warn(
                             f"Skipping joint entry {j} for tendon {i}: invalid D6 joint type {newton_joint}.",
+                            NewtonWarning,
                             stacklevel=2,
                         )
                         continue
@@ -3709,6 +3721,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                         warnings.warn(
                             f"Skipping joint entry {j} for tendon {i}: Newton joint {newton_joint} "
                             f"not found in MuJoCo joint mapping.",
+                            NewtonWarning,
                             stacklevel=2,
                         )
                         continue
@@ -3718,6 +3731,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                     warnings.warn(
                         f"Skipping fixed tendon '{tendon_label}' during MuJoCo export "
                         "because no valid joint wraps were resolved.",
+                        NewtonWarning,
                         stacklevel=2,
                     )
                     continue
@@ -3727,6 +3741,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                 if tendon_wrap_adr_np is None or tendon_wrap_num_np is None:
                     warnings.warn(
                         f"Spatial tendon '{tendon_label}' has no wrap path arrays, skipping.",
+                        NewtonWarning,
                         stacklevel=2,
                     )
                     continue
@@ -3738,6 +3753,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                         f"Skipping spatial tendon '{tendon_label}': wrap range "
                         f"[{wrap_start}, {wrap_start + wrap_num}) "
                         f"out of bounds for wrap entries ({wrap_entry_count}).",
+                        NewtonWarning,
                         stacklevel=2,
                     )
                     continue
@@ -3754,6 +3770,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                             warnings.warn(
                                 f"Skipping spatial tendon '{tendon_label}': wrap site at index {w} "
                                 f"(shape {int(tendon_wrap_shape_np[w])}) not in site mapping.",
+                                NewtonWarning,
                                 stacklevel=2,
                             )
                             spatial_wraps_valid = False
@@ -3763,6 +3780,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                             warnings.warn(
                                 f"Skipping spatial tendon '{tendon_label}': wrap geom at index {w} "
                                 f"(shape {int(tendon_wrap_shape_np[w])}) not in shape mapping.",
+                                NewtonWarning,
                                 stacklevel=2,
                             )
                             spatial_wraps_valid = False
@@ -3773,6 +3791,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                             warnings.warn(
                                 f"Skipping spatial tendon '{tendon_label}': pulley at index {w} "
                                 f"has non-positive divisor {divisor}.",
+                                NewtonWarning,
                                 stacklevel=2,
                             )
                             spatial_wraps_valid = False
@@ -3780,6 +3799,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                     else:
                         warnings.warn(
                             f"Skipping spatial tendon '{tendon_label}': unknown wrap type {wtype} at index {w}.",
+                            NewtonWarning,
                             stacklevel=2,
                         )
                         spatial_wraps_valid = False
@@ -3788,7 +3808,9 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                     continue
 
             else:
-                warnings.warn(f"Skipping tendon '{tendon_label}': unknown tendon type {ttype}.", stacklevel=2)
+                warnings.warn(
+                    f"Skipping tendon '{tendon_label}': unknown tendon type {ttype}.", NewtonWarning, stacklevel=2
+                )
                 continue
 
             # Track this tendon only after confirming it can be exported.
@@ -3867,6 +3889,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                                     warnings.warn(
                                         f"Wrap geom {w} for tendon {i} references sidesite "
                                         f"{sidesite_idx} not in site mapping; ignoring sidesite.",
+                                        NewtonWarning,
                                         stacklevel=2,
                                     )
                                     sidesite_name = ""
@@ -4037,6 +4060,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
             if target_idx < 0:
                 warnings.warn(
                     f"MuJoCo actuator {mujoco_act_idx} has unresolved target '{target_label}'. Skipping actuator.",
+                    NewtonWarning,
                     stacklevel=2,
                 )
                 continue
@@ -4052,12 +4076,12 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                 dofs_per_world = len(dof_to_mjc_joint)
                 if dof_idx < 0 or dof_idx >= dofs_per_world:
                     if wp.config.log_level <= wp.LOG_DEBUG:
-                        print(f"Warning: MuJoCo actuator {mujoco_act_idx} has invalid DOF target {dof_idx}")
+                        logger.warning("MuJoCo actuator %s has invalid DOF target %s", mujoco_act_idx, dof_idx)
                     continue
                 mjc_joint_idx = dof_to_mjc_joint[dof_idx]
                 if mjc_joint_idx < 0 or mjc_joint_idx >= len(mjc_joint_names):
                     if wp.config.log_level <= wp.LOG_DEBUG:
-                        print(f"Warning: MuJoCo actuator {mujoco_act_idx} DOF {dof_idx} not mapped to MuJoCo joint")
+                        logger.warning("MuJoCo actuator %s DOF %s not mapped to MuJoCo joint", mujoco_act_idx, dof_idx)
                     continue
                 target_name = mjc_joint_names[mjc_joint_idx]
             elif trntype == int(SolverMuJoCo.TrnType.TENDON):
@@ -4066,19 +4090,22 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                     target_name = mjc_tendon_names[mjc_tendon_idx]
                 except (ValueError, IndexError):
                     if wp.config.log_level <= wp.LOG_DEBUG:
-                        print(f"Warning: MuJoCo actuator {mujoco_act_idx} references tendon {target_idx} not in MuJoCo")
+                        logger.warning(
+                            "MuJoCo actuator %s references tendon %s not in MuJoCo", mujoco_act_idx, target_idx
+                        )
                     continue
             elif trntype == int(SolverMuJoCo.TrnType.BODY):
                 if target_idx < 0 or target_idx >= len(model.body_label):
                     if wp.config.log_level <= wp.LOG_DEBUG:
-                        print(f"Warning: MuJoCo actuator {mujoco_act_idx} has invalid body target {target_idx}")
+                        logger.warning("MuJoCo actuator %s has invalid body target %s", mujoco_act_idx, target_idx)
                     continue
                 target_name = body_name_mapping.get(target_idx)
                 if target_name is None:
                     if wp.config.log_level <= wp.LOG_DEBUG:
-                        print(
-                            f"Warning: MuJoCo actuator {mujoco_act_idx} references body {target_idx} "
-                            "not present in the MuJoCo export."
+                        logger.warning(
+                            "MuJoCo actuator %s references body %s not present in the MuJoCo export.",
+                            mujoco_act_idx,
+                            target_idx,
                         )
                     continue
             elif trntype == int(SolverMuJoCo.TrnType.SITE):
@@ -4092,9 +4119,10 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                     site_name = site_mapping.get(target_idx)
                 if site_name is None:
                     if wp.config.log_level <= wp.LOG_DEBUG:
-                        print(
-                            f"Warning: MuJoCo actuator {mujoco_act_idx} site target "
-                            f"'{target_label}' not found in site mapping"
+                        logger.warning(
+                            "MuJoCo actuator %s site target '%s' not found in site mapping",
+                            mujoco_act_idx,
+                            target_label,
                         )
                     continue
                 target_name = site_name
@@ -4102,9 +4130,11 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                     refsite_name = site_mapping.get(target_idx_alt)
                     if refsite_name is None:
                         if wp.config.log_level <= wp.LOG_DEBUG:
-                            print(
-                                f"Warning: MuJoCo actuator {mujoco_act_idx} references site {target_idx_alt} "
-                                "as refsite, but it is not present in the MuJoCo export."
+                            logger.warning(
+                                "MuJoCo actuator %s references site %s as refsite, but it is not present in the "
+                                "MuJoCo export.",
+                                mujoco_act_idx,
+                                target_idx_alt,
                             )
                         continue
             elif trntype == int(SolverMuJoCo.TrnType.SLIDERCRANK):
@@ -4112,15 +4142,17 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                 slider_site_name = site_mapping.get(target_idx_alt)
                 if target_name is None or slider_site_name is None:
                     if wp.config.log_level <= wp.LOG_DEBUG:
-                        print(
-                            f"Warning: MuJoCo slider-crank actuator {mujoco_act_idx} references "
-                            f"unavailable sites {target_idx}, {target_idx_alt}"
+                        logger.warning(
+                            "MuJoCo slider-crank actuator %s references unavailable sites %s, %s",
+                            mujoco_act_idx,
+                            target_idx,
+                            target_idx_alt,
                         )
                     continue
             else:
                 # TODO: Support remaining MuJoCo transmission types.
                 if wp.config.log_level <= wp.LOG_DEBUG:
-                    print(f"Warning: MuJoCo actuator {mujoco_act_idx} has unsupported trntype {trntype}")
+                    logger.warning("MuJoCo actuator %s has unsupported trntype %s", mujoco_act_idx, trntype)
                 continue
 
             general_args = dict(actuator_args)
@@ -4287,7 +4319,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                 value is estimated automatically. An explicit value is preserved
                 unless it cannot hold the initial MuJoCo constraints; in that case,
                 it is increased with a warning.
-            njmax_nnz: Sparse constraint Jacobian nonzero capacity per world. If provided, must be non-negative and large enough for the initial sparse Jacobian. If None, derived from the model's constraint counts and njmax.
+            njmax_nnz: Sparse constraint Jacobian nonzero capacity per world. If provided, must be non-negative and large enough for the initial sparse Jacobian. If None, derived from the model's constraint counts and njmax, plus friction nonzeros for every DOF and tendon.
             nconmax: Number of contact points per world. If None, a default value
                 is estimated automatically. An explicit value is preserved unless
                 it cannot hold the initial MuJoCo contacts; in that case, it is
@@ -4626,6 +4658,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                         "the legacy convert_solref(ke, kd, 1, 1) approximation and shape_material_ke/kd "
                         "will not behave as force-space gains. See "
                         "docs/solvers/mujoco.rst > 'Shape-material contact stiffness and damping'.",
+                        NewtonWarning,
                         stacklevel=2,
                     )
         if separate_worlds is None:
@@ -5256,7 +5289,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
             # Required for cacc and cfrc_int. Unlike sensor_rne_postconstraint,
             # this option also runs when sensors are disabled.
             if wp.config.log_level <= wp.LOG_DEBUG:
-                print("Setting model.opt.run_rne_postconstraint True")
+                logger.info("Setting model.opt.run_rne_postconstraint True")
             m.opt.run_rne_postconstraint = True
 
     def _invalidate_contact_fast_path(self):
@@ -6420,7 +6453,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
             warnings.warn(
                 "SolverMuJoCo.update_contacts() force export is deprecated in Newton 1.7; request "
                 "SolverBase.ObservableKind.CONTACT_F and pass SolverBase.Observables to step().",
-                DeprecationWarning,
+                NewtonDeprecationWarning,
                 stacklevel=2,
             )
         self._populate_contact_observables(contacts, contacts.force)
@@ -7080,6 +7113,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
             warnings.warn(
                 f"SolverMuJoCo is converting {len(root_labels)} joint(s) outside articulations as standalone "
                 f"world roots: {displayed_root_labels}. This fallback is specific to SolverMuJoCo.",
+                NewtonWarning,
                 stacklevel=2,
             )
 
@@ -7093,6 +7127,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
         if any(joint_order[i] != joints_articulated[i] for i in range(len(joints_simple))):
             warnings.warn(
                 "Joint order is not in depth-first topological order while converting Newton model to MuJoCo, this may lead to diverging kinematics between MuJoCo and Newton.",
+                NewtonWarning,
                 stacklevel=2,
             )
 
@@ -7332,7 +7367,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                     hfield_src = model.shape_source[shape]
                     if hfield_src is None:
                         if wp.config.log_level <= wp.LOG_DEBUG:
-                            print(f"Warning: Heightfield shape {shape} has no source data, skipping")
+                            logger.warning("Heightfield shape %s has no source data, skipping", shape)
                         continue
 
                     # Convert Newton heightfield to MuJoCo format
@@ -7519,6 +7554,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                             f"To honor this value, switch to Newton's collision pipeline by "
                             f"constructing the solver with use_mujoco_contacts=False and feeding "
                             f"Newton-generated contacts into step().",
+                            NewtonWarning,
                             stacklevel=2,
                         )
                 else:
@@ -7730,7 +7766,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                         f"Free joint '{model.joint_label[j]}' has parent body {parent} instead of the world (-1). "
                         "SolverMuJoCo requires free joints to attach directly to the world; "
                         "MuJoCo will reject this model at compile time.",
-                        UserWarning,
+                        NewtonWarning,
                         stacklevel=2,
                     )
                 body.add_joint(
@@ -7752,7 +7788,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                             "SolverMuJoCo cannot create actuators on free joints. "
                             "Drive targets (joint_target_ke, joint_target_kd, joint_target_q) are silently ignored. "
                             "Apply the desired wrench directly via Control.joint_f instead.",
-                            UserWarning,
+                            NewtonWarning,
                             stacklevel=2,
                         )
                         break
@@ -8099,9 +8135,8 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
             if target_name is None:
                 target_name = model.body_label[body_idx].replace("/", "_")
                 if wp.config.log_level <= wp.LOG_DEBUG:
-                    print(
-                        f"Warning: MuJoCo equality constraint references body {body_idx} "
-                        "not present in the MuJoCo export."
+                    logger.warning(
+                        "MuJoCo equality constraint references body %s not present in the MuJoCo export.", body_idx
                     )
             return target_name
 
@@ -8264,6 +8299,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                     f"{lin_count} linear + {ang_count} angular DOFs) "
                     f"has no supported MuJoCo equality constraint mapping. "
                     f"Skipping loop closure for this joint.",
+                    NewtonWarning,
                     stacklevel=2,
                 )
                 continue
@@ -8284,6 +8320,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                 warnings.warn(
                     f"Skipping mimic constraint {i}: follower joint {j0} or leader joint {j1} "
                     f"not found in MuJoCo joint mapping.",
+                    NewtonWarning,
                     stacklevel=2,
                 )
                 continue
@@ -8295,6 +8332,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                 warnings.warn(
                     f"Skipping mimic constraint {i}: follower joint {j0} has unsupported type "
                     f"{JointType(j0_type).name} for mjEQ_JOINT (only REVOLUTE and PRISMATIC supported).",
+                    NewtonWarning,
                     stacklevel=2,
                 )
                 continue
@@ -8302,6 +8340,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                 warnings.warn(
                     f"Skipping mimic constraint {i}: leader joint {j1} has unsupported type "
                     f"{JointType(j1_type).name} for mjEQ_JOINT (only REVOLUTE and PRISMATIC supported).",
+                    NewtonWarning,
                     stacklevel=2,
                 )
                 continue
@@ -8341,6 +8380,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                 warnings.warn(
                     f"Skipping mimic joint {follower_joint}: MuJoCo joint equalities only support "
                     "joints represented by scalar slide or hinge coordinates.",
+                    NewtonWarning,
                     stacklevel=2,
                 )
                 continue
@@ -8856,6 +8896,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
             elif nconmax is not None and nconmax < self.mj_data.ncon:
                 warnings.warn(
                     f"[WARNING] Value for nconmax is changed from {nconmax} to {self.mj_data.ncon} following an MjWarp requirement.",
+                    NewtonWarning,
                     stacklevel=2,
                 )
                 nconmax = self.mj_data.ncon
@@ -8863,6 +8904,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
             if njmax is not None and njmax < self.mj_data.nefc:
                 warnings.warn(
                     f"[WARNING] Value for njmax is changed from {njmax} to {self.mj_data.nefc} following an MjWarp requirement.",
+                    NewtonWarning,
                     stacklevel=2,
                 )
                 njmax = self.mj_data.nefc
@@ -8878,6 +8920,20 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                         f"of at least {minimum_njmax_nnz}; the initial Jacobian contains "
                         f"{initial_required_nnz} nonzeros."
                     )
+            elif njmax_nnz is None and is_mujoco_warp_sparse(self.mj_model):
+                from mujoco_warp._src.io import _default_nconmax, _default_njmax, _default_njmax_nnz
+
+                # MJWarp only counts friction that is nonzero at construction, but
+                # notify_model_changed() can enable it on any DOF or tendon later.
+                njmax_nnz = (
+                    _default_njmax_nnz(
+                        self.mj_model,
+                        nconmax if nconmax is not None else _default_nconmax(self.mj_model, self.mj_data),
+                        njmax if njmax is not None else _default_njmax(self.mj_model, self.mj_data),
+                    )
+                    + self.mj_model.nv
+                    + int(self.mj_model.ten_J_rownnz.sum())
+                )
 
             if nvmax is not None:
                 if nvmax > self.mj_model.nv:
@@ -8985,7 +9041,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                         spec.joints[mjc_jnt].solref_limit = solref
                 with open(target_filename, "w") as f:
                     f.write(spec.to_xml())
-                    print(f"Saved mujoco model to {os.path.abspath(target_filename)}")
+                    logger.info("Saved mujoco model to %s", os.path.abspath(target_filename))
 
     def _get_initial_jacobian_nnz(self) -> int:
         """Return the nonzero count of the initial MuJoCo constraint Jacobian."""
@@ -10089,6 +10145,7 @@ class SolverMuJoCo(SolverBase, CouplingInterface):
                         f"Authored mujoco.solreflimit has invalid components at DOF indices "
                         f"{bad.tolist()}: expected two same-sign non-zero values; MuJoCo will "
                         "silently misbehave (divide-by-zero or disabled limit) until corrected.",
+                        NewtonWarning,
                         stacklevel=2,
                     )
             # One-shot guard: avoids warning every step for the steady-state

@@ -19,6 +19,8 @@ from uipc.geometry import trimesh as uipc_trimesh
 
 from newton import Axis, GeoType, Mesh, Model, ShapeFlags
 
+from ...exceptions import NewtonWarning
+
 # Warp kernels for batch transform conversion
 
 
@@ -625,7 +627,11 @@ def build_body_mesh(model: Model, body_idx: int) -> tuple[SimplicialComplex, flo
             if isinstance(geo_src, Mesh):
                 verts, faces = _mesh_to_vf(geo_src)
             else:
-                warnings.warn(f"Shape {s} (body {body_idx}): unsupported geo_src type {type(geo_src)}", stacklevel=2)
+                warnings.warn(
+                    f"Shape {s} (body {body_idx}): unsupported geo_src type {type(geo_src)}",
+                    NewtonWarning,
+                    stacklevel=2,
+                )
                 continue
         elif geo_type == GeoType.BOX:
             m = Mesh.create_box(
@@ -659,7 +665,7 @@ def build_body_mesh(model: Model, body_idx: int) -> tuple[SimplicialComplex, flo
         elif geo_type == GeoType.PLANE:
             continue
         else:
-            warnings.warn(f"Shape {s} (body {body_idx}): unsupported GeoType {geo_type}", stacklevel=2)
+            warnings.warn(f"Shape {s} (body {body_idx}): unsupported GeoType {geo_type}", NewtonWarning, stacklevel=2)
             continue
 
         # :meth:`newton.ModelBuilder.approximate_meshes`.
@@ -706,6 +712,7 @@ def build_body_mesh(model: Model, body_idx: int) -> tuple[SimplicialComplex, flo
             # Degenerate / coplanar — last-resort AABB box.
             warnings.warn(
                 f"Body {body_idx} ({body_name}): collapsed to AABB box (near-zero volume mesh).",
+                NewtonWarning,
                 stacklevel=3,
             )
             bv, bf = _aabb_box_mesh(v)
@@ -761,6 +768,7 @@ def populate_backend_offsets(mapping: UIpcMappingInfo, device: wp.Device) -> Non
         if offset_attr is None:
             warnings.warn(
                 f"Body {body_idx}: backend_abd_body_offset not found after world.init(), skipping backend mapping",
+                NewtonWarning,
                 stacklevel=2,
             )
             continue

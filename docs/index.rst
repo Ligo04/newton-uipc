@@ -18,6 +18,7 @@ Newton Physics
    guide/installation
    guide/compatibility
    guide/visualization
+   guide/diagnostics
    guide/tutorials
    UIPC Parameters <guide/uipc_parameters>
    Development <guide/development>

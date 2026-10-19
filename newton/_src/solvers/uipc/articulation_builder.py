@@ -39,6 +39,7 @@ from uipc.unit import MPa
 from newton import Control, JointTargetMode, JointType, Model, State
 from newton.math import normalize_with_norm
 
+from ...exceptions import NewtonWarning
 from .articulation import Articulation, FreeJointReadbackContext
 from .converter import UIpcMappingInfo, newton_transform_to_mat4
 from .utils import _view_attr
@@ -227,6 +228,7 @@ class ArticulationBuilder:
                     f"Joint {j} ({joint_name}): child body {child_body} ({child_name}) has no ABD "
                     f"geometry (joint type {joint_type.name}); "
                     f"SolverUIPC is dropping this joint.",
+                    NewtonWarning,
                     stacklevel=2,
                 )
                 missing_geo = True
@@ -237,6 +239,7 @@ class ArticulationBuilder:
                     f"Joint {j} ({joint_name}): parent body {parent_body} ({parent_name}) has no ABD "
                     f"geometry (joint type {joint_type.name}); "
                     f"SolverUIPC is dropping this joint.",
+                    NewtonWarning,
                     stacklevel=2,
                 )
                 missing_geo = True
@@ -296,6 +299,7 @@ class ArticulationBuilder:
             elif joint_type in (JointType.DISTANCE, JointType.D6):
                 warnings.warn(
                     f"Joint {j}: JointType {joint_type.name} is not yet supported by SolverUIPC, skipping",
+                    NewtonWarning,
                     stacklevel=2,
                 )
 
@@ -1455,6 +1459,7 @@ class ArticulationBuilder:
                 "refresh_armature: joint_armature was enabled on a joint that had none at "
                 "build time; the armature constraint edge is baked at initialization, so this "
                 "change cannot apply. Recreate the solver instead.",
+                NewtonWarning,
                 stacklevel=2,
             )
 
@@ -1671,6 +1676,7 @@ class ArticulationBuilder:
                 warnings.warn(
                     f"Mimic constraint '{label}': {role} joint {missing} is not an active "
                     f"(revolute/prismatic) UIPC joint; SolverUIPC is skipping this constraint.",
+                    NewtonWarning,
                     stacklevel=2,
                 )
                 continue
