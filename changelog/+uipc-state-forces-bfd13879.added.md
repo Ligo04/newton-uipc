@@ -1,0 +1,1 @@
+Add `SolverUIPC` support for world-space `State.body_f` wrenches about COM and `State.particle_f` loads on cloth and tetrahedral deformables, with independent external-force activation and per-step clearing.

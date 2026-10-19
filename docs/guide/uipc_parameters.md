@@ -9,9 +9,10 @@
 - `newton/_src/solvers/uipc/rigid_body.py`
 - `newton/_src/solvers/uipc/deformable_body.py`
 - `newton/_src/solvers/uipc/cloth.py`
+- `newton/_src/solvers/uipc/external_forces.py`
 - `newton/_src/sim/builder.py`
 
-本文只列出构造参数、scene 默认值、以及刚体/软体/布料构建时实际消耗的模型参数；通过运行时函数临时设置的控制 API 不单独暴露。
+本文列出构造参数、scene 默认值、刚体/软体/布料构建时消耗的模型参数，以及每步读取的 State 外力；通过运行时函数临时设置的控制 API 不单独暴露。
 
 ## SolverUIPC 全局参数
 
@@ -62,6 +63,17 @@ solver = SolverUIPC(model, scene_config=scene_config)
 ```
 
 Mode 2 只捕获一次 FusedPCG 求解，不捕获整帧仿真。Newton 外层迭代、碰撞检测与动态接触集合生成、梯度/Hessian 装配、CCD、CFL、line search、Newton 收敛判断和 scene retrieve 仍由 CPU 编排。CUDA 条件图节点不可用时会退回 Mode 1；捕获失败时会退回 block replay 或普通 kernel launch。Mode 1 通常具有更低的帧耗时，Mode 2 的主要用途是让 CPU 不参与 PCG 内层循环。
+
+## 每步输入外力
+
+| Newton 来源 | UIPC 目标 | 说明 |
+| --- | --- | --- |
+| `state_in.body_f[:, :3]` | `AffineBodyExternalBodyForce` 的平移和 affine 分量 | 世界坐标力 [N]，作用于 COM；按 Newton body 索引映射到各 instance，包含无几何 articulation proxy。 |
+| `state_in.body_f[:, 3:]` | `AffineBodyExternalBodyForce` 的 affine 分量 | 关于 COM 的世界坐标力矩 [N·m]；通过原生 affine transform 转换，保留正确的虚功。 |
+| `state_in.particle_f` | `FiniteElementExternalForce` 的 vertex `external_force` | 世界坐标力 [N]；按 cloth / deformable 粒子映射读取，未映射的独立粒子忽略。 |
+| 非零外力条目 | `external_force/is_constrained = 1` | 每步刷新；零值或缺失的输入数组停用外力，不复用上一帧载荷。与软约束的共享 `is_constrained` 独立。 |
+
+固定的 body / vertex 不响应外力。`step` 保留独立输入 State 的力数组，并清零输出 State 的力数组；原地 stepping 在消费输入后清零。接触力读取继续使用 `CONTACT_F` observable。
 
 ## 刚体 / AffineBody 参数
 

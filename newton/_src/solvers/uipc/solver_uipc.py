@@ -66,6 +66,7 @@ if TYPE_CHECKING:
         populate_backend_offsets,
     )
     from .deformable_body import DeformableBodyBuilder
+    from .external_forces import ExternalForces
     from .rigid_body import RigidBodyBuilder
     from .utils import _view_attr
 
@@ -243,6 +244,7 @@ class SolverUIPC(SolverBase):
         global AffineBodyStateAccessorFeature, ContactSystemFeature
         global FiniteElementStateAccessorFeature, SceneIO
         global ArticulationBuilder, ClothBuilder, DeformableBodyBuilder, RigidBodyBuilder
+        global ExternalForces
         global ContactForceReadback, UIpcMappingInfo, _view_attr
         global _populate_contact_pairs_kernel
         global build_gpu_vertex_maps, prepare_contact_gpu_data, retrieve_contact_forces
@@ -287,6 +289,7 @@ class SolverUIPC(SolverBase):
                 populate_backend_offsets,
             )
             from .deformable_body import DeformableBodyBuilder
+            from .external_forces import ExternalForces
             from .rigid_body import RigidBodyBuilder
             from .utils import _view_attr
         except ImportError as e:
@@ -1229,6 +1232,8 @@ class SolverUIPC(SolverBase):
         # Build coupled mimic energies after registering all world joints.
         self._articulation_builder.setup_mimic_constraints()
 
+        self._external_forces = ExternalForces(model, self.mapping)
+
         # Initialize UIPC world and set up state accessors
         self.world.init(scene)
         if not self.world.is_valid():
@@ -1380,8 +1385,10 @@ class SolverUIPC(SolverBase):
         automatically before the first step.
 
         Args:
-            state_in: The input state.
-            state_out: The output state.
+            state_in: Input state. ``body_f`` supplies world-space forces at COM
+                and torques about COM; ``particle_f`` supplies world-space FEM
+                vertex forces. Inputs are refreshed each step.
+            state_out: Output state, with force arrays cleared after stepping.
             control: The control input. ``None`` uses model defaults.
             contacts: Output storage for UIPC contact records when ``CONTACT_F``
                 is requested. Must be on the solver device, with total capacity
@@ -1413,14 +1420,16 @@ class SolverUIPC(SolverBase):
         if control is None:
             control = self.model.control(clone_variables=False)
 
-        # Phase 1: Cache joint control
+        # Phase 1: Cache force inputs and joint control.
+        self._external_forces.cache(state_in, self._body_affine)
         self._articulation_builder.cache_joint_control(control)
 
         # Snapshot joint angles and distances before advancing UIPC.
         self._articulation_builder.read_joint_state_pre_advance()
 
-        # Sync host control arrays before UIPC advances.
+        # Sync host force and control arrays before UIPC advances.
         self._articulation_builder.sync_control_transfers()
+        self._external_forces.publish()
 
         # Couple measured joint increments inside the upcoming UIPC solve.
         self._articulation_builder.update_mimic_constraints()
@@ -1912,7 +1921,7 @@ class SolverUIPC(SolverBase):
             wp.launch(
                 _spatial_to_vel_mat44_kernel,
                 dim=n,
-                inputs=[src_qd, src_q, mapping.body_indices_wp, self._abd_velocity_buf.warp()],
+                inputs=[src_qd, src_q, model.body_com, mapping.body_indices_wp, self._abd_velocity_buf.warp()],
                 device=device,
             )
         else:
@@ -2170,6 +2179,7 @@ class SolverUIPC(SolverBase):
                     self._abd_transform_buf.warp(),
                     self._abd_velocity_buf.warp(),
                     self.mapping.body_indices_wp,
+                    model.body_com,
                     state_out.body_q,
                     state_out.body_qd,
                 ],

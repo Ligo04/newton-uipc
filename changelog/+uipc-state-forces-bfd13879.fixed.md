@@ -1,0 +1,1 @@
+Correct UIPC body velocity conversion between the body origin and COM, including host matrix layout during velocity resets, so offset-COM bodies report and retain the motion induced by external wrenches.

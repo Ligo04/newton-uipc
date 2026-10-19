@@ -75,86 +75,41 @@ def _transform_to_mat44_kernel(
 def _spatial_to_vel_mat44_kernel(
     body_qd: wp.array[wp.spatial_vector],
     body_q: wp.array[wp.transform],
+    body_com: wp.array[wp.vec3],
     body_indices: wp.array[wp.int32],
     out_velocities: wp.array[wp.mat44d],
 ):
-    """Convert Newton ``(v_com_world, omega_world)`` body twists to UIPC's
-    affine velocity matrix layout.
+    """Convert COM twists to affine velocities for host attribute assignment.
 
-    Newton spatial_vector layout: ``(vx, vy, vz, wx, wy, wz)`` with the linear
-    part referenced at the body COM. UIPC's affine velocity matrix encodes
-    ``Ȧ`` (rate of the affine matrix) in the upper 3x3 and ``ṫ`` (rate of
-    translation) in column 3, in Eigen column-major layout. Because ABD's
-    mass-matrix already references velocity at the COM, ``ṫ = v_com``
-    directly — no kinematic shift is needed for the linear part.
-
-    The angular part requires ``Ȧ = [ωx] · R`` (rather than just ``[ωx]``)
-    because UIPC stores the affine derivative, which equals ``[ωx]`` only
-    when the body rotation is identity.
+    UIPC uses x = A X + t, so A_dot = skew(omega) R and
+    t_dot = v_com - A_dot com_local. Return logical row-major matrices:
+    assigning NumPy values to the geometry attribute handles Eigen's strides.
     """
     tid = wp.tid()
     body_idx = body_indices[tid]
     qd = body_qd[body_idx]
-    r = wp.transform_get_rotation(body_q[body_idx])
-
-    v_com = wp.vec3(qd[0], qd[1], qd[2])
-    wx = qd[3]
-    wy = qd[4]
-    wz = qd[5]
-
-    # Rotation matrix R (Warp row-major, R[i,j]) from quaternion (x, y, z, w).
-    one = float(1.0)
-    two = float(2.0)
-    rx = r[0]
-    ry = r[1]
-    rz = r[2]
-    rw = r[3]
-    r00 = one - two * (ry * ry + rz * rz)
-    r01 = two * (rx * ry - rz * rw)
-    r02 = two * (rx * rz + ry * rw)
-    r10 = two * (rx * ry + rz * rw)
-    r11 = one - two * (rx * rx + rz * rz)
-    r12 = two * (ry * rz - rx * rw)
-    r20 = two * (rx * rz - ry * rw)
-    r21 = two * (ry * rz + rx * rw)
-    r22 = one - two * (rx * rx + ry * ry)
-
-    # Compute the affine rate with a row-major skew matrix.
-    a00 = -wz * r10 + wy * r20
-    a01 = -wz * r11 + wy * r21
-    a02 = -wz * r12 + wy * r22
-    a10 = wz * r00 - wx * r20
-    a11 = wz * r01 - wx * r21
-    a12 = wz * r02 - wx * r22
-    a20 = -wy * r00 + wx * r10
-    a21 = -wy * r01 + wx * r11
-    a22 = -wy * r02 + wx * r12
-
-    # Pack the matrix into Eigen column-major mat44d.
+    rotation = wp.quat_to_matrix(wp.transform_get_rotation(body_q[body_idx]))
+    affine_rate = wp.skew(wp.vec3(qd[3], qd[4], qd[5])) @ rotation
+    origin_velocity = wp.vec3(qd[0], qd[1], qd[2]) - affine_rate @ body_com[body_idx]
     zero = wp.float64(0.0)
-    m = wp.mat44d(
-        # Warp row 0 = Eigen column 0
-        wp.float64(a00),
-        wp.float64(a10),
-        wp.float64(a20),
+    out_velocities[tid] = wp.mat44d(
+        wp.float64(affine_rate[0, 0]),
+        wp.float64(affine_rate[0, 1]),
+        wp.float64(affine_rate[0, 2]),
+        wp.float64(origin_velocity[0]),
+        wp.float64(affine_rate[1, 0]),
+        wp.float64(affine_rate[1, 1]),
+        wp.float64(affine_rate[1, 2]),
+        wp.float64(origin_velocity[1]),
+        wp.float64(affine_rate[2, 0]),
+        wp.float64(affine_rate[2, 1]),
+        wp.float64(affine_rate[2, 2]),
+        wp.float64(origin_velocity[2]),
         zero,
-        # Warp row 1 = Eigen column 1
-        wp.float64(a01),
-        wp.float64(a11),
-        wp.float64(a21),
         zero,
-        # Warp row 2 = Eigen column 2
-        wp.float64(a02),
-        wp.float64(a12),
-        wp.float64(a22),
         zero,
-        # Warp row 3 = Eigen column 3 (ṫ = v_com)
-        wp.float64(v_com[0]),
-        wp.float64(v_com[1]),
-        wp.float64(v_com[2]),
         zero,
     )
-    out_velocities[tid] = m
 
 
 @wp.kernel(enable_backward=False)
@@ -193,6 +148,7 @@ def _read_from_backend_kernel(
     src_transforms: wp.array[wp.mat44d],
     src_velocities: wp.array[wp.mat44d],
     body_indices: wp.array[wp.int32],
+    body_com: wp.array[wp.vec3],
     out_body_q: wp.array[wp.transform],
     out_body_qd: wp.array[wp.spatial_vector],
 ):
@@ -203,10 +159,8 @@ def _read_from_backend_kernel(
     every element access swaps row and column: ``m[i, j]`` in Warp reads the
     Eigen element at ``(j, i)``.
 
-    UIPC's ABD parameterization references body velocity at the COM (the
-    mass matrix internalizes the COM offset via the first moment), so the
-    translation column already encodes ``v_com_world`` — no kinematic shift
-    is required for the linear part. The angular part needs ``[ωx] = Ȧ · R^T``
+    The translation column is the velocity of the body-frame origin, so
+    ``v_com_world = ṫ + Ȧ · com_local``. The angular part needs ``[ωx] = Ȧ · R^T``
     because UIPC stores ``Ȧ`` (not ``[ωx]``) in the upper 3x3.
     """
     tid = wp.tid()
@@ -278,8 +232,13 @@ def _read_from_backend_kernel(
     # Convert the affine velocity matrix to angular velocity.
     v = src_velocities[backend_idx]
 
-    # ṫ = v_com (Eigen column 3 → Warp row 3).
-    v_com = wp.vec3(wp.float32(v[3, 0]), wp.float32(v[3, 1]), wp.float32(v[3, 2]))
+    # Shift the body-origin velocity to COM, using the full affine derivative.
+    com = wp.vec3d(body_com[body_idx])
+    v_com = wp.vec3(
+        wp.float32(v[3, 0] + v[0, 0] * com[0] + v[1, 0] * com[1] + v[2, 0] * com[2]),
+        wp.float32(v[3, 1] + v[0, 1] * com[0] + v[1, 1] * com[1] + v[2, 1] * com[2]),
+        wp.float32(v[3, 2] + v[0, 2] * com[0] + v[1, 2] * com[1] + v[2, 2] * com[2]),
+    )
 
     # Recover angular velocity using the Eigen/Warp transpose convention.
     m01 = wp.float32(m[0, 1])

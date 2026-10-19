@@ -79,6 +79,41 @@ explicit initialization is recommended whenever you use `configure_scene`,
 `configure_contact_tabular`, `configure_subscene_tabular`, or
 `sync_uipc_inertia_with_model`.
 
+## External forces
+
+Each `step` consumes `state_in.body_f` and `state_in.particle_f` as external
+force inputs. `body_f` contains a world-space force [N] in its first three
+components and a world-space torque [N·m] about the body's center of mass in
+its last three components. The force acts at the COM. `particle_f` contains
+world-space forces [N] on cloth and tetrahedral deformable vertices.
+These inputs use UIPC's `AffineBodyExternalBodyForce` and
+`FiniteElementExternalForce` constitutions, respectively.
+
+Use Newton body and particle indices, including in models with different
+numbers of objects per world. Instanced bodies and geometry-free articulation
+proxies receive their own wrenches. Loose particles outside UIPC FEM meshes
+are ignored, and fixed bodies or vertices do not respond to applied forces.
+
+```python
+state_in.clear_forces()
+# Accumulate or assign this step's world-space forces to body_f / particle_f.
+solver.step(state_in, state_out, control, dt=dt)
+state_in, state_out = state_out, state_in
+```
+
+The inputs are refreshed every step. Zero entries or an absent force array
+disable the corresponding UIPC external force, so previous loads do not
+persist. A separate output state's force arrays are cleared after stepping;
+the input arrays are preserved. In-place stepping also consumes the inputs
+before clearing the force arrays.
+
+The solver registers the native external-force constitutions once during
+initialization and updates their values and `external_force/is_constrained`
+masks each step. These masks are independent of the shared `is_constrained`
+mask used by soft position and transform constraints. Joint efforts in
+`Control.joint_f` remain additive to the State force inputs. Contact-force
+reports continue to use observables, as described below.
+
 ## Joint types
 
 | Newton type | UIPC equivalent | Notes |
