@@ -4,7 +4,8 @@
 # UIPC Integration
 
 `SolverUIPC` wraps `libuipc` (the `uipc` / `pyuipc` Python package) behind
-Newton's standard solver interface. UIPC provides implicit IPC-style contact
+Newton's standard solver interface and requires `pyuipc>=0.0.29`.
+UIPC provides implicit IPC-style contact
 resolution for rigid bodies, cloth, and deformable bodies. Newton converts a
 `Model` into a UIPC `Scene` made of AffineBody rigid objects, shell cloth
 objects, tetrahedral deformables, contact-tabular entries, and optional
