@@ -30,7 +30,7 @@ Newton releases are tested on the following configurations:
    * - Dependencies
      - Latest known-good versions are pinned in the release branch's ``uv.lock``
    * - CUDA
-     - 13; 12 is deprecated in Newton 1.7 and covered by the nightly Warp 1.17
+     - 13; 12 is deprecated in Newton 1.7 and covered by the nightly Warp 1.18+cu12
        minimum-dependency tests on an R570 driver
 
 For the minimum requirements to install Newton, see
@@ -54,7 +54,7 @@ is the source of truth for:
 Newton may apply additional constraints on top of Warp's baseline. Newton's
 source lockfile controls contributor environments, while a wheel installation
 resolves from the package's declared ``warp-lang`` requirement. For current
-default requirements and the Warp 1.17 installation command, see
+default requirements and CUDA 12 compatibility wheel installation, see
 :ref:`system-requirements`.
 
 .. _cuda-compatibility:
@@ -69,8 +69,8 @@ CUDA Compatibility
    * - CUDA Version
      - Notes
    * - 12 (deprecated)
-     - Continues to work throughout Newton 1.7.x with a CUDA 12-built Warp
-       wheel, such as the standard Warp 1.17 wheel. See
+     - Use a CUDA 12-built Warp 1.18.0 or newer, such as the
+       ``1.18.0+cu12`` compatibility wheel. See
        :ref:`system-requirements` for driver and GPU limits.
    * - 13.4+ (recommended)
      - The standard Warp 1.18 wheel uses CUDA 13.4. Check the installed

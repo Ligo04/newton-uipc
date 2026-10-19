@@ -133,12 +133,26 @@ jobs:
 
       - name: Resolve and install minimum dependency versions
         run: |
-          uv sync --extra dev --extra rtx --resolution lowest-direct
+          uv sync --extra dev --extra rtx --resolution lowest-direct --no-install-package warp-lang
+          uv pip install --no-deps --python .venv/bin/python \
+            "https://github.com/NVIDIA/warp/releases/download/v1.18.0/warp_lang-1.18.0%2Bcu12-py3-none-manylinux_2_28_x86_64.whl#sha256=6dda3c163dde4edaa7d46ade9fff3ddb1126ee7b147d9d890cd38cc70dafd656"
           echo "Resolved dependency versions:"
           uv tree --depth 1 --frozen
 
-      - name: Verify minimum Warp version
-        run: uv run --no-sync python -c 'import warp; assert warp.__version__ == "1.17.0", warp.__version__; print(f"Warp {warp.__version__}")'
+      - name: Verify minimum Warp CUDA 12 build
+        run: |
+          uv run --no-sync python - <<'PY'
+          from importlib.metadata import version
+
+          import warp
+
+          warp.init()
+          assert version("warp-lang") == "1.18.0+cu12"
+          assert warp.__version__.split("+", 1)[0] == "1.18.0"
+          assert warp.get_cuda_toolkit_version()[0] == 12
+          assert warp.get_cuda_device_count() > 0
+          print(f"Warp {version('warp-lang')}, CUDA {warp.get_cuda_toolkit_version()}")
+          PY
 
       # `--no-sync` is load-bearing: without it `uv run` re-resolves to `highest` and the floors above stop applying.
       - name: Run Tests

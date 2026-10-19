@@ -46,20 +46,22 @@ GPU requirements depend on the installed `Warp
      - 1.18: compute capability 7.5+ (Turing)
      - 1.18: R580 or newer
      - Standard 1.18 wheel uses CUDA 13.4; check Warp's requirements for later releases
-   * - 1.17
+   * - 1.18.0+cu12 (compatibility)
      - Compute capability 5.2+ (Maxwell) on x86-64; see the ARM64 limitation below
      - 545 or newer (Newton 1.7 requirement)
-     - Standard wheel uses CUDA 12.9
+     - CUDA 12.9 compatibility wheel from Warp's GitHub Releases
 
-Newton 1.7 deprecates CUDA 12 GPU support, while retaining it with a Warp
-wheel built with CUDA 12 throughout the 1.7 release line. To use the standard
-Warp 1.17 wheel on an R545–R579 driver or an older supported GPU, install both
-packages in one request::
+Newton requires Warp 1.18.0 or newer. CUDA 12 GPU support was deprecated in
+Newton 1.7. On an R545–R579 driver or an older supported GPU, choose a
+``+cu12`` compatibility wheel for the operating system and architecture from
+`Warp's GitHub Releases <https://github.com/NVIDIA/warp/releases/tag/v1.18.0>`__.
+Replace ``<wheel-url>`` below with that asset's URL and install both packages
+in one request::
 
-    python -m pip install "newton" "warp-lang==1.17.0"
+    python -m pip install "newton" "warp-lang @ <wheel-url>"
 
-Keep the Warp pin in your application's requirements or constraints file for
-later installs. A local CUDA Toolkit is not needed for standard Warp wheels.
+Keep the Warp wheel URL in your application's requirements for later installs.
+A local CUDA Toolkit is not needed for prebuilt Warp wheels.
 See :ref:`cuda-compatibility` for version-specific notes.
 
 Platform-Specific Requirements
@@ -73,11 +75,11 @@ such as ``examples`` and ``dev``) require GLIBC 2.35 or newer, e.g. Ubuntu
 
 **Linux aarch64 (ARM64)**
 
-The standard Warp 1.17 wheel omits ``sm_52``, ``sm_60``, ``sm_61``, and
-``sm_70`` targets on Linux ARM64. The installation command above does not
-enable these GPUs. They need a Warp wheel built with an earlier CUDA 12
-toolkit; see `Warp's CUDA 12.9 ARM64 limitation
-<https://nvidia.github.io/warp/v1.17/user_guide/installation.html#cuda-12-9-limitation-on-linux-arm-platforms>`__.
+Warp's CUDA 12.9 compatibility wheel omits ``sm_52``, ``sm_60``, ``sm_61``,
+and ``sm_70`` targets on Linux ARM64. The installation command above does not
+enable these GPUs. They need Warp 1.18.0 or newer built with CUDA 12.0 through
+12.8; see `Warp's CUDA 12.9 ARM64 limitation
+<https://nvidia.github.io/warp/v1.18/user_guide/installation.html#cuda-12-9-limitation-on-linux-arm-platforms>`__.
 
 Installing the ``examples`` extra on ARM64 Linux systems such as NVIDIA Jetson
 Thor and DGX Spark also requires X11 development libraries to build
@@ -268,8 +270,9 @@ Additional optional dependency sets are defined in ``pyproject.toml``:
      - PyTorch (CUDA 12.8+) for workflows that explicitly need PyTorch, such as
        training or running Torch ``.pt2`` / ``.pt`` / ``.pth`` policies (includes
        ``examples``). On an R545–R579 driver, install with
-       ``python -m pip install "newton[torch-cu12]" "warp-lang==1.17.0"``; the extra
-       does not select Warp 1.17 by itself.
+       ``python -m pip install "newton[torch-cu12]" "warp-lang @ <wheel-url>"``
+       using the CUDA 12 compatibility wheel described in
+       :ref:`system-requirements`; the extra does not select a Warp CUDA variant.
    * - ``torch-cu13``
      - PyTorch (CUDA 13) for workflows that explicitly need PyTorch, such as training or running Torch ``.pt2`` / ``.pt`` / ``.pth`` policies (includes ``examples``)
    * - ``notebook``
