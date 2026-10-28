@@ -186,7 +186,8 @@ class Example:
                 radius=radius,
                 half_height=length / 2,
             )
-            self.grasping_offset = [-0.03, 0.0, 0.13]
+            # Center the pads on the pen's height, outside the table edge.
+            self.grasping_offset = [-0.045, 0.0, 0.1034]
             self.place_offset = -0.02
         else:  # CUBE
             size = 0.04

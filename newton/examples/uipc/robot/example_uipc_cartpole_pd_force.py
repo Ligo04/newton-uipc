@@ -13,6 +13,7 @@ import newton
 import newton.examples
 from newton import JointTargetMode
 from newton.actuators import ClampingMaxEffort, DrivePD
+from newton.examples.uipc.robot.example_uipc_cartpole import _test_joint_anchors
 from newton.selection import ArticulationView
 
 
@@ -21,8 +22,9 @@ class Example:
         self.fps = 60
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 0.0
-        self.sim_substeps = 1
-        self.sim_dt = self.frame_dt
+        # Resolve the explicit PD feedback at 240 Hz to avoid force oscillation.
+        self.sim_substeps = 4
+        self.sim_dt = self.frame_dt / self.sim_substeps
 
         self.world_count = args.world_count
         self.viewer = viewer
@@ -128,8 +130,8 @@ class Example:
         """Run every registered actuator so joint_f gets filled before solver.step.
 
         ``Actuator.step`` scatter-adds into ``control.joint_f`` (``out += force``),
-        so we must clear the buffer each frame or the PD force will grow unboundedly
-        across frames and blow past the clamping ceiling.
+        so we must clear the buffer each substep or the PD force will grow unboundedly
+        between updates and blow past the clamping ceiling.
         """
         self.control.joint_f.zero_()
         for actuator in self.model.actuators:
@@ -143,9 +145,10 @@ class Example:
 
     def simulate(self):
         self._update_cart_target()
-        self._apply_actuators()
-        self._log_applied_force()
-        for _ in range(self.sim_substeps):
+        for substep in range(self.sim_substeps):
+            self._apply_actuators()
+            if substep == 0:
+                self._log_applied_force()
             self.state_0.clear_forces()
             self.solver.step(
                 self.state_0,
@@ -177,8 +180,6 @@ class Example:
 
     def test_final(self):
         # Verify cart tracking after simulation.
-        num_bodies_per_world = self.model.body_count // self.world_count
-
         # Shape: (world_count, 1, dofs_per_arti) → cart slider at dof `cart_dof`.
         joint_q = self.cartpoles.get_attribute("joint_q", self.state_0).numpy()
         expected = self.cart_amplitude * math.sin(2.0 * math.pi * self.cart_frequency * self.sim_time)
@@ -189,20 +190,7 @@ class Example:
             f"world {worst} cart tracking error too large: cart_q={float(cart_qs[worst]):.3f} expected={expected:.3f}"
         )
 
-        newton.examples.test_body_state(
-            self.model,
-            self.state_0,
-            "pole1 above ground",
-            lambda q, qd: float(q[2]) > -0.5,
-            indices=[i * num_bodies_per_world + 1 for i in range(self.world_count)],
-        )
-        newton.examples.test_body_state(
-            self.model,
-            self.state_0,
-            "pole2 above ground",
-            lambda q, qd: float(q[2]) > -0.5,
-            indices=[i * num_bodies_per_world + 2 for i in range(self.world_count)],
-        )
+        _test_joint_anchors(self.model, self.state_0)
 
     @staticmethod
     def create_parser():

@@ -37,7 +37,8 @@ ORIGINAL_NUT_RADIAL_SCALE = 1.0
 UIPC_GAP = 0.0001
 ASSEMBLY_SPACING = 0.1
 AUTODESK_BOLT_START_Z = 0.048
-AUTODESK_NUT_START_Z = 0.05676
+# Preserve the meshes' authored relative thread alignment.
+AUTODESK_NUT_START_Z = AUTODESK_BOLT_START_Z
 ORIGINAL_BOLT_START_Z = 0.0
 # The SDF original starts the nut at 0.041 m, with slight initial mesh overlap.
 ORIGINAL_NUT_START_Z = 0.04262
@@ -239,6 +240,7 @@ class Example:
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
 
         bolt_mesh, bolt_center, nut_mesh, nut_center, mesh_scale, bolt_start_z, nut_start_z = self._load_mesh_source()
+        nut_start_yaw = 0.0 if self.mesh_source == AUTODESK_MESH_SOURCE else NUT_START_YAW
 
         count = 0
         for i in range(self.grid_x):
@@ -268,7 +270,7 @@ class Example:
 
                 nut_pose = wp.transform(
                     wp.vec3(x_offset, y_offset, nut_start_z + UIPC_GAP),
-                    wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), float(NUT_START_YAW)),
+                    wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), float(nut_start_yaw)),
                 )
                 nut_body = builder.add_body(
                     xform=_transform_with_mesh_center(nut_pose, nut_center),
@@ -374,7 +376,8 @@ class Example:
     def create_parser():
         parser = newton.examples.create_parser()
         newton.examples.add_world_count_arg(parser)
-        parser.set_defaults(world_count=1, num_frames=120)
+        # Gravity-driven threading needs about six seconds to descend 5 mm.
+        parser.set_defaults(world_count=1, num_frames=720)
         parser.add_argument(
             "--num-per-world",
             type=int,

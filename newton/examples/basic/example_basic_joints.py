@@ -256,6 +256,9 @@ class Example:
 
         self.sim_time += self.frame_dt
 
+        if getattr(self.args, "quiet", False):
+            return
+
         # Recover joint coordinates from current body state via inverse kinematics.
         joint_q = wp.zeros_like(self.model.joint_q)
         joint_qd = wp.zeros_like(self.model.joint_qd)

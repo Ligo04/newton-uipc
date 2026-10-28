@@ -11,6 +11,7 @@ import warp as wp
 import newton
 import newton.examples
 from newton import JointTargetMode
+from newton.examples.uipc.robot.example_uipc_cartpole import _test_joint_anchors
 
 
 class Example:
@@ -127,8 +128,6 @@ class Example:
 
     def test_final(self):
         # Verify cart tracking after simulation.
-        num_bodies_per_world = self.model.body_count // self.world_count
-
         joint_q = self.state_0.joint_q.numpy()
         expected = self.cart_amplitude * math.sin(2.0 * math.pi * self.cart_frequency * self.sim_time)
         for w in range(self.world_count):
@@ -137,20 +136,7 @@ class Example:
                 f"world {w} cart tracking error too large: cart_q={cart_q:.3f} expected={expected:.3f}"
             )
 
-        newton.examples.test_body_state(
-            self.model,
-            self.state_0,
-            "pole1 above ground",
-            lambda q, qd: float(q[2]) > -0.5,
-            indices=[i * num_bodies_per_world + 1 for i in range(self.world_count)],
-        )
-        newton.examples.test_body_state(
-            self.model,
-            self.state_0,
-            "pole2 above ground",
-            lambda q, qd: float(q[2]) > -0.5,
-            indices=[i * num_bodies_per_world + 2 for i in range(self.world_count)],
-        )
+        _test_joint_anchors(self.model, self.state_0)
 
     @staticmethod
     def create_parser():

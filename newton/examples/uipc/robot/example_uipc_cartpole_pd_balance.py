@@ -220,8 +220,8 @@ class Example:
         th2 = q[:, 0, self.pole2_dof]
         thd2 = qd[:, 0, self.pole2_dof]
 
-        # Textbook single-pendulum state feedback on the cart.
-        f_cart = self.k_pole * th1 + self.k_poled * thd1 + self.k_cart * x + self.k_cartd * xd
+        # The USD pole angle increases opposite to the cart's positive axis.
+        f_cart = -self.k_pole * th1 - self.k_poled * thd1 + self.k_cart * x + self.k_cartd * xd
         np.clip(f_cart, -self.max_force, self.max_force, out=f_cart)
 
         f = np.zeros((self.world_count, 1, self.dofs_per_world), dtype=np.float32)

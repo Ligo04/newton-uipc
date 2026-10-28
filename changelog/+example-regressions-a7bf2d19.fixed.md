@@ -1,0 +1,1 @@
+Fix quiet output in the basic joints example and restore UIPC example contact, cloth thickness, cartpole feedback and joint validation, Panda pen grasping, and nut/bolt assembly alignment and simulation duration. Recompute explicit cartpole PD forces at each 240 Hz substep to prevent oscillation.

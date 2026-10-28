@@ -63,6 +63,7 @@ class Example:
             indices=mesh_indices,
             vel=wp.vec3(0.0, 0.0, 0.0),
             density=0.2,
+            particle_radius=0.0005,
             tri_ke=1.0e3,
             tri_ka=1.0e3,
             tri_kd=2.0e-7,

@@ -35,6 +35,7 @@ class Example:
             self.model,
             dt=self.sim_dt,
         )
+        self.solver.set_contact(True)
 
         self.state_1 = self.model.state()
         self.control = self.model.control()

@@ -10,6 +10,27 @@ import newton
 import newton.examples
 
 
+def _test_joint_anchors(model: newton.Model, state: newton.State) -> None:
+    """Check hinge connections while allowing the free poles to swing below the cart."""
+    body_q = state.body_q.numpy()
+    joint_type = model.joint_type.numpy()
+    joint_parent = model.joint_parent.numpy()
+    joint_child = model.joint_child.numpy()
+    joint_X_p = model.joint_X_p.numpy()
+    joint_X_c = model.joint_X_c.numpy()
+    for joint in range(model.joint_count):
+        if joint_type[joint] != newton.JointType.REVOLUTE:
+            continue
+        parent = joint_parent[joint]
+        parent_pose = wp.transform(*body_q[parent]) if parent >= 0 else wp.transform_identity()
+        parent_anchor = wp.transform_multiply(parent_pose, wp.transform(*joint_X_p[joint])).p
+        child_anchor = wp.transform_multiply(
+            wp.transform(*body_q[joint_child[joint]]), wp.transform(*joint_X_c[joint])
+        ).p
+        error = wp.length(parent_anchor - child_anchor)
+        assert error < 1.0e-3, f"Joint {model.joint_label[joint]} anchors separated by {error:.6f} m"
+
+
 class Example:
     def __init__(self, viewer, args):
         self.fps = 60
@@ -107,21 +128,7 @@ class Example:
             indices=[i * num_bodies_per_world + 1 for i in range(self.world_count)],
         )
 
-        # Poles should still be above ground
-        newton.examples.test_body_state(
-            self.model,
-            self.state_0,
-            "pole1 above ground",
-            lambda q, qd: float(q[2]) > -0.5,
-            indices=[i * num_bodies_per_world + 1 for i in range(self.world_count)],
-        )
-        newton.examples.test_body_state(
-            self.model,
-            self.state_0,
-            "pole2 above ground",
-            lambda q, qd: float(q[2]) > -0.5,
-            indices=[i * num_bodies_per_world + 2 for i in range(self.world_count)],
-        )
+        _test_joint_anchors(self.model, self.state_0)
 
         # Verify cross-world consistency when using multiple worlds
         if self.world_count > 1:

@@ -89,6 +89,7 @@ if _HAS_UIPC:
     from newton.examples.uipc.multiphysics.example_uipc_softbody_dropping_to_cloth import (
         Example as UIPCSoftbodyDroppingToClothExample,
     )
+    from newton.examples.uipc.robot.example_uipc_cartpole import Example as UIPCCartpoleExample
 
 _HAS_ONNX_RUNTIME = importlib.util.find_spec("onnx") is not None and importlib.util.find_spec("warp_nn") is not None
 _PXR_WORK_THREAD_LIMIT_OUTPUT_RE = (
@@ -1859,6 +1860,37 @@ add_example_test(
 
 
 class TestUIPCSoftbodyExamples(unittest.TestCase):
+    @unittest.skipUnless(_HAS_UIPC and USD_AVAILABLE, "Requires uipc and usd-core")
+    def test_uipc_cartpole_checks_anchors_below_cart(self):
+        cartpole = newton.ModelBuilder(up_axis=newton.Axis.Z)
+        cartpole.add_usd(
+            newton.examples.get_asset("cartpole.usda"),
+            enable_self_collisions=False,
+            collapse_fixed_joints=True,
+        )
+        cartpole.joint_q[-3:] = [0.1, 2.1, -0.2]
+        cartpole.joint_qd[-3:] = [0.2, 1.0, 0.5]
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
+        builder.replicate(cartpole, copy_count=2, spacing=(1.0, 2.0, 0.0))
+
+        with wp.ScopedDevice("cpu"):
+            example = UIPCCartpoleExample.__new__(UIPCCartpoleExample)
+            example.world_count = 2
+            example.model = builder.finalize()
+            example.state_0 = example.model.state()
+            newton.eval_fk(example.model, example.model.joint_q, example.model.joint_qd, example.state_0)
+            pole2_indices = [i for i, label in enumerate(example.model.body_label) if label.endswith("/pole2")]
+            self.assertEqual(len(pole2_indices), 2)
+            body_q = example.state_0.body_q.numpy()
+            self.assertTrue(np.all(body_q[pole2_indices, 2] < -0.5))
+            example.test_final()
+
+            # A detached pole in either world must still fail validation.
+            body_q[pole2_indices[-1], 2] += 0.02
+            example.state_0.body_q.assign(body_q)
+            with self.assertRaisesRegex(AssertionError, "anchors separated"):
+                example.test_final()
+
     def test_uipc_brick_stacking_matches_core_original_behaviors(self):
         example_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -2111,7 +2143,7 @@ class TestUIPCSoftbodyExamples(unittest.TestCase):
         self.assertIn("ORIGINAL_NUT_RADIAL_SCALE = 1.0", source)
         self.assertIn("ASSEMBLY_SPACING = 0.1", source)
         self.assertIn("AUTODESK_BOLT_START_Z = 0.048", source)
-        self.assertIn("AUTODESK_NUT_START_Z = 0.05676", source)
+        self.assertIn("AUTODESK_NUT_START_Z = AUTODESK_BOLT_START_Z", source)
         self.assertIn("ORIGINAL_BOLT_START_Z = 0.0", source)
         self.assertIn("ORIGINAL_NUT_START_Z = 0.04262", source)
         self.assertIn("NUT_START_YAW = np.pi / 8.0", source)
