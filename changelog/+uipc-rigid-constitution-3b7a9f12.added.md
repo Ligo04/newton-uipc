@@ -1,0 +1,1 @@
+Add the experimental `NewtonUIPCRigidBodyAPI` USD schema to select ABD for rigid bodies and fixed ABD or Empty for world-static colliders through `uipc:constitution`, and reject Empty on body-backed geometry.

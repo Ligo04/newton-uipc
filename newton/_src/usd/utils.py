@@ -440,7 +440,7 @@ def get_transform(prim: Usd.Prim, local: bool = True, xform_cache: UsdGeom.Xform
 
 def value_to_warp(v: Any, warp_dtype: Any | None = None) -> Any:
     """
-    Convert a USD value (such as Gf.Quat, Gf.Vec3, or float) to a Warp value.
+    Convert a USD value (such as Gf.Quat, Gf.Vec3, float, or token) to the requested dtype.
     If a dtype is given, the value will be converted to that dtype.
     Otherwise, the value will be converted to the most appropriate Warp dtype.
 
@@ -451,6 +451,8 @@ def value_to_warp(v: Any, warp_dtype: Any | None = None) -> Any:
     Returns:
         The converted value.
     """
+    if warp_dtype is str:
+        return str(v)
     if warp_dtype is wp.quat or (hasattr(v, "real") and hasattr(v, "imaginary")):
         return wp.normalize(wp.quat(*v.imaginary, v.real))
     if warp_dtype is not None:

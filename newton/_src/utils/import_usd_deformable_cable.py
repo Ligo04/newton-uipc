@@ -20,9 +20,11 @@ from functools import partial
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
+import numpy as np
 import warp as wp
 
 from ..exceptions import NewtonDeprecationWarning, NewtonWarning
+from ..sim import Model
 from ..sim.rod import _CIRCULAR_SECTION_TRANSVERSE_SHEAR_CORRECTION, Rod
 from ..usd import utils as usd
 from ..usd._resolution_policy import _resolve_shape_contact
@@ -61,6 +63,18 @@ from .import_usd_deformable_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _cable_custom_attributes(builder: ModelBuilder, prims: list[Usd.Prim]) -> dict[str, object]:
+    """Merge curve-frequency custom attributes for one imported rod object."""
+    attributes = builder.get_custom_attributes_by_frequency([Model.AttributeFrequency.CURVE])
+    merged = {}
+    for prim in prims:
+        for key, value in usd.get_custom_attribute_values(prim, attributes).items():
+            if key in merged and not np.array_equal(merged[key], value):
+                raise ValueError(f"Connected cable prims must agree on custom curve attribute {key!r}")
+            merged[key] = value
+    return {key: value for key, value in merged.items() if value is not None}
 
 
 def _resolve_cable_contact(ctx: _DeformableImportContext, prim: Usd.Prim) -> dict[str, float]:
@@ -1063,12 +1077,15 @@ def _deformable_prepare_cable_topology(
                     )
                 )
         rod.rest_quaternions = rest_quaternions
+        curve_row = len(builder.curve_label)
+        curve_custom_values = _cable_custom_attributes(builder, [curve_recs[path].prim for path in comp_paths])
         body_ids, graph_joint_ids = builder.add_rod(
             rod=rod,
             cfg=cfg,
             label=cid,
             wrap_in_articulation=True,
         )
+        builder._process_custom_attributes(curve_row, curve_custom_values, Model.AttributeFrequency.CURVE)
         # Any member disabling self-collision disables it for the shared articulation.
         authored_self_collisions = {
             value for p in comp_paths if (value := _authored_cable_self_collision(ctx, curve_recs[p].prim)) is not None
@@ -1517,7 +1534,11 @@ def _deformable_import_cable(
             # excludes roots and can have gaps when the prim contains multiple curves.
             body_range = (cable_bodies[0], cable_bodies[-1] + 1)
             joint_range = (cable_joint_start, builder.joint_count)
+            curve_row = len(builder.curve_label)
             builder._record_curve_deformable_object(path, body_range, joint_range)
+            builder._process_custom_attributes(
+                curve_row, _cable_custom_attributes(builder, [prim]), Model.AttributeFrequency.CURVE
+            )
             path_cable_point_anchors[path] = cable_point_anchors
             path_cable_segments[path] = cable_segments
             path_cable_attrs[path] = {

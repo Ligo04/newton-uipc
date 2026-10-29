@@ -13,12 +13,18 @@ import numpy as np
 import warp as wp
 
 import newton
+from newton.tests._usd_deformable_test_utils import _deformable_stage
+from newton.tests.unittest_utils import USD_AVAILABLE
 
 _HAS_UIPC = importlib.util.find_spec("uipc") is not None
 if _HAS_UIPC:
     import uipc
     import uipc.builtin as uipc_builtin
     from uipc import view
+
+if USD_AVAILABLE and _HAS_UIPC:
+    import newton_usd_schemas  # noqa: F401
+    from pxr import Sdf, UsdGeom
 
 
 @unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
@@ -305,14 +311,17 @@ class TestUIPCDeformableBuilder(unittest.TestCase):
         np.testing.assert_allclose(np_lambda, expected_lambda, rtol=0.0, atol=2.0e-2)
 
     def test_deformable_model_custom_attribute_selects_per_range_constitution(self):
+        """Select elastic and mass-only constitutions for separate authored soft bodies."""
         builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
         k_mu = [2.0e4, 8.0e4]
         self._add_disconnected_tet_soft_mesh(builder, k_mu=k_mu)
         self._add_disconnected_tet_soft_mesh(builder, k_mu=k_mu)
+        self._add_disconnected_tet_soft_mesh(builder, k_mu=k_mu)
 
         model = builder.finalize()
         model.uipc.deformable_model[1] = "arap"
+        model.uipc.deformable_model[2] = "empty"
         solver = newton.solvers.SolverUIPC(
             model=model,
             backend="none",
@@ -333,6 +342,54 @@ class TestUIPCDeformableBuilder(unittest.TestCase):
         self.assertIsNone(arap_geometry.tetrahedra().find("mu"))
         self.assertIsNone(arap_geometry.tetrahedra().find("lambda"))
         np.testing.assert_allclose(uipc.view(kappa_attr), np.array(k_mu, dtype=np.float32), rtol=0.0, atol=2.0e-2)
+
+        self.assertEqual(len(solver.mapping.deformable_geo_slots), 3)
+        empty_geometry = solver.mapping.deformable_geo_slots[2].geometry()
+        self.assertEqual(int(uipc.view(empty_geometry.meta().find("constitution_uid"))[0]), 0)
+        self.assertIsNone(empty_geometry.tetrahedra().find("mu"))
+        self.assertIsNone(empty_geometry.tetrahedra().find("lambda"))
+        self.assertIsNone(empty_geometry.tetrahedra().find("kappa"))
+        self.assertAlmostEqual(float(uipc.view(empty_geometry.meta().find("mass_density"))[0]), 1000.0)
+        self.assertIsNotNone(empty_geometry.vertices().find("is_constrained"))
+        self.assertIsNotNone(empty_geometry.vertices().find("aim_position"))
+
+    @unittest.skipUnless(USD_AVAILABLE, "Requires usd-core")
+    def test_usd_constitution_selects_imported_soft_body_models(self):
+        """Import schema and custom constitutions into the correct soft-body rows."""
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
+        newton.solvers.SolverUIPC.register_custom_attributes(builder)
+        self._add_disconnected_tet_soft_mesh(builder)
+        for use_schema, entries in (
+            (True, (("Empty", "empty"), ("ARAP", "arap"), ("Stable", "stable_neo_hookean"), ("Default", None))),
+            (False, (("Later", "empty"),)),
+        ):
+            stage = _deformable_stage()
+            for name, constitution in (*entries, ("Ignored", "empty")):
+                tet = UsdGeom.TetMesh.Define(stage, f"/World/{name}")
+                tet.CreatePointsAttr([(0, 0, 0), (0.1, 0, 0), (0, 0.1, 0), (0, 0, 0.1)])
+                tet.CreateTetVertexIndicesAttr([(0, 1, 2, 3)])
+                prim = tet.GetPrim()
+                if use_schema:
+                    self.assertTrue(prim.ApplyAPI("NewtonUIPCDeformableAPI"))
+                    attr = prim.GetAttribute("uipc:constitution")
+                else:
+                    attr = prim.CreateAttribute("uipc:constitution", Sdf.ValueTypeNames.Token)
+                if constitution is not None:
+                    attr.Set(constitution)
+            builder.add_usd(stage, ignore_paths=["/World/Ignored"])
+
+        model = builder.finalize(device="cpu")
+        self.assertEqual(
+            model.uipc.deformable_model,
+            ["stable_neo_hookean", "empty", "arap", "stable_neo_hookean", "stable_neo_hookean", "empty"],
+        )
+        solver = newton.solvers.SolverUIPC(model, backend="none", logger_level=uipc.Logger.Warn)
+        solver.initialize(model.state())
+        uids = [
+            int(uipc.view(slot.geometry().meta().find("constitution_uid"))[0])
+            for slot in solver.mapping.deformable_geo_slots
+        ]
+        self.assertEqual(uids, [10, 0, 9, 10, 10, 0])
 
     def test_soft_position_constraint_can_be_disabled(self):
         builder = newton.ModelBuilder(up_axis=newton.Axis.Z)

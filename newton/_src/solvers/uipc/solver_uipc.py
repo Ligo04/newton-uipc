@@ -68,6 +68,7 @@ if TYPE_CHECKING:
     from .deformable_body import DeformableBodyBuilder
     from .external_forces import ExternalForces
     from .rigid_body import RigidBodyBuilder
+    from .rod import RodBuilder
     from .utils import _view_attr
 
 logger = logging.getLogger(__name__)
@@ -190,7 +191,12 @@ class SolverUIPC(SolverBase):
         [Pa].  A negative value leaves the solver-level ``kappa`` default in
         effect for that body. ``uipc:cloth_model`` and
         ``uipc:deformable_model`` select constitutions per authored cloth or
-        deformable group.
+        deformable group. ``uipc:rigid_model`` selects ABD for rigid bodies;
+        ``uipc:shape_constitution`` selects ABD or Empty for world-static
+        colliders. Both read ``uipc:constitution`` from the corresponding USD prim.
+        Cloth and deformable groups read the same token from their simulation mesh.
+        ``uipc:rod_model`` reads it from simulation curves and selects the
+        HookeanSpring centerline approximation; bending is applied separately.
         """
         cls.import_uipc()
         builder.add_custom_attribute(
@@ -203,7 +209,40 @@ class SolverUIPC(SolverBase):
                 namespace="uipc",
             )
         )
+        builder.add_custom_attribute(
+            ModelBuilder.CustomAttribute(
+                name="rigid_model",
+                frequency=Model.AttributeFrequency.BODY,
+                assignment=Model.AttributeAssignment.MODEL,
+                dtype=str,
+                default="abd",
+                namespace="uipc",
+                usd_attribute_name="uipc:constitution",
+            )
+        )
+        builder.add_custom_attribute(
+            ModelBuilder.CustomAttribute(
+                name="shape_constitution",
+                frequency=Model.AttributeFrequency.SHAPE,
+                assignment=Model.AttributeAssignment.MODEL,
+                dtype=str,
+                default="",
+                namespace="uipc",
+                usd_attribute_name="uipc:constitution",
+            )
+        )
         register_deformable_group_attributes(builder)
+        builder.add_custom_attribute(
+            ModelBuilder.CustomAttribute(
+                name="rod_model",
+                frequency=Model.AttributeFrequency.CURVE,
+                assignment=Model.AttributeAssignment.MODEL,
+                dtype=str,
+                default=RodBuilder.ROD_MODEL_HOOKEAN_SPRING,
+                namespace="uipc",
+                usd_attribute_name="uipc:constitution",
+            )
+        )
         builder.add_custom_attribute(
             ModelBuilder.CustomAttribute(
                 name="deformable_model",
@@ -212,6 +251,7 @@ class SolverUIPC(SolverBase):
                 dtype=str,
                 default=DeformableBodyBuilder.DEFORMABLE_MODEL_STABLE_NEO_HOOKEAN,
                 namespace="uipc",
+                usd_attribute_name="uipc:constitution",
             )
         )
         builder.add_custom_attribute(
@@ -222,6 +262,7 @@ class SolverUIPC(SolverBase):
                 dtype=str,
                 default=ClothBuilder.CLOTH_MODEL_STRAIN_LIMITING_BARAFF_WITKIN,
                 namespace="uipc",
+                usd_attribute_name="uipc:constitution",
             )
         )
 
@@ -243,7 +284,7 @@ class SolverUIPC(SolverBase):
         global uipc, ULogger, UScene, USimulationStats, GPa
         global AffineBodyStateAccessorFeature, ContactSystemFeature
         global FiniteElementStateAccessorFeature, SceneIO
-        global ArticulationBuilder, ClothBuilder, DeformableBodyBuilder, RigidBodyBuilder
+        global ArticulationBuilder, ClothBuilder, DeformableBodyBuilder, RigidBodyBuilder, RodBuilder
         global ExternalForces
         global ContactForceReadback, UIpcMappingInfo, _view_attr
         global _populate_contact_pairs_kernel
@@ -291,6 +332,7 @@ class SolverUIPC(SolverBase):
             from .deformable_body import DeformableBodyBuilder
             from .external_forces import ExternalForces
             from .rigid_body import RigidBodyBuilder
+            from .rod import RodBuilder
             from .utils import _view_attr
         except ImportError as e:
             raise ImportError(
@@ -1184,6 +1226,13 @@ class SolverUIPC(SolverBase):
         if state.body_qd is not None and model.body_qd is not None:
             wp.copy(model.body_qd, state.body_qd)
 
+        self._rod_builder = RodBuilder(model, scene, self.mapping)
+        rod_bodies = sorted(self.mapping.fem_rod_bodies)
+        if rod_bodies and np.any(model.body_flags.numpy()[rod_bodies] & int(BodyFlags.PROXY)):
+            raise ValueError("SolverUIPC does not support ROD bodies as coupling proxies")
+        if self.mapping.fem_rod_bodies.intersection(body_element_overrides):
+            raise ValueError("SolverUIPC centerline rods do not support per-body contact element overrides")
+
         for world_index in range(model.world_count):
             if body_ws is not None:
                 body_range = (int(body_ws[world_index]), int(body_ws[world_index + 1]))
@@ -1224,6 +1273,9 @@ class SolverUIPC(SolverBase):
                 )
             self._rigid_body_builder.build_static_colliders(env_elems[world_index], se)
             self._articulation_builder.build_joints(robo_elems[world_index], joint_range, se)
+            self._rod_builder.build(actor_elems[world_index], body_range, se)
+            for body in self.mapping.fem_rod_bodies.intersection(range(*body_range)):
+                self._body_contact_elem[body] = actor_elems[world_index]
             if self._cloth_builder.has_cloth:
                 self._cloth_builder.build(cloth_elems[world_index], particle_range, se)
             if self._deformable_builder.has_deformable:
@@ -1262,6 +1314,7 @@ class SolverUIPC(SolverBase):
         self._fem_accessor: FiniteElementStateAccessorFeature = self.world.features().find(
             FiniteElementStateAccessorFeature
         )  # ty:ignore[invalid-assignment]
+        self._rod_builder.attach_backend(self._fem_accessor)
         self._fem_position_buf = None
         self._fem_velocity_buf = None
         self._fem_backend_offsets_wp = None
@@ -1409,6 +1462,15 @@ class SolverUIPC(SolverBase):
         if not self._initialized:
             self.initialize(state_in)
 
+        if (
+            self._rod_builder.has_rods
+            and observables is not None
+            and observables.is_requested(self.ObservableKind.CONTACT_F)
+        ):
+            raise NotImplementedError(
+                "SolverUIPC ROD contact wrench observables are not supported; native rod contact simulation remains available"
+            )
+
         if abs(dt - self._dt) > 1e-10 and self._step_count == 0:
             warnings.warn(
                 f"SolverUIPC: step dt={dt} differs from configured dt={self._dt}. "
@@ -1421,6 +1483,8 @@ class SolverUIPC(SolverBase):
             control = self.model.control(clone_variables=False)
 
         # Phase 1: Cache force inputs and joint control.
+        self._rod_builder.update_kinematic(state_in)
+        self._rod_builder.cache_forces(state_in)
         self._external_forces.cache(state_in, self._body_affine)
         self._articulation_builder.cache_joint_control(control)
 
@@ -1430,6 +1494,7 @@ class SolverUIPC(SolverBase):
         # Sync host force and control arrays before UIPC advances.
         self._articulation_builder.sync_control_transfers()
         self._external_forces.publish()
+        self._rod_builder.publish_forces()
 
         # Couple measured joint increments inside the upcoming UIPC solve.
         self._articulation_builder.update_mimic_constraints()
@@ -1449,6 +1514,7 @@ class SolverUIPC(SolverBase):
         self._sync_particle_state_from_uipc(state_out)
         self._articulation_builder.read_joint_state_post_retrieve()
         self._articulation_builder.write_joint_readback(state_out)
+        self._rod_builder.read_state(state_in, state_out)
 
         if state_out.body_f is not None:
             state_out.body_f.zero_()
@@ -1805,6 +1871,15 @@ class SolverUIPC(SolverBase):
                 return None
             return np.nonzero(mask_host[world_index_host])[0].astype(np.int64)
 
+        if self._rod_builder.has_rods and flags & (StateFlags.BODY_Q | StateFlags.BODY_QD):
+            self._rod_builder.sync_state(
+                state.body_q,
+                state.body_qd,
+                world_mask=mask_host,
+                write_position=bool(flags & StateFlags.BODY_Q),
+                write_velocity=bool(flags & StateFlags.BODY_QD),
+            )
+
         # rigid bodies
         mapping = self.mapping
         if mapping.num_mapped_bodies > 0 and mapping.body_geo_slots and model.body_world is not None:
@@ -1872,6 +1947,7 @@ class SolverUIPC(SolverBase):
         """Push Newton-owned body and FEM particle state into UIPC."""
         self._sync_body_state_to_uipc(check_sanity=False)
         self._sync_particle_state_to_uipc(check_sanity=False)
+        self._rod_builder.sync_state(self.model.body_q, self.model.body_qd)
         self.world.retrieve()
         self._raise_if_sanity_check_failed()
 

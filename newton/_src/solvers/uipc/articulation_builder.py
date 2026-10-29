@@ -176,8 +176,11 @@ class ArticulationBuilder:
             if model.joint_articulation is not None
             else np.zeros(model.joint_count, dtype=np.int32)
         )
+        joint_child_np = joint_child.numpy()
         art_indices_in_range = set()
         for j in range(jstart, jend):
+            if int(joint_child_np[j]) in self._mapping.fem_rod_bodies:
+                continue
             art_indices_in_range.add(int(joint_articulation[j]))
 
         # Create Articulation objects for referenced articulations (skip existing)
@@ -196,10 +199,11 @@ class ArticulationBuilder:
         joint_X_c_np = joint_X_c.numpy()
         joint_type_np = joint_type.numpy()
         joint_parent_np = joint_parent.numpy()
-        joint_child_np = joint_child.numpy()
 
         # Pre-pass: create proxy meshes for shapeless bodies
         for j in range(jstart, jend):
+            if int(joint_child_np[j]) in self._mapping.fem_rod_bodies:
+                continue
             if JointType(joint_type_np[j]) == JointType.FREE:
                 continue
             for b in (int(joint_parent_np[j]), int(joint_child_np[j])):
@@ -217,6 +221,8 @@ class ArticulationBuilder:
             joint_type = JointType(joint_type_np[j])
             parent_body = int(joint_parent_np[j])
             child_body = int(joint_child_np[j])
+            if child_body in self._mapping.fem_rod_bodies:
+                continue
 
             # Check that both parent and child bodies have ABD geometry.
             joint_name = model.joint_label[j] if j < len(model.joint_label) else "?"

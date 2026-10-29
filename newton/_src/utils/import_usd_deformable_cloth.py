@@ -384,6 +384,8 @@ def _deformable_import_cloth(ctx: _DeformableImportContext) -> None:
     resolver = ctx.resolver
     path_cloth_map = ctx.path_cloth_map
     path_cloth_attrs = ctx.path_cloth_attrs
+    group_frequency = "uipc:cloth"
+    group_attributes = builder.get_custom_attributes_by_frequency([group_frequency])
 
     if not (root_prim and root_prim.IsValid()):
         return
@@ -597,6 +599,8 @@ def _deformable_import_cloth(ctx: _DeformableImportContext) -> None:
             _warn_collision_not_disableable(path)
 
         p0, t0, e0 = builder.particle_count, builder.tri_count, builder.edge_count
+        cloth_row = len(builder.surface_label)
+        group_values = usd.get_custom_attribute_values(prim, group_attributes)
         builder.add_cloth_mesh(
             pos=wp.vec3(0.0, 0.0, 0.0),
             rot=wp.quat_identity(),
@@ -610,6 +614,11 @@ def _deformable_import_cloth(ctx: _DeformableImportContext) -> None:
             edge_ke=edge_ke,
             particle_radius=particle_radius,
             label=path,
+        )
+        builder._process_custom_attributes(
+            cloth_row,
+            {attr.key: group_values.get(attr.key) for attr in group_attributes},
+            group_frequency,
         )
         if builder.tri_count - t0 != len(tri_faces):
             raise RuntimeError(

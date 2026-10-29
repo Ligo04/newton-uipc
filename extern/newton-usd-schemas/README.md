@@ -45,6 +45,82 @@ stage.Export("/tmp/my_robot.usda")  # or .usdc or .usd
 
 Once a USD layer is authored to storage, it can be loaded into a Newton runtime using [Newton's USD Parsing](https://newton-physics.github.io/newton/concepts/usd_parsing.html) mechanism.
 
+# UIPC constitutions
+
+The experimental `NewtonUIPCRigidBodyAPI` declares the uniform token
+`uipc:constitution` on a rigid-body prim or a world-static collider. Its tokens
+are `"abd"` and `"empty"`; an unauthored token defaults to ABD for rigid bodies
+and Empty for world-static colliders. Static colliders may use fixed ABD
+instances or fixed Empty vertices. Empty is rejected on dynamic or kinematic
+rigid bodies and their owned colliders, since it does not preserve rigid-body
+degrees of freedom. Planes use implicit halfplanes without this selector.
+
+```python
+rigid_prim.ApplyAPI("NewtonUIPCRigidBodyAPI")
+rigid_prim.GetAttribute("uipc:constitution").Set("abd")
+
+static_collider_prim.ApplyAPI("NewtonUIPCRigidBodyAPI")
+static_collider_prim.GetAttribute("uipc:constitution").Set("empty")
+```
+
+Register UIPC attributes on the builder before importing the USD asset. Body
+tokens populate `model.uipc.rigid_model`, while collider tokens populate
+`model.uipc.shape_constitution`.
+
+## Rod centerlines
+
+The experimental `NewtonUIPCRodAPI` declares `uipc:constitution` on a simulation
+`BasisCurves`. The supported token is `"hookean_spring"` (also the default):
+
+```python
+curve_prim.ApplyAPI("NewtonUIPCRodAPI")
+curve_prim.GetAttribute("uipc:constitution").Set("hookean_spring")
+```
+
+The curves must already carry `PhysicsCurvesDeformableSimAPI`. Register UIPC
+attributes before USD import; Newton stores the token in the corresponding
+`model.uipc.rod_model` row. Positive Newton bend stiffness adds
+`KirchhoffRodBending` separately. This centerline approximation omits shear,
+twist, material damping, and intrinsic rest curvature.
+
+## Cloth membranes
+
+The experimental `NewtonUIPCClothAPI` declares `uipc:constitution` on a cloth
+simulation `Mesh`. Supported tokens are `"strain_limiting_baraff_witkin"`
+(default) and `"neo_hookean"`:
+
+```python
+cloth_prim.ApplyAPI("NewtonUIPCClothAPI")
+cloth_prim.GetAttribute("uipc:constitution").Set("neo_hookean")
+```
+
+The mesh must already carry `PhysicsSurfaceDeformableSimAPI`. Register UIPC
+custom attributes on the builder before `builder.add_usd(...)`; Newton stores
+the token in the corresponding `model.uipc.cloth_model` row. This selects the
+membrane model while retaining the separate `DiscreteShellBending` constitution.
+
+## Tetrahedral deformables
+
+The experimental `NewtonUIPCDeformableAPI` applies to a `TetMesh` and declares
+the uniform token `uipc:constitution`. Its supported values are
+`"stable_neo_hookean"` (default), `"arap"`, and `"empty"`. Empty retains the
+geometry and mass without elastic energy.
+
+After registering the schemas, apply this API to an existing simulation
+TetMesh prim:
+
+```python
+tet_prim.ApplyAPI("NewtonUIPCDeformableAPI")
+tet_prim.GetAttribute("uipc:constitution").Set("empty")
+```
+
+Newton's UIPC integration imports this property into the corresponding
+`model.uipc.deformable_model` row when
+`SolverUIPC.register_custom_attributes(builder)` is called before
+`builder.add_usd(...)`. This API selects a tetrahedral constitution and does
+not change the simulation mesh's deformable-body ownership or material
+coefficients.
+
 # Experimental Status
 
 The Newton USD Schemas are currently in a v0.x development phase. The schemas are considered experimental and could change in future releases.

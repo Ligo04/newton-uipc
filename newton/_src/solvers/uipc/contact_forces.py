@@ -220,6 +220,14 @@ def _build_vertex_to_body_np(mapping: UIpcMappingInfo) -> np.ndarray | None:
         body_vertex_ranges.append((body_idx, start, end))
         max_gv = max(max_gv, end)
 
+    # Rod vertices have no unique Newton body owner at shared nodes. Keep
+    # their range addressable while leaving their reporting entries unmapped.
+    for slot in mapping.rod_geo_slots:
+        geo = slot.geometry()
+        offset = geo.meta().find("backend_fem_vertex_offset") or geo.meta().find(uipc_builtin.global_vertex_offset)
+        if offset is not None:
+            max_gv = max(max_gv, int(_view_attr(offset)[0]) + geo.vertices().size())
+
     if max_gv == 0:
         return None
 
@@ -276,6 +284,12 @@ def build_gpu_vertex_maps(mapping: UIpcMappingInfo, body_count: int, device: wp.
         end = base_offset + len(pi)
         particle_vertex_ranges.append((pi, base_offset, end))
         max_gv = max(max_gv, end)
+
+    for slot in mapping.rod_geo_slots:
+        geo = slot.geometry()
+        offset = geo.meta().find("backend_fem_vertex_offset") or geo.meta().find(uipc_builtin.global_vertex_offset)
+        if offset is not None:
+            max_gv = max(max_gv, int(_view_attr(offset)[0]) + geo.vertices().size())
 
     if max_gv == 0:
         mapping.max_global_vertex = 0

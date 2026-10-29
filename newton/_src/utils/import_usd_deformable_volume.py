@@ -87,6 +87,8 @@ def _deformable_import_volume(ctx: _DeformableImportContext) -> None:
     collect_schema_attrs = ctx.collect_schema_attrs
     path_soft_map = ctx.path_soft_map
     path_soft_attrs = ctx.path_soft_attrs
+    group_frequency = "uipc:deformable_body"
+    group_attributes = builder.get_custom_attributes_by_frequency([group_frequency])
 
     if not (root_prim and root_prim.IsValid()):
         return
@@ -316,7 +318,14 @@ def _deformable_import_volume(ctx: _DeformableImportContext) -> None:
             add_soft_mesh_kwargs["density"] = resolved_density
 
         soft_p0, soft_t0 = builder.particle_count, builder.tet_count
+        soft_row = len(builder.volume_label)
+        group_values = usd.get_custom_attribute_values(prim, group_attributes)
         builder.add_soft_mesh(**add_soft_mesh_kwargs)
+        builder._process_custom_attributes(
+            soft_row,
+            {attr.key: group_values.get(attr.key) for attr in group_attributes},
+            group_frequency,
+        )
         if rest_data is not None:
             retained_indices = simulation_indices[rest_sources]
             actual_indices = np.asarray(builder.tet_indices[soft_t0:], dtype=np.int64).reshape(-1, 4) - soft_p0

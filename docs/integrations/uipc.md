@@ -124,7 +124,7 @@ reports continue to use observables, as described below.
 | `FREE` | AffineBody object with `SoftTransformConstraint` | The body is simulated as a free actor. Body pose / velocity are synchronized through Newton `body_q` / `body_qd`, not through an active generalized-coordinate joint. |
 | `BALL` | `AffineBodySphericalJoint` | Constrains parent and child anchors, but is not an active driven/read-back joint in Newton's UIPC articulation state. |
 | `DISTANCE`, `D6` | *unsupported* | Skipped with a warning during UIPC joint construction. |
-| `CABLE` | *unsupported* | No UIPC conversion path. |
+| `ROD` | `HookeanSpring` + optional `KirchhoffRodBending` | Centerline approximation with stretch and isotropic bending; see [Rods](#rods). |
 
 For active `REVOLUTE` and `PRISMATIC` joints, parent/child anchors are
 validated in world space before UIPC geometry is created. Revolute anchors and
@@ -168,8 +168,10 @@ contribute to UIPC collision geometry.
 | `PLANE` | `uipc.geometry.halfplane` for `shape_body == -1` | World-attached planes become infinite UIPC halfplanes. Body-attached planes do not contribute to AffineBody meshes. |
 | `HFIELD`, `ELLIPSOID`, `GAUSSIAN`, `NONE` | *unsupported* | Ignored by the UIPC rigid-body mesh builder, with warnings for unsupported geometry where applicable. |
 
-World-space non-plane shapes (`shape_body == -1`) are emitted as fixed static
-colliders with UIPC's `Empty` constitution. Ground planes share UIPC's default
+World-space non-plane shapes (`shape_body == -1`) default to fixed static
+colliders with UIPC's `Empty` constitution. They may explicitly select `"abd"`
+to use fixed AffineBody instances. Different constitutions are built as
+separate static geometries. Ground planes share UIPC's default
 ground contact element; other static colliders use the per-world environment
 contact element.
 
@@ -186,6 +188,27 @@ Dynamic rigid bodies use UIPC's AffineBody formulation. Newton forwards:
 - mesh-derived or authored mass density,
 - the solver-level AffineBody stiffness `kappa`, with optional per-body
   overrides through the `uipc:abd_kappa` custom attribute.
+
+The experimental `NewtonUIPCRigidBodyAPI` declares a `uipc:constitution`
+token on a rigid-body prim or a world-static collider:
+
+```python
+rigid_prim.ApplyAPI("NewtonUIPCRigidBodyAPI")
+rigid_prim.GetAttribute("uipc:constitution").Set("abd")
+
+static_collider_prim.ApplyAPI("NewtonUIPCRigidBodyAPI")
+static_collider_prim.GetAttribute("uipc:constitution").Set("empty")
+```
+
+Register UIPC custom attributes before `builder.add_usd(...)` to import the
+selection. On a rigid-body prim the token populates `model.uipc.rigid_model`;
+on a collider it populates `model.uipc.shape_constitution`. An unauthored
+selection defaults to ABD for bodies and Empty for world-static colliders.
+World-static colliders support both `"abd"` and `"empty"`, with the appropriate
+instance or vertex fixed markers. A rigid body and its owned colliders must
+use ABD, including kinematic or joint-connected bodies; selecting Empty raises
+an error. Represent a fixed Empty collider without `PhysicsRigidBodyAPI`.
+Planes use implicit halfplanes and reject explicit constitution selection.
 
 By default, `initialize` syncs UIPC's final AffineBody mass, center of mass, and
 inertia back into the Newton `Model` via `sync_model_inertia_from_uipc`. This
@@ -240,8 +263,11 @@ Currently registered:
 | Attribute | Frequency | Default | Meaning |
 | --- | --- | --- | --- |
 | `model.uipc.abd_kappa` | Body | `-1.0` | Per-body AffineBody stiffness override [Pa]. Negative values inherit the solver-level `kappa`. |
-| `model.uipc.cloth_model` | `uipc:cloth` | `"strain_limiting_baraff_witkin"` | Per-authored-cloth membrane constitution. Supported values are `"strain_limiting_baraff_witkin"` and `"neo_hookean"`. |
-| `model.uipc.deformable_model` | `uipc:deformable_body` | `"stable_neo_hookean"` | Per-authored-soft-body tetrahedral constitution. Supported values are `"stable_neo_hookean"` and `"arap"`. |
+| `model.uipc.rigid_model` | Body | `"abd"` | Rigid-body constitution, imported from body-level `uipc:constitution`. Only ABD preserves rigid-body state and joints; Empty is rejected. |
+| `model.uipc.shape_constitution` | Shape | `""` | Collider-level `uipc:constitution`. World-static colliders support `"abd"` or `"empty"`; an empty string inherits ABD from an owning body or selects Empty for a world-static collider. |
+| `model.uipc.cloth_model` | `uipc:cloth` | `"strain_limiting_baraff_witkin"` | Per-authored-cloth membrane constitution, imported from simulation-mesh `uipc:constitution`. Supported values are `"strain_limiting_baraff_witkin"` and `"neo_hookean"`. |
+| `model.uipc.rod_model` | Curve | `"hookean_spring"` | Primary centerline constitution, imported from simulation-curve `uipc:constitution`. Positive Newton bend stiffness adds `KirchhoffRodBending` separately. |
+| `model.uipc.deformable_model` | `uipc:deformable_body` | `"stable_neo_hookean"` | Per-authored-soft-body tetrahedral constitution. Supported values are `"stable_neo_hookean"`, `"arap"`, and `"empty"`. |
 
 The same custom-frequency rows carry group labels, owning worlds, inclusive
 `first`/`last` indices for the particle/topology domains, and authored density:
@@ -253,6 +279,56 @@ The row counts are resolved from the final builder group registries, so
 registration may occur after authoring but must occur before `finalize()`.
 Without registration, `SolverUIPC` retains the legacy topology selectors and
 does not preserve multiple authored groups that share one Newton world.
+
+## Rods
+
+Newton capsule-segment rods, including imported linear `BasisCurves`, use UIPC
+`HookeanSpring` (UID 12) and, when bend stiffness is positive,
+`KirchhoffRodBending` (UID 15). Their segments are excluded from ABD conversion.
+The adapter welds ROD joint endpoints into a nonbranching centerline and
+reconstructs Newton body poses, COM velocities, and joint coordinates after
+each solve. Segment roll is parallel transported; there is no axial spin.
+Newton capsule shapes retain their rest lengths while the FEM centerline can
+stretch, so reconstructed capsules approximate the solved geometry.
+
+For each ROD joint, let `L_dual` be the mean adjacent capsule rest length.
+The adapter recovers `EA = stretch_stiffness * L_dual` and
+`EI = bend_stiffness * L_dual`, then divides by `pi*r^2` and `pi*r^4/4`
+to obtain the UIPC axial and bending moduli. An edge uses the mean recovered
+`EA` of its incident joints. An isolated segment without a ROD joint uses
+`EA = 1e5 * rest_length`. Half of each Newton body mass is assigned to each
+endpoint; shared nodes sum those masses. External body forces and transverse
+torques are distributed to the endpoints. Torques along the centerline have
+no effect in this model.
+
+Open and closed chains require one capsule per segment, uniform positive
+radius, coincident initial joint endpoints, and isotropic bending. World
+`FREE`, `FIXED`, and endpoint `BALL` roots are supported. Kinematic or
+zero-mass segments fix both endpoints; kinematic targets follow the input
+body state each step. `reset()` supports body position/velocity flags and
+world masks. Branching, backtracking bending hinges, disabled ROD joints, attachments to other bodies,
+per-body contact-element overrides, and coupling proxy rods raise errors.
+
+This approximation omits shear, twist, material damping, and intrinsic rest
+curvature and emits a warning at initialization. A curved rod will tend
+toward a straight stress-free centerline. Native contact with other UIPC
+geometry is available. `CONTACT_F` observables are not supported for scenes
+containing these rods because a shared centerline node has no unique Newton
+body owner.
+
+The experimental `NewtonUIPCRodAPI` declares the USD selector:
+
+```python
+curve_prim.ApplyAPI("NewtonUIPCRodAPI")
+curve_prim.GetAttribute("uipc:constitution").Set("hookean_spring")
+```
+
+The `BasisCurves` must already carry `PhysicsCurvesDeformableSimAPI`.
+Register `SolverUIPC` attributes before `builder.add_usd(...)`; the selector
+is stored in `model.uipc.rod_model` at the corresponding curve row. A raw
+custom token also works. Connected source curves must agree on authored
+curve-frequency custom attributes. The selector defaults to `hookean_spring`
+when omitted, and bending remains controlled by Newton's bend stiffness.
 
 ## Cloth
 
@@ -277,6 +353,24 @@ The default membrane model is `StrainLimitingBaraffWitkinShell`. Call
 watertight triangle meshes are rejected as cloth; use a deformable or rigid
 representation for closed volumes.
 
+USD cloth assets can author the membrane choice with the experimental
+`NewtonUIPCClothAPI` on the simulation `Mesh`:
+
+```python
+cloth_prim.ApplyAPI("NewtonUIPCClothAPI")
+cloth_prim.GetAttribute("uipc:constitution").Set("neo_hookean")
+```
+
+Use the updated `newton-usd-schemas` package and register its schemas before
+creating or opening the USD stage. The supported tokens are
+`"strain_limiting_baraff_witkin"` (default) and `"neo_hookean"`. Register UIPC
+custom attributes before `builder.add_usd(...)`; the importer stores the token
+in the corresponding `model.uipc.cloth_model` row. An explicitly authored
+custom token named `uipc:constitution` also works without applying this API.
+The mesh must already be marked as simulation cloth with
+`PhysicsSurfaceDeformableSimAPI`. This choice selects only the membrane;
+`DiscreteShellBending` remains a separate, automatically applied constitution.
+
 When `enable_soft_position_constraint=True` (the default), the builder adds
 dormant UIPC `SoftPositionConstraint` attributes. Use
 `set_cloth_soft_position_constraints` to enable selected particle handles and
@@ -292,12 +386,36 @@ set `model.uipc.deformable_model[soft_index]` before constructing `SolverUIPC`
 to choose a different supported constitution for one authored
 `uipc:deformable_body` row.
 
+Set the value to `"empty"` to use UIPC `Empty` (UID 0). This retains the tet
+geometry and mass while omitting elastic energy. Contact and soft-position
+constraints remain available; `tet_materials` are ignored for this body.
+
+USD assets can select the same constitution with the experimental
+`NewtonUIPCDeformableAPI` from the vendored `newton-usd-schemas` package. Apply
+it to the simulation `TetMesh`, then author its `uipc:constitution` token:
+
+```python
+import newton_usd_schemas  # Register schemas before creating a USD stage.
+
+tet_prim.ApplyAPI("NewtonUIPCDeformableAPI")
+tet_prim.GetAttribute("uipc:constitution").Set("empty")
+```
+
+Supported tokens are `"stable_neo_hookean"` (the schema default), `"arap"`,
+and `"empty"`. Register UIPC custom attributes on the builder **before**
+`builder.add_usd(...)`; the importer stores the authored token in the
+corresponding `model.uipc.deformable_model` row. No separate
+`model.uipc.constitution` attribute is created. An explicitly authored custom
+token named `uipc:constitution` also works without applying the API schema.
+This selection applies to tetrahedral soft bodies; it does not select cloth
+or rigid-body constitutions.
+
 | Newton source | UIPC target | Notes |
 | --- | --- | --- |
 | `particle_q` | Tet mesh vertices | World-space particle positions [m]. |
 | `tet_indices` / `model.uipc.deformable_body_*` | Tet mesh topology and grouping | Registered custom-frequency rows keep multiple authored soft bodies separate. |
 | `particle_mass` + tet volume | Mass density | Falls back to `default_mass_density` when the estimate is unavailable. |
-| `tet_materials[:, 0]` / `tet_materials[:, 1]` | Deformable material attributes | Stable Neo-Hookean writes converted `mu` / `lambda`; ARAP writes `tet_materials[:, 0]` to UIPC `kappa`. |
+| `tet_materials[:, 0]` / `tet_materials[:, 1]` | Deformable material attributes | Stable Neo-Hookean writes converted `mu` / `lambda`; ARAP writes `tet_materials[:, 0]` to UIPC `kappa`; Empty ignores these values. |
 | `particle_mass <= 0.0` | UIPC `is_fixed` vertex marker | Marks kinematic deformable vertices. |
 
 When soft-position constraints are enabled, use

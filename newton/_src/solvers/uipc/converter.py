@@ -394,6 +394,12 @@ class UIpcMappingInfo:
     deformable_rest_geo_slots: list[Any] = field(default_factory=list)
     deformable_particle_indices: list[Any] = field(default_factory=list)  # np.ndarray per mesh
 
+    # Centerline FEM rods replace the corresponding ABD bodies and joints.
+    fem_rod_bodies: set[int] = field(default_factory=set)
+    rod_geo_slots: list[Any] = field(default_factory=list)
+    rod_rest_geo_slots: list[Any] = field(default_factory=list)
+    rod_body_indices: list[np.ndarray] = field(default_factory=list)
+
     # GPU lookup tables for contact force scatter (populated by build_gpu_vertex_maps)
     vertex_to_body_wp: wp.array | None = None  # (max_global_vertex,) int32
     vertex_to_body_np: np.ndarray | None = None  # CPU copy, for hessian-based pair resolution
@@ -529,13 +535,21 @@ def _weld_vertices(
     return verts[unique_idx], new_faces[valid]
 
 
-def build_body_mesh(model: Model, body_idx: int) -> tuple[SimplicialComplex, float] | None:
+def build_body_mesh(
+    model: Model, body_idx: int, *, shape_indices: list[int] | None = None
+) -> tuple[SimplicialComplex, float] | None:
     """Build a merged triangle mesh for a Newton body from its shapes.
 
     Uses Newton's :class:`~newton.Mesh` ``create_*`` factory methods for primitive
     shapes (BOX, SPHERE, CAPSULE, CYLINDER, CONE) to guarantee correct winding
     and closed manifold meshes.  Coincident vertices are welded so the result
     is always a closed manifold suitable for UIPC.
+
+    Args:
+        model: Newton model containing the shapes.
+        body_idx: Owning body index, or ``-1`` for world-static shapes.
+        shape_indices: Optional subset of shapes to merge. Ownership and collision
+            flags still filter the supplied indices.
 
     Returns:
         ``(sc, volume)`` — a :class:`~uipc.geometry.SimplicialComplex` and its
@@ -556,9 +570,10 @@ def build_body_mesh(model: Model, body_idx: int) -> tuple[SimplicialComplex, flo
     shape_flags_np = model.shape_flags.numpy() if model.shape_flags is not None else None
 
     # Use collision shapes only to avoid duplicate geometry.
+    candidate_shapes = range(model.shape_count) if shape_indices is None else shape_indices
     shape_indices = [
         s
-        for s in range(model.shape_count)
+        for s in candidate_shapes
         if shape_body[s] == body_idx
         and (shape_flags_np is None or (int(shape_flags_np[s]) & int(ShapeFlags.COLLIDE_SHAPES)))
     ]
@@ -653,7 +668,7 @@ def build_body_mesh(model: Model, body_idx: int) -> tuple[SimplicialComplex, flo
 
     # UIPC ABD's ``AffineBodyConstitution`` asserts ``volume > 0`` per body.
     _vol_eps = 1e-12
-    body_name = model.body_label[body_idx] if body_idx < len(model.body_label) else "?"
+    body_name = model.body_label[body_idx] if 0 <= body_idx < len(model.body_label) else "?"
 
     def _make_sc(v: np.ndarray, f: np.ndarray) -> tuple[SimplicialComplex, float]:
         """Create a :class:`SimplicialComplex` and compute its absolute volume.

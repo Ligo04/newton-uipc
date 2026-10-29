@@ -991,6 +991,75 @@ class NewtonPointsDeformableSimAPI "NewtonPointsDeformableSimAPI" (
     )
 }
 
+class NewtonUIPCRigidBodyAPI "NewtonUIPCRigidBodyAPI" (
+    doc = """Experimental UIPC constitution selection for rigid bodies and static colliders.
+
+    Author `uipc:constitution` on a rigid-body prim or a world-static collider.
+    Dynamic and kinematic rigid bodies use ABD. World-static mesh colliders
+    may use fixed ABD instances or fixed Empty vertices."""
+)
+{
+    uniform token uipc:constitution (
+        allowedTokens = ["abd", "empty"]
+        doc = """UIPC rigid or static constitution selection.
+
+        When unauthored, rigid bodies use `abd` and world-static mesh colliders
+        use `empty`. Empty is rejected on a rigid body or its owned colliders.
+        Planes use implicit halfplanes and do not accept this selector."""
+    )
+}
+
+class NewtonUIPCRodAPI "NewtonUIPCRodAPI" (
+    doc = """Experimental UIPC centerline constitution selection for simulation `BasisCurves`.
+
+    This API does not mark curves as simulation geometry. HookeanSpring provides
+    stretch energy; KirchhoffRodBending is added when Newton bend stiffness is
+    positive. Shear, twist, damping, and intrinsic rest curvature are omitted."""
+)
+{
+    uniform token uipc:constitution = "hookean_spring" (
+        allowedTokens = ["hookean_spring"]
+        doc = """Primary UIPC centerline constitution, imported into `model.uipc.rod_model`.
+
+        Requires PhysicsCurvesDeformableSimAPI and UIPC attribute registration
+        before USD import. Bending remains a separate constitution."""
+    )
+}
+
+class NewtonUIPCClothAPI "NewtonUIPCClothAPI" (
+    doc = """Experimental UIPC membrane constitution selection for a cloth simulation `Mesh`.
+
+    This API does not mark a mesh as simulation cloth or change its material
+    coefficients. Discrete shell bending is applied separately by the solver."""
+)
+{
+    uniform token uipc:constitution = "strain_limiting_baraff_witkin" (
+        allowedTokens = ["strain_limiting_baraff_witkin", "neo_hookean"]
+        doc = """Primary UIPC cloth membrane constitution.
+
+        Newton imports this token into the corresponding `model.uipc.cloth_model`
+        row. It selects StrainLimitingBaraffWitkinShell or NeoHookeanShell and
+        leaves the separate DiscreteShellBending constitution in place."""
+    )
+}
+
+class NewtonUIPCDeformableAPI "NewtonUIPCDeformableAPI" (
+    doc = """Experimental UIPC constitution selection for a `TetMesh`.
+
+    This solver-specific API selects the primary tetrahedral constitution.
+    It does not change deformable-body ownership, topology, or material coefficients."""
+)
+{
+    uniform token uipc:constitution = "stable_neo_hookean" (
+        allowedTokens = ["stable_neo_hookean", "arap", "empty"]
+        doc = """Primary UIPC tetrahedral constitution.
+
+        `stable_neo_hookean` uses Stable Neo-Hookean elasticity, `arap` uses
+        ARAP elasticity, and `empty` retains geometry and mass without elastic
+        energy. Newton imports this value into `model.uipc.deformable_model`."""
+    )
+}
+
 class NewtonMaterialAPI "NewtonMaterialAPI" (
     apiSchemas = ["PhysicsMaterialAPI"]
     doc = """`NewtonMaterialAPI` applies on top of a `Material`, providing extra physical material attributes for Newton.

@@ -12,7 +12,12 @@ import numpy as np
 import warp as wp
 
 import newton
-from newton.tests.unittest_utils import get_selected_cuda_test_devices
+from newton.tests._usd_deformable_test_utils import (
+    _add_cloth_mesh,
+    _author_deformable_element_array,
+    _deformable_stage,
+)
+from newton.tests.unittest_utils import USD_AVAILABLE, get_selected_cuda_test_devices
 
 _HAS_UIPC = importlib.util.find_spec("uipc") is not None
 _CUDA_TEST_DEVICES = get_selected_cuda_test_devices(mode="basic")
@@ -24,6 +29,10 @@ if _HAS_UIPC:
 
     import newton._src.solvers.uipc.cloth as cloth_module
     from newton._src.solvers.uipc.cloth import ClothBuilder
+
+if USD_AVAILABLE and _HAS_UIPC:
+    import newton_usd_schemas  # noqa: F401
+    from pxr import Sdf
 
 
 class TestUIPCClothConfiguration(unittest.TestCase):
@@ -252,6 +261,54 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
             StrainLimitingBaraffWitkinShell().uid(),
         )
         self.assertEqual(int(view(geo_1.meta().find("constitution_uid"))[0]), NeoHookeanShell().uid())
+
+    @unittest.skipUnless(USD_AVAILABLE, "Requires usd-core")
+    def test_usd_constitution_selects_imported_cloth_models(self):
+        """Import schema and custom membrane tokens into the correct cloth rows."""
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
+        newton.solvers.SolverUIPC.register_custom_attributes(builder)
+        self._add_minimal_cloth(builder)
+        for use_schema, entries in (
+            (
+                True,
+                (("BaraffWitkin", "strain_limiting_baraff_witkin"), ("NeoHookean", "neo_hookean"), ("Default", None)),
+            ),
+            (False, (("Later", "neo_hookean"),)),
+        ):
+            stage = _deformable_stage()
+            for name, constitution in (*entries, ("Ignored", "neo_hookean")):
+                prim = _add_cloth_mesh(stage, f"/World/{name}").GetPrim()
+                _author_deformable_element_array(prim, "thicknesses", [0.001], "constant")
+                if use_schema:
+                    self.assertTrue(prim.ApplyAPI("NewtonUIPCClothAPI"))
+                    attr = prim.GetAttribute("uipc:constitution")
+                else:
+                    attr = prim.CreateAttribute("uipc:constitution", Sdf.ValueTypeNames.Token)
+                if constitution is not None:
+                    attr.Set(constitution)
+            builder.add_usd(stage, ignore_paths=["/World/Ignored"])
+
+        model = builder.finalize(device="cpu")
+        self.assertEqual(
+            model.uipc.cloth_model,
+            [
+                "strain_limiting_baraff_witkin",
+                "strain_limiting_baraff_witkin",
+                "neo_hookean",
+                "strain_limiting_baraff_witkin",
+                "neo_hookean",
+            ],
+        )
+        solver = newton.solvers.SolverUIPC(model, backend="none")
+        solver.initialize(model.state())
+        bw_uid = StrainLimitingBaraffWitkinShell().uid()
+        neo_uid = NeoHookeanShell().uid()
+        uids = [
+            int(view(slot.geometry().meta().find("constitution_uid"))[0]) for slot in solver.mapping.cloth_geo_slots
+        ]
+        self.assertEqual(uids, [bw_uid, bw_uid, neo_uid, bw_uid, neo_uid])
+        for slot in solver.mapping.cloth_geo_slots:
+            self.assertIsNotNone(slot.geometry().edges().find("bending_stiffness"))
 
     def test_fixed_cloth_grid_edges_mark_uipc_vertices_fixed(self):
         dim_x = 4

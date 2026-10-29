@@ -3014,7 +3014,7 @@ class ModelBuilder:
         self,
         entity_index: int | list[int],
         custom_attrs: dict[str, Any],
-        expected_frequency: Model.AttributeFrequency,
+        expected_frequency: Model.AttributeFrequency | str,
     ) -> None:
         """Process custom attributes from kwargs and assign them to an entity.
 

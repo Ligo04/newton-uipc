@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 import uipc.builtin as uipc_builtin
-from uipc.constitution import ARAP, ElasticModuli, SoftPositionConstraint, StableNeoHookean
+from uipc.constitution import ARAP, ElasticModuli, Empty, SoftPositionConstraint, StableNeoHookean
 from uipc.core import ContactElement, SubsceneElement
 from uipc.geometry import flip_inward_triangles, label_surface, label_triangle_orient
 from uipc.geometry import tetmesh as uipc_tetmesh
@@ -26,6 +26,7 @@ class DeformableBodyBuilder:
 
     DEFORMABLE_MODEL_STABLE_NEO_HOOKEAN = "stable_neo_hookean"
     DEFORMABLE_MODEL_ARAP = "arap"
+    DEFORMABLE_MODEL_EMPTY = "empty"
 
     def __init__(
         self,
@@ -147,7 +148,8 @@ class DeformableBodyBuilder:
         )
         deformable_model = self._deformable_model_from_model(model, soft_index)
         self._apply_deformable_model(sc, deformable_model, mass_density)
-        self._write_tet_elastic_moduli(sc, model, selected_tet_ids)
+        if deformable_model != self.DEFORMABLE_MODEL_EMPTY:
+            self._write_tet_elastic_moduli(sc, model, selected_tet_ids)
 
         fixed_local_indices = self._fixed_particle_indices(model, selected_particle_indices)
         if fixed_local_indices.size > 0:
@@ -262,11 +264,12 @@ class DeformableBodyBuilder:
             "stable_neo_hookean_fem": cls.DEFORMABLE_MODEL_STABLE_NEO_HOOKEAN,
             "stableneohookean": cls.DEFORMABLE_MODEL_STABLE_NEO_HOOKEAN,
             "arap": cls.DEFORMABLE_MODEL_ARAP,
+            "empty": cls.DEFORMABLE_MODEL_EMPTY,
         }
         try:
             return aliases[key]
         except KeyError as exc:
-            supported = ", ".join(sorted({cls.DEFORMABLE_MODEL_STABLE_NEO_HOOKEAN, cls.DEFORMABLE_MODEL_ARAP}))
+            supported = ", ".join(sorted(set(aliases.values())))
             raise ValueError(
                 f"Unsupported UIPC deformable_model '{deformable_model}'. Supported values: {supported}."
             ) from exc
@@ -279,6 +282,9 @@ class DeformableBodyBuilder:
         elif deformable_model == self.DEFORMABLE_MODEL_ARAP:
             model = ARAP()
             model.apply_to(sc, 1000.0, mass_density=mass_density)
+        elif deformable_model == self.DEFORMABLE_MODEL_EMPTY:
+            model = Empty()
+            model.apply_to(sc, mass_density=mass_density)
         else:
             raise ValueError(f"Unsupported UIPC deformable_model '{deformable_model}'.")
 

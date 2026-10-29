@@ -16,7 +16,7 @@ from uipc.core import ContactElement, SubsceneElement
 from uipc.geometry import affine_body as uipc_affine_body
 from uipc.geometry import halfplane, label_surface
 
-from newton import BodyFlags, GeoType, Model
+from newton import BodyFlags, GeoType, Model, ShapeFlags
 
 from .converter import (
     UIpcMappingInfo,
@@ -117,6 +117,52 @@ class RigidBodyBuilder:
         self._shape_body_np: np.ndarray | None = None
         self._shape_type_np: np.ndarray | None = None
         self._shape_transform_np: np.ndarray | None = None
+        self._shape_constitutions = self._constitution_values("shape_constitution", model.shape_count, "")
+        self._validate_constitutions()
+
+    def _constitution_values(self, name: str, count: int, default: str) -> list[str]:
+        """Read and normalize a body- or shape-indexed constitution selector."""
+        attributes = getattr(self._model, "uipc", None)
+        values = getattr(attributes, name, None)
+        if values is None:
+            return [default] * count
+        if len(values) != count:
+            raise ValueError(f"uipc:{name} must have {count} values, got {len(values)}.")
+        result = []
+        for index, value in enumerate(values):
+            if not isinstance(value, str):
+                raise TypeError(f"uipc:{name}[{index}] must be a string.")
+            constitution = value.lower() or default
+            if constitution not in ("", "abd", "empty"):
+                raise ValueError(f"Unsupported uipc:{name}[{index}] '{constitution}'. Supported values: abd, empty.")
+            result.append(constitution)
+        return result
+
+    def _validate_constitutions(self) -> None:
+        """Keep body-backed geometry affine and allow Empty only on static colliders."""
+        for body, constitution in enumerate(self._constitution_values("rigid_model", self._model.body_count, "abd")):
+            if constitution == "empty":
+                raise ValueError(
+                    f"uipc:rigid_model[{body}]='empty' requires a world-static collider without a rigid body. "
+                    "Dynamic and kinematic rigid bodies must use 'abd'."
+                )
+        if not self._ensure_shape_cache():
+            return
+        assert self._shape_body_np is not None
+        assert self._shape_type_np is not None
+        flags = self._model.shape_flags.numpy() if self._model.shape_flags is not None else None
+        for shape, constitution in enumerate(self._shape_constitutions):
+            if not constitution or (flags is not None and not int(flags[shape]) & int(ShapeFlags.COLLIDE_SHAPES)):
+                continue
+            if GeoType(self._shape_type_np[shape]) == GeoType.PLANE:
+                raise ValueError(
+                    "uipc:constitution does not select plane constitutions; planes use implicit halfplanes."
+                )
+            if self._shape_body_np[shape] >= 0 and constitution == "empty":
+                raise ValueError(
+                    f"uipc:shape_constitution[{shape}]='empty' requires a world-static collider without a rigid body. "
+                    "A collider owned by a rigid body must use 'abd'."
+                )
 
     def _ensure_shape_cache(self) -> bool:
         """Populate cached numpy views of shape arrays. Returns False if unavailable."""
@@ -205,35 +251,47 @@ class RigidBodyBuilder:
         :meth:`build_ground_planes`).  Typical examples include table meshes and
         wall colliders imported from USD without a ``RigidBodyAPI``.
 
-        Uses :class:`~uipc.constitution.Empty` constitution with ``is_fixed = 1``
-        so the geometry participates in IPC contact resolution but has no dynamics.
+        Defaults to :class:`~uipc.constitution.Empty` with fixed vertices.
+        Explicit ``abd`` shapes use fixed AffineBody instances instead. Shapes
+        using different constitutions are merged into separate geometries.
 
         Args:
             contact_elem: Contact element to apply (typically ``env_elem``).
             subscene_elem: Optional UIPC subscene element for multi-world isolation.
         """
         model = self._model
-        result = build_body_mesh(model, -1)
-        if result is None:
+        if not self._ensure_shape_cache():
             return
-        sc, _ = result
-        contact_elem.apply_to(sc)
-        if subscene_elem is not None:
-            subscene_elem.apply_to(sc)
+        assert self._shape_body_np is not None
+        assert self._shape_type_np is not None
+        groups: dict[str, list[int]] = {}
+        for shape in range(model.shape_count):
+            if self._shape_body_np[shape] == -1 and GeoType(self._shape_type_np[shape]) != GeoType.PLANE:
+                constitution = self._shape_constitutions[shape] or "empty"
+                groups.setdefault(constitution, []).append(shape)
 
-        Empty().apply_to(sc, mass_density=self._default_mass_density, thickness=0.0)
-        label_surface(sc)
+        for constitution, shape_indices in groups.items():
+            result = build_body_mesh(model, -1, shape_indices=shape_indices)
+            if result is None:
+                continue
+            sc, _ = result
+            contact_elem.apply_to(sc)
+            if subscene_elem is not None:
+                subscene_elem.apply_to(sc)
 
-        is_dynamic = sc.vertices().find(uipc_builtin.is_dynamic)
-        _view_attr(is_dynamic)[:] = 0
+            if constitution == "abd":
+                AffineBodyConstitution().apply_to(sc, self._kappa, mass_density=self._default_mass_density)
+                _view_attr(sc.instances().find(uipc_builtin.is_fixed))[:] = 1
+            else:
+                Empty().apply_to(sc, mass_density=self._default_mass_density, thickness=0.0)
+                _view_attr(sc.vertices().find(uipc_builtin.is_dynamic))[:] = 0
+                _view_attr(sc.vertices().find(uipc_builtin.is_fixed))[:] = 1
+                sc.vertices().create(uipc_builtin.gravity, np.array([[0.0], [0.0], [0.0]], dtype=np.float64))
+            label_surface(sc)
 
-        is_fixed = sc.vertices().find(uipc_builtin.is_fixed)
-        _view_attr(is_fixed)[:] = 1
-
-        sc.vertices().create(uipc_builtin.gravity, np.array([[0.0], [0.0], [0.0]], dtype=np.float64))
-
-        obj = self._scene.objects().create("static_colliders")
-        obj.geometries().create(sc)
+            name = "static_colliders_abd" if constitution == "abd" else "static_colliders"
+            obj = self._scene.objects().create(name)
+            obj.geometries().create(sc)
 
     def build_body_shape_mapping(
         self,
@@ -354,6 +412,8 @@ class RigidBodyBuilder:
         # Phase A: Collect per-body data
         body_infos: list[_BodyInfo] = []
         for b in range(body_range[0], body_range[1]):
+            if b in self._mapping.fem_rod_bodies:
+                continue
             sk = _compute_shape_key(model, b)
             if sk is None:
                 continue
