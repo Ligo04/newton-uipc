@@ -1395,6 +1395,10 @@ class SolverUIPC(SolverBase):
         Unmapped bodies (and backends without a state accessor) have an identity
         matrix and a false validity entry; consumers must use their rigid-pose
         fallback for those entries. Available after :meth:`initialize`.
+
+        Pass the returned arrays as ``body_affine`` and ``body_affine_valid``
+        to :meth:`newton.geometry.DeformableVisuals.update` to retain affine
+        deformation in BODY-bound visual meshes.
         """
         if not self._initialized:
             raise RuntimeError("get_body_affine_transforms() requires initialize() first.")

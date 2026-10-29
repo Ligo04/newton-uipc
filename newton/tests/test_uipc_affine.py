@@ -16,6 +16,8 @@ from newton.tests.unittest_utils import get_selected_cuda_test_devices
 
 _HAS_UIPC = importlib.util.find_spec("uipc") is not None
 if _HAS_UIPC:
+    from uipc import view
+
     from newton._src.solvers.uipc.converter import (
         UIpcMappingInfo,
         _gather_body_affine_kernel,
@@ -25,6 +27,61 @@ if _HAS_UIPC:
 
 @unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
 class TestUIPCAffine(unittest.TestCase):
+    def test_cuda_body_visuals_use_native_affine_and_rigid_fallback(self):
+        """Skin from native ABD strain without replacing unmapped bodies' rigid poses."""
+        devices = get_selected_cuda_test_devices(mode="basic")
+        if not devices:
+            self.skipTest("CUDA is unavailable")
+        for device in devices:
+            with self.subTest(device=str(device)), tempfile.TemporaryDirectory() as workspace:
+                builder = newton.ModelBuilder(gravity=wp.vec3(0.0))
+                abd = builder.add_body()
+                builder.add_shape_box(abd, hx=0.1, hy=0.1, hz=0.1)
+                rod_bodies, _ = builder.add_rod(rod=newton.Rod([(2, 3, 4), (2.2, 3, 4), (2.4, 3, 4)], radius=0.01))
+                rigid = rod_bodies[0]
+                vertices = np.array([[0, 0, 0], [0.05, 0, 0], [0, 0.05, 0.05]], dtype=np.float32)
+                rigid_vertices = vertices + np.array([2, 3, 4], dtype=np.float32)
+                builder.add_deformable_visual_mesh(vertices, [0, 1, 2], kind="body", parent=[abd] * 3)
+                builder.add_deformable_visual_mesh(rigid_vertices, [0, 1, 2], kind="body", parent=[rigid] * 3)
+                model = builder.finalize(device)
+                state, result = model.state(), model.state()
+                solver = newton.solvers.SolverUIPC(model, workspace=workspace, dt=0.002)
+                with self.assertWarnsRegex(UserWarning, "ROD.*centerline"):
+                    solver.initialize(state)
+                affine, valid = solver.get_body_affine_transforms()
+                np.testing.assert_array_equal(valid.numpy(), [True, False, False])
+
+                # Set native strain directly; converting it through a quaternion
+                # would hide the stretch/shear this rendering interface preserves.
+                matrix = np.array(
+                    [[1.2, 0.3, 0, 0.1], [0, 0.8, 0.2, -0.2], [0, 0, 1.1, 0.3], [0, 0, 0, 1]],
+                    dtype=np.float64,
+                )
+                native = solver._abd_accessor.create_geometry()
+                native.instances().create("transform", np.eye(4))
+                solver._abd_accessor.copy_to(native)
+                offset = int(solver.mapping.backend_offsets_wp.numpy()[0])
+                view(native.instances().find("transform"))[offset] = matrix
+                solver._abd_accessor.copy_from(native)
+                solver._update_body_affine_transforms()
+                np.testing.assert_allclose(affine.numpy()[abd], matrix, atol=1.0e-12)
+
+                visuals = newton.geometry.DeformableVisuals(model)
+                visuals.update(state, body_affine=affine, body_affine_valid=valid)
+                np.testing.assert_allclose(
+                    visuals.get_points(0).numpy(), vertices @ matrix[:3, :3].T + matrix[:3, 3], atol=1.0e-6
+                )
+                np.testing.assert_allclose(visuals.get_points(1).numpy(), rigid_vertices, atol=1.0e-6)
+
+                solver.step(state, result, None, dt=0.002)
+                self.assertIs(solver.get_body_affine_transforms()[0], affine)
+                visuals.update(result, body_affine=affine, body_affine_valid=valid)
+                updated = affine.numpy()[abd]
+                np.testing.assert_allclose(
+                    visuals.get_points(0).numpy(), vertices @ updated[:3, :3].T + updated[:3, 3], atol=1.0e-6
+                )
+                np.testing.assert_allclose(visuals.get_points(1).numpy(), rigid_vertices, atol=1.0e-6)
+
     def test_missing_backend_offsets_do_not_alias_body_zero(self):
         """Leave bodies with missing or negative backend offsets unmapped."""
         mapping = UIpcMappingInfo()

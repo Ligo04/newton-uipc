@@ -280,6 +280,31 @@ registration may occur after authoring but must occur before `finalize()`.
 Without registration, `SolverUIPC` retains the legacy topology selectors and
 does not preserve multiple authored groups that share one Newton world.
 
+## Affine body visual bindings
+
+`SolverUIPC.get_body_affine_transforms()` exports full `wp.mat44d` transforms
+and a `wp.bool` validity mask in Newton body order. After initializing the
+solver, pass these stable buffers to `newton.geometry.DeformableVisuals.update`
+to preserve ABD stretch and shear in BODY-bound visual meshes:
+
+```python
+body_affine, body_affine_valid = solver.get_body_affine_transforms()
+visuals = newton.geometry.DeformableVisuals(model)
+viewer.set_deformable_visuals(visuals)  # After viewer.set_model(model).
+
+# After each step, before viewer.log_state(state):
+visuals.update(state, body_affine=body_affine, body_affine_valid=body_affine_valid)
+viewer.log_state(state)
+```
+
+Entries with a false validity marker use `state.body_q`, including the FEM
+rod segment bodies. World-fixed visual vertices stay fixed. The matrix maps
+the same body-local bind coordinates used by BODY visual bindings to world
+coordinates; its upper 3x3 retains stretch and shear. Normals are recomputed
+from the deformed triangles. Keep the solver-owned arrays alive during
+evaluation and graph replay, and order the visual update after the physics
+step. This does not change the simulation state or regular shape rendering.
+
 ## Rods
 
 Newton capsule-segment rods, including imported linear `BasisCurves`, use UIPC
