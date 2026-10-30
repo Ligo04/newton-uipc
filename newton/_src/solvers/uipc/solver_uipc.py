@@ -10,6 +10,7 @@ import os
 import warnings
 import weakref
 from collections.abc import Callable
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -490,6 +491,7 @@ class SolverUIPC(SolverBase):
 
         self._dt = dt
         self._step_count = 0
+        self._step_time_ms = 0.0
         self._initialized = False
 
         # Lazily filled per-mapped-world host caches used by reset().
@@ -1466,6 +1468,8 @@ class SolverUIPC(SolverBase):
         if not self._initialized:
             self.initialize(state_in)
 
+        step_start = perf_counter()
+
         if (
             self._rod_builder.has_rods
             and observables is not None
@@ -1533,6 +1537,31 @@ class SolverUIPC(SolverBase):
 
         self._step_count += 1
         self._articulation_builder.increment_step()
+        self._step_time_ms = (perf_counter() - step_start) * 1000.0
+
+    def get_frame_stats(self) -> dict[str, Any]:
+        """Return a snapshot of the latest UIPC physics step's statistics.
+
+        Counters describe the last :meth:`step`, including when an application
+        takes several substeps per rendered frame. ``newton_iterations`` counts
+        nonlinear iterations; ``linear_solver_max_iterations`` is the maximum
+        iteration count among the frame's iterative linear solves, rather than
+        their sum or the configured iteration limit. These counters do not
+        require ``require_profile=True`` or enable UIPC timers.
+
+        ``step_time_ms`` is host wall time [ms] for the last :meth:`step`,
+        excluding deferred initialization. It includes UIPC advance/retrieve
+        and Newton state transfers, without adding a device synchronization.
+
+        Returns:
+            A new dictionary containing UIPC's backend-dependent frame counters
+            and ``step_time_ms``. Time and iteration counts are zero before the
+            first step. Unsupported backend counters are absent; in particular,
+            older UIPC builds may omit ``linear_solver_max_iterations``.
+        """
+        if self._step_count == 0:
+            return {"step_time_ms": 0.0, "newton_iterations": 0, "linear_solver_max_iterations": 0}
+        return {**self.engine.frame_stats(), "step_time_ms": self._step_time_ms}
 
     def _get_contact_forces(self) -> ContactForceReadback:
         """Retrieve per-body, per-primitive contact forces from UIPC (diagnostic).

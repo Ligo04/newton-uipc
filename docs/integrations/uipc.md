@@ -22,6 +22,27 @@ initialized UIPC world. For the per-parameter mapping table, see the
 > `SolverUIPC` uses a fixed time step. Construct the solver with the `dt` you
 > intend to simulate, and pass the same value to `step(..., dt=dt)`.
 
+## Live viewer statistics
+
+Examples run with `newton.examples.run(...)` automatically show UIPC statistics
+in the top-right performance overlay of `ViewerGL` and `ViewerRTX`:
+
+- **Step time**: host wall time in milliseconds for the last `SolverUIPC.step`,
+  including UIPC advance/retrieve and Newton state transfers. Deferred
+  initialization is excluded; the measurement adds no device synchronization.
+- **Newton iters**: actual nonlinear iterations in that UIPC step.
+- **Max PCG**: maximum actual PCG iterations among that step's linear solves.
+  This is neither the total PCG iterations nor the configured iteration limit.
+
+With several substeps per rendered frame, these values describe the last
+substep. Pausing keeps the last result visible; switching examples follows
+the new example's `solver`. Counters do not require `require_profile=True`.
+Older UIPC builds without `linear_solver_max_iterations` show `Max PCG: N/A`.
+
+Custom applications can read the same snapshot with
+{meth}`~newton.solvers.SolverUIPC.get_frame_stats` and render it through
+`viewer.register_ui_callback(callback, position="stats")`.
+
 ## Basic workflow
 
 `SolverUIPC` supports deferred initialization. This lets callers customize the

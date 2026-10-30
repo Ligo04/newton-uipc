@@ -572,6 +572,19 @@ def _throttle_render_fps(
     return sleep_time
 
 
+def _render_solver_stats(ui, example):
+    """Append live UIPC counters to the viewer's performance overlay."""
+    solver = getattr(example, "solver", None)
+    if not isinstance(solver, newton.solvers.SolverUIPC):
+        return
+    stats = solver.get_frame_stats()
+    ui.separator()
+    ui.text("UIPC")
+    ui.text(f"Step time: {stats['step_time_ms']:.2f} ms")
+    ui.text(f"Newton iters: {stats.get('newton_iterations', 'N/A')}")
+    ui.text(f"Max PCG: {stats.get('linear_solver_max_iterations', 'N/A')}")
+
+
 def run(example, args):
     """Run an example, enabling browser recovery in interactive viewers.
 
@@ -609,6 +622,10 @@ def run(example, args):
 
     if hasattr(example, "gui") and hasattr(viewer, "register_ui_callback"):
         viewer.register_ui_callback(lambda ui, ex=example: ex.gui(ui), position="side")
+
+    if hasattr(viewer, "register_ui_callback"):
+        # Follow the active example across browser switches and resets.
+        viewer.register_ui_callback(lambda ui: _render_solver_stats(ui, example), position="stats")
 
     while viewer.is_running():
         frame_start_time = time.perf_counter()

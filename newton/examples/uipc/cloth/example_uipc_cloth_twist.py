@@ -156,18 +156,22 @@ class Example:
             lambda q, qd: max(abs(qd)) < 5.0,
         )
 
+    @staticmethod
+    def create_parser():
+        parser = newton.examples.create_parser()
+        parser.add_argument(
+            "--cloth-model",
+            default="strain_limiting_baraff_witkin",
+            choices=("strain_limiting_baraff_witkin", "strain_limiting", "neo_hookean"),
+            help="UIPC cloth membrane model.",
+        )
+        parser.add_argument("--soft-strength", type=float, default=100.0, help="SoftPositionConstraint strength ratio.")
+        parser.set_defaults(num_frames=300)
+        return parser
+
 
 if __name__ == "__main__":
-    parser = newton.examples.create_parser()
-    parser.add_argument(
-        "--cloth-model",
-        default="strain_limiting_baraff_witkin",
-        choices=("strain_limiting_baraff_witkin", "strain_limiting", "neo_hookean"),
-        help="UIPC cloth membrane model.",
-    )
-    parser.add_argument("--soft-strength", type=float, default=100.0, help="SoftPositionConstraint strength ratio.")
-    parser.set_defaults(num_frames=300)
-
+    parser = Example.create_parser()
     viewer, args = newton.examples.init(parser)
     example = Example(viewer, args)
     newton.examples.run(example, args)

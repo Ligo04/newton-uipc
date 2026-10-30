@@ -302,20 +302,23 @@ class Example:
             f"x={self.sphere_current_x:.4f}, expected > {expected_min_x:.4f}"
         )
 
+    @staticmethod
+    def create_parser():
+        parser = newton.examples.create_parser()
+        parser.add_argument("--num-cards", type=int, default=52, help="Number of cards to drop.")
+        parser.add_argument(
+            "--cloth-model",
+            default="strain_limiting_baraff_witkin",
+            choices=("strain_limiting_baraff_witkin", "strain_limiting", "neo_hookean"),
+            help="UIPC cloth membrane model.",
+        )
+        parser.add_argument("--dump", action="store_true", help="Dump UIPC surface OBJ files.")
+        parser.set_defaults(num_frames=180)
+        return parser
+
 
 if __name__ == "__main__":
-    # Create parser with base arguments
-    parser = newton.examples.create_parser()
-    parser.add_argument("--num-cards", type=int, default=52, help="Number of cards to drop.")
-    parser.add_argument(
-        "--cloth-model",
-        default="strain_limiting_baraff_witkin",
-        choices=("strain_limiting_baraff_witkin", "strain_limiting", "neo_hookean"),
-        help="UIPC cloth membrane model.",
-    )
-    parser.add_argument("--dump", action="store_true", help="Dump UIPC surface OBJ files.")
-    parser.set_defaults(num_frames=180)
-
+    parser = Example.create_parser()
     # Parse arguments and initialize viewer
     viewer, args = newton.examples.init(parser)
 

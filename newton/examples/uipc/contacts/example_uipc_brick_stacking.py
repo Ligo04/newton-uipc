@@ -483,11 +483,10 @@ class Example:
         self._setup_tasks()
 
         self.viewer.set_model(self.model)
-        if hasattr(self.viewer, "picking"):
-            ps = self.viewer.picking.pick_state.numpy()
-            ps[0]["pick_stiffness"] = 0.1
-            ps[0]["pick_damping"] = 0.01
-            self.viewer.picking.pick_state.assign(ps)
+        picking = getattr(self.viewer, "picking", None)
+        if picking is not None:
+            picking.pick_stiffness = 0.1
+            picking.pick_damping = 0.01
         cam_pos = wp.vec3(0.22, -0.5 - 0.18, self.table_top_z + 0.15)
         self.viewer.set_camera(pos=cam_pos, pitch=-30.0, yaw=135.0)
         self.viewer._paused = True

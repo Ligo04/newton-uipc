@@ -11,6 +11,8 @@ classes.
 
 import argparse
 import gc
+import importlib
+import importlib.util
 import types
 import unittest
 import weakref
@@ -474,6 +476,27 @@ class TestExampleBrowserReset(unittest.TestCase):
 
 
 class TestExampleDiscovery(unittest.TestCase):
+    def test_uipc_cloth_parser_defaults_are_available_to_browser(self):
+        """Use the same cloth options for browser construction and command-line runs."""
+        if importlib.util.find_spec("uipc") is None or importlib.util.find_spec("pxr") is None:
+            self.skipTest("Requires uipc and USD example dependencies")
+
+        cases = (
+            ("uipc_cloth_franka", {"num_frames": 3850}),
+            ("uipc_cloth_franka_stable_pd_force", {"num_frames": 3850}),
+            ("uipc_cloth_twist", {"num_frames": 300, "soft_strength": 100.0}),
+            ("uipc_cloth_poker_cards", {"num_frames": 180, "num_cards": 52, "dump": False}),
+        )
+        for name, expected in cases:
+            with self.subTest(example=name):
+                module = importlib.import_module(f"newton.examples.uipc.cloth.example_{name}")
+                parser = getattr(module.Example, "create_parser", newton.examples.create_parser)()
+                defaults = newton.examples.default_args(parser)
+                self.assertEqual(defaults.cloth_model, "strain_limiting_baraff_witkin")
+                for key, value in expected.items():
+                    self.assertEqual(getattr(defaults, key), value)
+                self.assertEqual(parser.parse_args(["--cloth-model", "neo_hookean"]).cloth_model, "neo_hookean")
+
     def test_get_examples_discovers_grouped_uipc_examples(self):
         examples = newton.examples.get_examples()
 

@@ -2014,35 +2014,21 @@ class TestUIPCSoftbodyExamples(unittest.TestCase):
         if not cuda_test_devices:
             self.skipTest("Requires a CUDA test device")
 
-        class DummyViewer:
-            def __init__(self):
-                self._paused = False
-
+        class PickingViewer(ViewerNull):
             def set_model(self, model):
-                pass
-
-            def set_camera(self, **kwargs):
-                pass
-
-            def begin_frame(self, *args, **kwargs):
-                pass
-
-            def log_state(self, *args, **kwargs):
-                pass
-
-            def log_contacts(self, *args, **kwargs):
-                pass
-
-            def end_frame(self):
-                pass
+                super().set_model(model)
+                self.picking = newton.viewer.Picking(model)
 
         with wp.ScopedDevice(cuda_test_devices[0]):
-            example = UIPCBrickStackingExample(DummyViewer(), types.SimpleNamespace(test=True))
+            viewer = PickingViewer(num_frames=1)
+            example = UIPCBrickStackingExample(viewer, types.SimpleNamespace(test=True))
             body_q = example.state_0.body_q.numpy()
             red_pos = body_q[example.brick_bodies[0]][:3]
             ee_pos = body_q[example.ee_index][:3]
             abd_kappa = example.model.uipc.abd_kappa.numpy()
 
+        self.assertAlmostEqual(viewer.picking.pick_stiffness, 0.1)
+        self.assertAlmostEqual(viewer.picking.pick_damping, 0.01)
         target_pos = red_pos + np.array([0.0, 0.0, float(example.offset_approach[2])], dtype=np.float32)
         self.assertLess(float(np.linalg.norm(ee_pos - target_pos)), 0.025)
         self.assertAlmostEqual(example.uipc_gap, 0.0005)
