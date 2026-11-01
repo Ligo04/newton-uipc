@@ -35,7 +35,7 @@ class TestUIPCRod(unittest.TestCase):
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
         if colliders:
             builder.add_shape_box(body=-1, xform=wp.transform(wp.vec3(0.0, 0.0, -0.05)), hx=3.0, hy=3.0, hz=0.05)
-            body = builder.add_body(xform=wp.transform(wp.vec3(2.0, 0.0, 1.0)))
+            body = builder.add_link(xform=wp.transform(wp.vec3(2.0, 0.0, 1.0)))
             builder.add_shape_box(body=body, hx=0.1, hy=0.1, hz=0.1)
             builder.add_articulation([builder.add_joint_free(child=body)])
         bodies, joints = builder.add_rod(
@@ -286,11 +286,12 @@ class TestUIPCRod(unittest.TestCase):
         self.assertLess(float(state.body_q.numpy()[0, 2]), 0.12)
 
     def test_direct_rod_joints_accept_world_fixed_and_ball_roots(self):
+        """Accept direct rod articulations with fixed or ball roots and preserve their fixed vertices."""
         for root_type, expected_fixed in ((newton.JointType.FIXED, [1, 1, 0]), (newton.JointType.BALL, [1, 0, 0])):
             with self.subTest(root_type=root_type):
                 builder = newton.ModelBuilder()
-                first = builder.add_body(xform=wp.transform(wp.vec3(0.0, 0.0, 1.0)))
-                second = builder.add_body(xform=wp.transform(wp.vec3(0.0, 0.0, 1.2)))
+                first = builder.add_link(xform=wp.transform(wp.vec3(0.0, 0.0, 1.0)))
+                second = builder.add_link(xform=wp.transform(wp.vec3(0.0, 0.0, 1.2)))
                 for body in (first, second):
                     builder.add_shape_capsule(body=body, radius=0.01, half_height=0.1)
                 if root_type == newton.JointType.FIXED:

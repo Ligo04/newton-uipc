@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Joints
+"""Compare revolute, prismatic, and ball joints in UIPC articulations.
+
+Success criteria:
+- The three anchored systems remain attached at their joint locations.
+- The hanging links move within their joint constraints and remain above ground.
+
+Runs:
+- `python -m newton.examples uipc_joints`
+"""
 
 import uipc
 import warp as wp

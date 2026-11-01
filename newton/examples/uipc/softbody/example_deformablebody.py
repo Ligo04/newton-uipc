@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Deformable Body
+"""Simulate a tetrahedral rubber duck resting on a table with SolverUIPC.
+
+Success criteria:
+- The duck deforms through contact with the static table.
+- Its particles remain within the expected workspace.
+
+Runs:
+- `python -m newton.examples deformablebody`
+"""
 
 from __future__ import annotations
 

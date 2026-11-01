@@ -383,7 +383,8 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
             solver.initialize(state_0)
             initial_q = state_0.particle_q.numpy()
 
-            solver.step(state_0, state_1, model.control(), model.contacts(), 1.0 / 60.0)
+            contacts = newton.CollisionPipeline(model).contacts()
+            solver.step(state_0, state_1, model.control(), contacts, 1.0 / 60.0)
             final_q = state_1.particle_q.numpy()
 
         fixed_mask = np.zeros((dim_y + 1, dim_x + 1), dtype=bool)

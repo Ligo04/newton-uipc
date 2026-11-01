@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Cartpole PD — Classic Inverted-Pendulum Balance (Force)
+"""Balance an inverted pendulum using joint-space force control.
+
+Success criteria:
+- The controlled pole stays near the upright equilibrium.
+- The cart stays near its reference position without the state diverging.
+
+Runs:
+- `python -m newton.examples uipc_cartpole_pd_balance`
+"""
 
 from dataclasses import dataclass
 

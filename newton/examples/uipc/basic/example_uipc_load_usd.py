@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Load USD
+"""Import a USD articulation and simulate it with SolverUIPC.
+
+Success criteria:
+- The default four-link-chain fixture loads with its articulation intact.
+- Imported bodies retain finite transforms and remain within the scene bounds.
+
+Runs:
+- `python -m newton.examples uipc_load_usd`
+"""
 
 from __future__ import annotations
 

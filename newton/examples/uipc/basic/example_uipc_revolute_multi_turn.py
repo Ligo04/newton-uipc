@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Revolute Multi-Turn
+"""Drive a UIPC revolute joint through multiple turns with continuous angle readback.
+
+Success criteria:
+- The joint crosses the pi angle-wrap boundary while following its ramped target.
+- The unwrapped angle continues increasing without being pinned at the wrap point.
+
+Runs:
+- `python -m newton.examples uipc_revolute_multi_turn`
+"""
 
 import math
 

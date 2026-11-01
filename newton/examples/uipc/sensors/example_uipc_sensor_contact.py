@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Sensor Contact
+"""Measure contact forces on a stacked-box scene using SensorContact.
+
+Success criteria:
+- The settled bottom box reports a non-zero vertical contact force.
+- All bodies remain above the ground.
+
+Runs:
+- `python -m newton.examples uipc_sensor_contact`
+"""
 
 import warp as wp
 

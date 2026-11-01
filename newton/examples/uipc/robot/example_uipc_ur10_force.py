@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC UR10 Force — Joint-Space PD + Gravity Compensation
+"""Drive a UR10 arm with joint-space PD forces and gravity compensation.
+
+Success criteria:
+- The configured controller advances the arm without non-finite joint states.
+- Joint positions and velocities remain bounded.
+
+Runs:
+- `python -m newton.examples uipc_ur10_force`
+"""
 
 import numpy as np
 import warp as wp

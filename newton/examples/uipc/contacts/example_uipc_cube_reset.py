@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Cube Reset
+"""Drop cubes onto static tables and periodically reset selected worlds.
+
+Success criteria:
+- Cubes settle on the tables with finite transforms.
+- Resets restore the selected worlds while the tables remain stationary.
+
+Runs:
+- `python -m newton.examples uipc_cube_reset`
+"""
 
 import numpy as np
 import warp as wp

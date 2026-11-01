@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Softbody Franka
+"""Manipulate a soft body with a Franka gripper using UIPC rigid-deformable contact.
+
+Success criteria:
+- The gripper follows its manipulation sequence and interacts with the soft body.
+- Particle and body velocities remain bounded within the workspace.
+
+Runs:
+- `python -m newton.examples uipc_softbody_franka`
+"""
 
 from __future__ import annotations
 

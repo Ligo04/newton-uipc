@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC UR10
+"""Drive a UR10 arm along joint targets using SolverUIPC.
+
+Success criteria:
+- Joint positions remain finite and track their commanded targets.
+- The articulated links remain connected throughout the trajectory.
+
+Runs:
+- `python -m newton.examples uipc_ur10`
+"""
 
 import numpy as np
 import uipc

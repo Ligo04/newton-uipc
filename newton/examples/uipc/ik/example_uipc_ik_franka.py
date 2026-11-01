@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC IK Franka
+"""Drive a Franka arm with inverse-kinematics targets in SolverUIPC.
+
+Success criteria:
+- The end effector follows the target motion while the arm stays connected.
+- The end effector remains above the ground.
+
+Runs:
+- `python -m newton.examples uipc_ik_franka`
+"""
 
 import numpy as np
 import uipc

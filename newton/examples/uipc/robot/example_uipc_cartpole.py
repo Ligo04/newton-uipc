@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Cartpole
+"""Simulate sliding carts and swinging poles with UIPC articulated bodies.
+
+Success criteria:
+- Carts remain near their track height.
+- The poles swing while their joint anchors remain connected.
+
+Runs:
+- `python -m newton.examples uipc_cartpole`
+"""
 
 import uipc
 import warp as wp

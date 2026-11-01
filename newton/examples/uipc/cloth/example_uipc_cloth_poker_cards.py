@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# UIPC Cloth Poker Cards
+"""Drop flexible poker cards onto a cube and strike them with a moving sphere.
+
+Success criteria:
+- Cards flex during contact while retaining their overall shape.
+- Particle velocities remain finite and cards stay above the floor without spreading unboundedly.
+
+Runs:
+- `python -m newton.examples uipc_cloth_poker_cards`
+"""
 
 import numpy as np
 import uipc

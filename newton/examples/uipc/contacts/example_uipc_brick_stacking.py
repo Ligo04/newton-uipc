@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Brick Stacking
+"""Use a Franka arm and UIPC contact to assemble a three-brick stack.
+
+Success criteria:
+- The robot completes its pick-and-place sequence for the three bricks.
+- The bricks finish aligned at their expected stack heights.
+
+Runs:
+- `python -m newton.examples uipc_brick_stacking`
+"""
 
 import argparse
 import enum

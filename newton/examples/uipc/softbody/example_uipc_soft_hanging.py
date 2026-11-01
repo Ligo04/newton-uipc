@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Soft Hanging
+"""Compare four hanging soft grids with different UIPC elastic stiffnesses.
+
+Success criteria:
+- The fixed ends stay anchored while the free portions sag under gravity.
+- All soft-grid particles stay within the expected workspace.
+
+Runs:
+- `python -m newton.examples uipc_soft_hanging`
+"""
 
 from __future__ import annotations
 

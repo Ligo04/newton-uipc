@@ -1,8 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Two Brick Stack
+"""Settle two interlocking bricks using UIPC mesh contact.
 
+Success criteria:
+- The top brick stays aligned over the bottom brick.
+- Both bricks retain finite transforms and the expected vertical spacing.
+
+Runs:
+- `python -m newton.examples uipc_two_brick_stack`
+"""
 
 import numpy as np
 import uipc

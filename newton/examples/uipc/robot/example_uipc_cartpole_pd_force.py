@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Cartpole PD — Force (Effort) Control via DrivePD
+"""Track a sinusoidal cart target using DrivePD joint efforts.
+
+Success criteria:
+- The cart follows the commanded sinusoidal trajectory.
+- The pole joints remain connected at their anchors.
+
+Runs:
+- `python -m newton.examples uipc_cartpole_pd_force`
+"""
 
 import math
 

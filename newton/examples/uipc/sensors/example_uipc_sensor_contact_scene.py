@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Sensor Contact Scene
+"""Measure filtered contact forces on flaps and plates in an imported USD scene.
+
+Success criteria:
+- The flap and plate sensors report finite contact data.
+- Plate filtering selects the intended plate shapes while bodies stay above the ground.
+
+Runs:
+- `python -m newton.examples uipc_sensor_contact_scene`
+"""
 
 import numpy as np
 import warp as wp

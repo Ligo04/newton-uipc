@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Cloth Franka Stable-PD Force
+"""Manipulate a cloth with a Franka gripper driven by StablePD joint forces.
+
+Success criteria:
+- The arm and fingers follow the manipulation sequence while contacting the cloth.
+- The cloth remains within the workspace with bounded particle velocities.
+
+Runs:
+- `python -m newton.examples uipc_cloth_franka_stable_pd_force`
+"""
 
 from __future__ import annotations
 

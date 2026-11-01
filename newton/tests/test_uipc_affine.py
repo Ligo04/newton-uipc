@@ -135,7 +135,7 @@ class TestUIPCAffine(unittest.TestCase):
                     body = world.add_body(xform=wp.transform(wp.vec3(x, 0, 1), wp.quat_identity()))
                     world.add_shape_box(body, hx=0.05, hy=0.05, hz=0.05)
                 builder = newton.ModelBuilder()
-                builder.replicate(world, world_count=2, spacing=(2, 0, 0))
+                builder.replicate(world, copy_count=2, spacing=(2, 0, 0))
                 model = builder.finalize(device=device)
                 state, output = model.state(), model.state()
                 solver = newton.solvers.SolverUIPC(model, workspace=workspace, auto_sync_inertia=False)

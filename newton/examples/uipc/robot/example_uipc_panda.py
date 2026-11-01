@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Panda
+"""Use a Franka Panda arm to pick up a pen or cube with UIPC contact.
+
+Success criteria:
+- The arm grasps and lifts the selected object.
+- The object follows the configured placement sequence without the simulation diverging.
+
+Runs:
+- `python -m newton.examples uipc_panda`
+"""
 
 import copy
 from enum import Enum

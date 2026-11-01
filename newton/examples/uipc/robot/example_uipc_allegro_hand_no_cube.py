@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Allegro Hand (No Cube)
+"""Simulate the articulated Allegro hand without a grasp object.
+
+Success criteria:
+- The finger links remain attached while following the configured motion.
+- All hand bodies stay within the expected workspace.
+
+Runs:
+- `python -m newton.examples uipc_allegro_hand_no_cube`
+"""
 
 import numpy as np
 import uipc

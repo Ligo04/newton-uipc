@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Box Pyramid
+"""Settle box pyramids and interact with them using UIPC rigid contact.
+
+Success criteria:
+- Boxes remain above the ground with finite transforms.
+- In test mode, the undisturbed top cubes remain near their initial positions.
+
+Runs:
+- `python -m newton.examples uipc_pyramid`
+"""
 
 import numpy as np
 import uipc

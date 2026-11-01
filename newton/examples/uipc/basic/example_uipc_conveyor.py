@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Conveyor
+"""Move rigid bags along a conveyor using UIPC contact and belt motion.
+
+Success criteria:
+- The belt stays near its initial height as bags move along it.
+- Bags retain finite positions and stay within the scene bounds.
+
+Runs:
+- `python -m newton.examples uipc_conveyor`
+"""
 
 import math
 

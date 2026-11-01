@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Cartpole PD — Position Control
+"""Track a sinusoidal cart target using UIPC joint position targets.
+
+Success criteria:
+- The cart follows its target position with bounded tracking error.
+- The pole joints remain connected at their anchors.
+
+Runs:
+- `python -m newton.examples uipc_cartpole_pd_position`
+"""
 
 import math
 

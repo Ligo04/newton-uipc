@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Hello World
+"""Drop a rigid cube onto a ground plane with SolverUIPC.
+
+Success criteria:
+- After unpausing, the cube falls from its initial height toward the ground.
+- The cube remains above the floor without its motion diverging.
+
+Runs:
+- `python -m newton.examples uipc_hello_world`
+"""
 
 import warp as wp
 

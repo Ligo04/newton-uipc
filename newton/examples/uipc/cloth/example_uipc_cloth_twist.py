@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Cloth Twist
+"""Twist a cloth using UIPC soft position constraints on its driven vertices.
+
+Success criteria:
+- The driven portions of the cloth follow the twisting motion.
+- The cloth retains bounded positions and particle velocities.
+
+Runs:
+- `python -m newton.examples uipc_cloth_twist`
+"""
 
 from __future__ import annotations
 

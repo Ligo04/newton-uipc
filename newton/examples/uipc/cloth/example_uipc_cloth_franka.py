@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Cloth Franka
+"""Manipulate a cloth with a Franka gripper using UIPC contact and joint targets.
+
+Success criteria:
+- The gripper follows its manipulation sequence and closes on the cloth.
+- The cloth remains within the workspace with bounded particle velocities.
+
+Runs:
+- `python -m newton.examples uipc_cloth_franka`
+"""
 
 from __future__ import annotations
 

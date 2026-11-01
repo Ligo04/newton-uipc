@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Allegro Hand
+"""Simulate an Allegro hand interacting with a cube using SolverUIPC.
+
+Success criteria:
+- The fingers move while the hand remains within its workspace.
+- The cube remains above the ground with a finite transform.
+
+Runs:
+- `python -m newton.examples uipc_allegro_hand`
+"""
 
 import numpy as np
 import uipc

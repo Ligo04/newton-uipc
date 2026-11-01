@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC H1
+"""Simulate a Unitree H1 articulation with UIPC ground contact.
+
+Success criteria:
+- The humanoid articulation remains connected.
+- All robot bodies remain above the ground.
+
+Runs:
+- `python -m newton.examples uipc_h1`
+"""
 
 import uipc
 import warp as wp

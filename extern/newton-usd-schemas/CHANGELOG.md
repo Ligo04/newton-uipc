@@ -1,3 +1,12 @@
+# 0.6.0
+
+## Features
+
+- Added `NewtonVbdSceneAPI`, which further extends a `PhysicsScene` with Newton's VBD (Vertex Block Descent) solver configuration
+  - Applying `NewtonVbdSceneAPI` implicitly applies the `NewtonSceneAPI` as well
+  - Configures the compliant augmented Lagrangian method (ALM) path for rigid bodies, including body-body contact history for warm-starting and stiffness & damping for non-rod structural joint constraints.
+  - Consumers constructing `SolverVBD` must pass `rigid_compliant_alm=True`. This runtime compatibility setting is intentionally not authored in USD.
+
 # 0.5.0
 
 ## Features

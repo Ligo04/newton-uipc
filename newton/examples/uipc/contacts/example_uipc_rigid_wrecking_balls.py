@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-"""Port libuipc-samples example 6 with its original contact-coupled rigid chain."""
+"""Port libuipc-samples example 6 with its original contact-coupled rigid chain.
+
+Success criteria:
+- The wrecking ball moves from its initial pose.
+- The contact-coupled chain and ball retain finite body transforms.
+
+Runs:
+- `python -m newton.examples uipc_rigid_wrecking_balls`
+"""
 
 import json
 

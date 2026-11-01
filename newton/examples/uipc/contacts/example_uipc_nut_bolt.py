@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Nut Bolt
+"""Drop nuts onto fixed bolts using triangle-mesh contact in SolverUIPC.
+
+Success criteria:
+- Bolts remain near their initial positions.
+- Nuts descend along the bolts without their transforms diverging.
+
+Runs:
+- `python -m newton.examples uipc_nut_bolt`
+"""
 
 import numpy as np
 import trimesh

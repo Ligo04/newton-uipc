@@ -1,7 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
 
-# Example UIPC Softbody Dropping to Cloth
+"""Drop a tetrahedral soft body onto a cloth using coupled UIPC contact.
+
+Success criteria:
+- The falling soft body deforms the cloth through contact.
+- The deformable geometry stays bounded and above the floor.
+
+Runs:
+- `python -m newton.examples uipc_softbody_dropping_to_cloth`
+"""
 
 import numpy as np
 import uipc

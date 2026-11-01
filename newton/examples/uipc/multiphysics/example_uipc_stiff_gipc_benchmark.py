@@ -5,6 +5,13 @@
 
 The source script executes E=1e4 Pa for the bunnies, despite its E=1e7
 module description. This port preserves the executable parameters.
+
+Success criteria:
+- Two FEM bunnies fall onto the free cloth and deform through contact.
+- Particle positions and velocities remain finite, and the FEM mesh stays above the floor.
+
+Runs:
+- `python -m newton.examples uipc_stiff_gipc_benchmark`
 """
 
 import numpy as np
