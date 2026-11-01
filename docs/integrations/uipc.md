@@ -100,6 +100,44 @@ explicit initialization is recommended whenever you use `configure_scene`,
 `configure_contact_tabular`, `configure_subscene_tabular`, or
 `sync_uipc_inertia_with_model`.
 
+## Native sample scenes
+
+Two examples port scenes from
+[libuipc-samples](https://github.com/spiriMirror/libuipc-samples/tree/b70f32294e31e9e3dcc12445b72fa9f4698ff5b1):
+
+```bash
+uv run -m newton.examples uipc_stiff_gipc_benchmark
+uv run -m newton.examples uipc_rigid_wrecking_balls
+```
+
+Both use Newton's viewer, example browser, and live UIPC statistics. They start
+paused. The first run downloads the source assets at the pinned revision into
+Newton's asset cache. To reuse an existing checkout, pass
+`--asset-dir /path/to/libuipc-samples/assets/sim_data`.
+
+- **Sample 88:** two FEM bunnies (159,870 tetrahedra total) coupled to an
+  unpinned cloth sheet (8,192 triangles), with a floor at `y = -1`. The port
+  uses the source code's actual bunny Young's modulus of `1e4 Pa`; the source
+  file's introductory comment instead lists `1e7 Pa`. Cloth retains separate
+  stretch (`5e4 Pa`) and shear (`10 Pa`) moduli, bending, density, and thickness.
+  The default time step is `0.01 s`, with semi-implicit Newton and the MAS FEM
+  preconditioner. Use `--fem-preconditioner diag` for the source's diagonal
+  preconditioner variant.
+- **Rigid wrecking balls (sample 6):** the original 560 cubes, 13 chain links
+  (one fixed), and wrecking ball. The chain is held together by mesh contact.
+  Original mesh surfaces, body transforms, and densities are preserved; no
+  joints or sphere approximations replace the chain and ball. The time step
+  is `0.02 s`.
+
+The examples preserve authored scene-relative tolerances and contact settings.
+Native UIPC may clamp contact resistance according to its computed scene scale.
+The FEM adapter obtains the StableNeoHookean Lamé conversion from the loaded
+UIPC constitution, supporting both older and newer material parameterizations.
+The cloth port also reads membrane and bending coefficients from the native
+constitutions before converting them to Newton material parameters.
+These ports do not establish performance or numerical parity with the native
+benchmark programs.
+
 ## External forces
 
 Each `step` consumes `state_in.body_f` and `state_in.particle_f` as external

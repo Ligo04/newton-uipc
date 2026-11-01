@@ -1026,6 +1026,31 @@ If you run the examples from a source checkout with uv, use
     </td>
   </tr>
   <tr>
+    <td colspan="3"><h3>UIPC Sample Scenes</h3></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <a href="newton/examples/uipc/multiphysics/example_uipc_stiff_gipc_benchmark.py">
+        <img width="320" src="docs/images/examples/example_uipc_stiff_gipc_benchmark.jpg" alt="UIPC Sample 88: FEM Bunnies and Cloth">
+      </a>
+    </td>
+    <td align="center" width="33%">
+      <a href="newton/examples/uipc/contacts/example_uipc_rigid_wrecking_balls.py">
+        <img width="320" src="docs/images/examples/example_uipc_rigid_wrecking_balls.jpg" alt="UIPC Rigid Wrecking Balls">
+      </a>
+    </td>
+    <td align="center" width="33%"></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <code>python -m newton.examples uipc_stiff_gipc_benchmark</code>
+    </td>
+    <td align="center" width="33%">
+      <code>python -m newton.examples uipc_rigid_wrecking_balls</code>
+    </td>
+    <td align="center" width="33%"></td>
+  </tr>
+  <tr>
     <td colspan="3"><h3>Softbody Examples</h3></td>
   </tr>
   <tr>

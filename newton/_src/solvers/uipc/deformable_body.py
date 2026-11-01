@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 import numpy as np
@@ -19,6 +20,20 @@ from newton import Model
 from .converter import UIpcMappingInfo
 from .deformable_groups import deformable_body_groups_from_model
 from .utils import _clone_geometry_with_positions, _rest_positions_from_model, _view_attr
+
+
+@lru_cache(maxsize=1)
+def _stable_neo_hookean_lame_coefficients() -> tuple[float, float]:
+    """Read the installed constitution's conversion, including newer SNK1 builds."""
+    positions = np.ascontiguousarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=np.float64)
+    topology = np.ascontiguousarray(((0, 1, 2, 3),), dtype=np.int32)
+    reference = uipc_tetmesh(positions, topology)
+    label_surface(reference)
+    StableNeoHookean().apply_to(reference, ElasticModuli.lame(0.0, 1.0), 1.0)
+    return (
+        float(_view_attr(reference.tetrahedra().find("mu"))[0]),
+        float(_view_attr(reference.tetrahedra().find("lambda"))[0]),
+    )
 
 
 class DeformableBodyBuilder:
@@ -298,8 +313,9 @@ class DeformableBodyBuilder:
         lambda_attr = sc.tetrahedra().find("lambda")
         kappa_attr = sc.tetrahedra().find("kappa")
         if mu_attr is not None and lambda_attr is not None:
-            snh_mu = (4.0 / 3.0) * tet_materials_np[:, 0]
-            snh_lambda = tet_materials_np[:, 1] + (5.0 / 6.0) * tet_materials_np[:, 0]
+            mu_scale, lambda_from_mu = _stable_neo_hookean_lame_coefficients()
+            snh_mu = mu_scale * tet_materials_np[:, 0]
+            snh_lambda = tet_materials_np[:, 1] + lambda_from_mu * tet_materials_np[:, 0]
 
             mu_view = _view_attr(mu_attr)
             lambda_view = _view_attr(lambda_attr)

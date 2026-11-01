@@ -110,8 +110,8 @@ Mode 2 只捕获一次 FusedPCG 求解，不捕获整帧仿真。Newton 外层�
 | `default_mass_density` | 所选本构 `apply_to(..., mass_density=...)` 的密度 fallback | `1000.0 kg/m^3` | 质量或体积不可用时使用。 |
 | `model.uipc.deformable_model[i]` | 第 `i` 个 `uipc:deformable_body` row 的软体四面体本构选择 | `"stable_neo_hookean"` | 需在 `finalize()` 前调用 `SolverUIPC.register_custom_attributes(builder)`；支持 `"stable_neo_hookean"`、`"arap"` 和 `"empty"`。 |
 | USD `TetMesh` 上的 `uipc:constitution` | 导入到对应的 `model.uipc.deformable_model[i]` | `"stable_neo_hookean"` | 由实验性 `NewtonUIPCDeformableAPI` 声明；也支持同名自定义 token。需在 `builder.add_usd(...)` 前注册 UIPC 属性；仅用于四面体软体。 |
-| `model.tet_materials[:, 0]` (`k_mu`) | UIPC tet `mu` | 写入 `(4 / 3) * k_mu` | UIPC StableNeoHookean 的 `mu` 不是原样写入，而是做了变换。 |
-| `model.tet_materials[:, 1]` (`k_lambda`) | UIPC tet `lambda` | 写入 `k_lambda + (5 / 6) * k_mu` | UIPC StableNeoHookean 的 `lambda` 会叠加部分 `k_mu`。 |
+| `model.tet_materials[:, 0]` (`k_mu`) | UIPC tet `mu` | 写入 `a * k_mu` | 从实际加载的原生 StableNeoHookean 探测 `a`；旧模型为 `4/3`，新 SNK1 为 `1`。 |
+| `model.tet_materials[:, 1]` (`k_lambda`) | UIPC tet `lambda` | 写入 `k_lambda + b * k_mu` | 同样从原生模型探测 `b`；旧模型为 `5/6`，新 SNK1 为 `1`。 |
 | `model.tet_materials[:, 0]` (`k_mu`) 且对应 `model.uipc.deformable_model[i] == "arap"` | UIPC tet `kappa` | 原样写入 `k_mu` | ARAP 不使用 StableNeoHookean 的 `mu/lambda` 变换。 |
 | `model.tet_materials` 且对应 `model.uipc.deformable_model[i] == "empty"` | UIPC `Empty`（UID 0） | 不写入弹性参数 | 保留几何和质量，不添加弹性能量；仍可配置接触和软位置约束。 |
 | `model.tet_materials[:, 2]` (`k_damp`) | 当前 UIPC builder 未写入 | `ModelBuilder.default_tet_k_damp = 0.0` | Newton 会保存该列，但当前 UIPC deformable builder 没有映射 damping 参数。 |

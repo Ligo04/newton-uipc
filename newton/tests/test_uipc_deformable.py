@@ -300,11 +300,15 @@ class TestUIPCDeformableBuilder(unittest.TestCase):
 
         np_mu = uipc.view(mu_attr)
         np_lambda = uipc.view(lambda_attr)
-        expected_mu = np.array([4.0 * value / 3.0 for value in k_mu], dtype=np.float32)
-        expected_lambda = np.array(
-            [lam + 5.0 * mu / 6.0 for mu, lam in zip(k_mu, k_lambda, strict=True)],
-            dtype=np.float32,
-        )
+        from uipc.constitution import ElasticModuli, StableNeoHookean  # noqa: PLC0415
+
+        expected_mu = []
+        expected_lambda = []
+        for mu, lam in zip(k_mu, k_lambda, strict=True):
+            reference = geometry.copy()
+            StableNeoHookean().apply_to(reference, ElasticModuli.lame(lam, mu), 1000.0)
+            expected_mu.append(float(view(reference.tetrahedra().find("mu"))[0]))
+            expected_lambda.append(float(view(reference.tetrahedra().find("lambda"))[0]))
         self.assertEqual(np_mu.shape[0], 2)
         self.assertEqual(np_lambda.shape[0], 2)
         np.testing.assert_allclose(np_mu, expected_mu, rtol=0.0, atol=2.0e-2)

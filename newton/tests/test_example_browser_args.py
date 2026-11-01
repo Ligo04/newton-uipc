@@ -516,6 +516,31 @@ class TestExampleDiscovery(unittest.TestCase):
             examples["uipc_two_brick_stack"],
             "newton.examples.uipc.contacts.example_uipc_two_brick_stack",
         )
+        self.assertEqual(
+            examples["uipc_rigid_wrecking_balls"],
+            "newton.examples.uipc.contacts.example_uipc_rigid_wrecking_balls",
+        )
+        self.assertEqual(
+            examples["uipc_stiff_gipc_benchmark"],
+            "newton.examples.uipc.multiphysics.example_uipc_stiff_gipc_benchmark",
+        )
+
+    @unittest.skipUnless(importlib.util.find_spec("uipc"), "uipc is not installed")
+    def test_uipc_sample_parsers_preserve_browser_defaults(self):
+        for group, name, frames in (
+            ("contacts", "uipc_rigid_wrecking_balls", 120),
+            ("multiphysics", "uipc_stiff_gipc_benchmark", 250),
+        ):
+            with self.subTest(example=name):
+                module = importlib.import_module(f"newton.examples.uipc.{group}.example_{name}")
+                parser = module.Example.create_parser()
+                defaults = newton.examples.default_args(parser)
+                self.assertEqual(defaults.num_frames, frames)
+                self.assertIsNone(defaults.asset_dir)
+                self.assertEqual(parser.parse_args(["--asset-dir", "/tmp/sim_data"]).asset_dir, "/tmp/sim_data")
+                if group == "multiphysics":
+                    self.assertEqual(defaults.fem_preconditioner, "mas")
+                    self.assertEqual(parser.parse_args(["--fem-preconditioner", "diag"]).fem_preconditioner, "diag")
 
     def test_example_browser_uses_nested_uipc_group_names(self):
         class _BrowserViewer(_StubViewer):
