@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import unittest
+from contextlib import nullcontext
 
 import numpy as np
 import warp as wp
@@ -29,8 +30,7 @@ if _HAS_UIPC and USD_AVAILABLE:
 
 @unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
 class TestUIPCRod(unittest.TestCase):
-    @staticmethod
-    def _model(device="cpu", *, origin="start", fixed=False, colliders=False):
+    def _model(self, device="cpu", *, origin="start", fixed=False, colliders=False):
         builder = newton.ModelBuilder(gravity=wp.vec3(0.0, 0.0, 0.0))
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
         if colliders:
@@ -38,15 +38,20 @@ class TestUIPCRod(unittest.TestCase):
             body = builder.add_link(xform=wp.transform(wp.vec3(2.0, 0.0, 1.0)))
             builder.add_shape_box(body=body, hx=0.1, hy=0.1, hz=0.1)
             builder.add_articulation([builder.add_joint_free(child=body)])
-        bodies, joints = builder.add_rod(
-            rod=newton.Rod(
-                [(0.0, 0.0, 1.0), (0.2, 0.0, 1.0), (0.4, 0.0, 1.0), (0.6, 0.0, 1.0)],
-                radius=0.01,
-                youngs_modulus=1.0e4,
-                poissons_ratio=0.3,
-            ),
-            body_frame_origin=origin,
-        )
+        with (
+            self.assertWarnsRegex(newton.exceptions.NewtonDeprecationWarning, 'body_frame_origin="start"')
+            if origin == "start"
+            else nullcontext()
+        ):
+            bodies, joints = builder.add_rod(
+                rod=newton.Rod(
+                    [(0.0, 0.0, 1.0), (0.2, 0.0, 1.0), (0.4, 0.0, 1.0), (0.6, 0.0, 1.0)],
+                    radius=0.01,
+                    youngs_modulus=1.0e4,
+                    poissons_ratio=0.3,
+                ),
+                body_frame_origin=origin,
+            )
         if fixed:
             builder.body_flags[bodies[0]] = newton.BodyFlags.KINEMATIC
         return builder.finalize(device), bodies, joints
