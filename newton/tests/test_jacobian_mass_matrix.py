@@ -682,6 +682,11 @@ def test_mass_matrix_with_mask(test, device):
     # Second articulation should have non-zero mass matrix
     test.assertNotEqual(H_np[1, 0, 0], 0.0)
 
+    # The precomputed-Jacobian path must also clear masked entries in a reused output.
+    H.fill_(float("nan"))
+    newton.eval_mass_matrix(model, state, H, J=newton.eval_jacobian(model, state), mask=mask)
+    np.testing.assert_allclose(H.numpy(), H_np)
+
 
 def test_prismatic_joint_jacobian(test, device):
     """Test Jacobian for prismatic joint."""
@@ -1098,6 +1103,10 @@ def test_composite_mass_matrix_matches_jacobian_mass_matrix(test, device):
     joints.append(builder.add_joint_free(bodies[5], parent=bodies[4], parent_xform=frame(8)))
     joints.append(builder.add_joint_revolute(bodies[2], bodies[6], axis=(0.0, 0.0, 1.0), parent_xform=frame(9)))
     builder.add_articulation(joints)
+
+    # A smaller articulation exercises padded matrix entries in the Jacobian path.
+    slider = link(8)
+    builder.add_articulation([builder.add_joint_prismatic(-1, slider, axis=newton.Axis.X, parent_xform=frame(10))])
     builder.joint_armature = [0.01 * (i + 1) for i in range(builder.joint_dof_count)]
     model = builder.finalize(device=device)
 
@@ -1113,6 +1122,36 @@ def test_composite_mass_matrix_matches_jacobian_mass_matrix(test, device):
 
     np.testing.assert_array_equal(H_composite, H_again)
     np.testing.assert_allclose(H_composite, H_jacobian, atol=1.0e-5, rtol=1.0e-5)
+    np.testing.assert_array_equal(H_jacobian[1, 1:, :], 0.0)
+    np.testing.assert_array_equal(H_jacobian[1, :, 1:], 0.0)
+
+
+def test_mass_matrix_gradients(test, device):
+    """Check gradients shared by multiple mass-matrix entries."""
+    model, _, _ = _build_translated_prismatic_chain(device)
+    state = model.state()
+    state.joint_q.assign(np.array([0.4, 0.2], dtype=np.float32))
+    newton.eval_fk(model, state.joint_q, state.joint_qd, state)
+
+    J = newton.eval_jacobian(model, state)
+    J.requires_grad = True
+    model.body_mass.requires_grad = True
+    model.joint_armature.requires_grad = True
+    body_I_s = wp.zeros(model.body_count, dtype=wp.spatial_matrix, device=device, requires_grad=True)
+    H = wp.zeros((1, 2, 2), dtype=float, device=device, requires_grad=True)
+
+    with wp.Tape() as tape:
+        newton.eval_mass_matrix(model, state, H, J=J, body_I_s=body_I_s)
+    tape.backward(grads={H: wp.ones_like(H)})
+
+    # For sum(H), dJ = 2 I J 1 1^T and dm = ||J_linear 1||^2 per body.
+    jacobian = J.numpy()[0].reshape(2, 6, 2)
+    inertia_jacobian = np.einsum("bij,bjk->bik", body_I_s.numpy(), jacobian)
+    expected_jacobian_grad = np.broadcast_to(2.0 * inertia_jacobian.sum(axis=2, keepdims=True), jacobian.shape)
+    expected_mass_grad = np.square(jacobian[:, :3].sum(axis=2)).sum(axis=1)
+    np.testing.assert_allclose(J.grad.numpy()[0].reshape(2, 6, 2), expected_jacobian_grad, atol=1.0e-4, rtol=1.0e-5)
+    np.testing.assert_allclose(model.body_mass.grad.numpy(), expected_mass_grad, atol=1.0e-4, rtol=1.0e-5)
+    np.testing.assert_allclose(model.joint_armature.grad.numpy(), 1.0)
 
 
 class TestJacobianMassMatrix(unittest.TestCase):
@@ -1220,6 +1259,7 @@ add_function_test(
     test_composite_mass_matrix_matches_jacobian_mass_matrix,
     devices=devices,
 )
+add_function_test(TestJacobianMassMatrix, "test_mass_matrix_gradients", test_mass_matrix_gradients, devices=devices)
 
 
 if __name__ == "__main__":
