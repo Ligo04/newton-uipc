@@ -174,6 +174,8 @@ uniform float env_intensity;
 uniform sampler2D albedo_map;
 
 uniform vec3 fogColor;
+uniform vec2 fog_range;
+uniform float checker_scale;
 uniform int up_axis;
 
 uniform mat4 light_space_matrix;
@@ -289,9 +291,11 @@ float ShadowCalculation(vec3 camera_to_fragment)
     fade *= smoothstep(0.0, margin, projCoords.y);
     fade *= smoothstep(0.0, margin, 1.0 - projCoords.y);
 
-    // Leave only a small precision allowance. A large normalized-depth bias
-    // or normal offset detaches shadows by centimeters on small objects.
-    float depthBias = 2.0e-7;
+    // Account for roundoff in position reconstruction and depth projection at
+    // large camera-relative coordinates. Keep the existing near-field minimum.
+    vec3 lightDepthRow = vec3(light_space_matrix[0].z, light_space_matrix[1].z, light_space_matrix[2].z);
+    float depthMagnitude = dot(abs(lightDepthRow), abs(camera_to_fragment));
+    float depthBias = max(2.0e-7, 32.0 * 1.1920929e-7 * depthMagnitude);
 
     float shadow = 0.0;
     float radius = shadow_radius;
@@ -374,7 +378,6 @@ void main()
     float metallic = clamp(Material.y, 0.0, 1.0);
     float checker_enable = Material.z;
     float texture_enable = Material.w;
-    float checker_scale = 1.0;
 
     // convert to linear space
     vec3 albedo = pow(ObjectColor, vec3(2.2));
@@ -473,9 +476,7 @@ void main()
 
     // fog
     float dist = length(camera_to_fragment);
-    float fog_start = 20.0;
-    float fog_end   = 200.0;
-    float fog_factor = clamp((dist - fog_start) / (fog_end - fog_start), 0.0, 1.0);
+    float fog_factor = clamp((dist - fog_range.x) / (fog_range.y - fog_range.x), 0.0, 1.0);
     color = mix(color, pow(fogColor, vec3(2.2)), fog_factor);
 
     // ACES filmic tone mapping
@@ -695,6 +696,8 @@ class ShaderShape(ShaderGL):
             self.loc_env_map = self._get_uniform_location("env_map")
             self.loc_env_intensity = self._get_uniform_location("env_intensity")
             self.loc_fog_color = self._get_uniform_location("fogColor")
+            self.loc_fog_range = self._get_uniform_location("fog_range")
+            self.loc_checker_scale = self._get_uniform_location("checker_scale")
             self.loc_up_axis = self._get_uniform_location("up_axis")
             self.loc_sun_direction = self._get_uniform_location("sun_direction")
             self.loc_light_color = self._get_uniform_location("light_color")
@@ -747,6 +750,8 @@ class ShaderShape(ShaderGL):
         spotlight_enabled: bool = True,
         exposure: float = 1.6,
         oit_depth_reference: float = 1.0,
+        fog_range: tuple[float, float] = (20.0, 200.0),
+        checker_scale: float = 1.0,
     ):
         """Update all shader uniforms.
 
@@ -754,6 +759,8 @@ class ShaderShape(ShaderGL):
             oit_depth_reference: Reference distance [m] to the transparent
                 content, used to normalize the weighted-OIT depth weight.
                 Ignored unless this shader was built with transparency enabled.
+            fog_range: Linear fog start and end distances [m].
+            checker_scale: Checkerboard frequency per local coordinate unit.
         """
         with self:
             # Basic matrices
@@ -785,6 +792,8 @@ class ShaderShape(ShaderGL):
 
             # Fog and rendering options
             self._gl.glUniform3f(self.loc_fog_color, *fog_color)
+            self._gl.glUniform2f(self.loc_fog_range, *fog_range)
+            self._gl.glUniform1f(self.loc_checker_scale, checker_scale)
             self._gl.glUniform1i(self.loc_up_axis, up_axis)
 
             # Shadows

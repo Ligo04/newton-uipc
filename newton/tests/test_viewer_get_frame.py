@@ -243,6 +243,68 @@ class TestViewerGLGetFrame(unittest.TestCase):
         finally:
             viewer.close()
 
+    def test_fog_range_preserves_distant_object_colors(self):
+        """Keep a distant red box visible when the fog range is extended."""
+        viewer = _make_headless_viewer_gl_or_skip(self, width=160, height=120)
+        self.addCleanup(viewer.close)
+        renderer = viewer.renderer
+        renderer.draw_sky = False
+        renderer.sky_lower = (0.9, 0.9, 0.9)
+        renderer.draw_shadows = False
+        renderer.spotlight_enabled = False
+        renderer.diffuse_scale = 0.0
+        renderer.specular_scale = 0.0
+        renderer.ambient_sky = renderer.ambient_ground = (1.0, 1.0, 1.0)
+        renderer.exposure = 1.0
+        viewer.set_camera(wp.vec3(0.0, -250.0, 0.0), pitch=0.0, yaw=90.0)
+        xforms = wp.array([wp.transform_identity()], dtype=wp.transform, device=viewer.device)
+        colors = wp.array([(1.0, 0.0, 0.0)], dtype=wp.vec3, device=viewer.device)
+
+        def center_color():
+            viewer.begin_frame(0.0)
+            viewer.log_shapes("/red_box", newton.GeoType.BOX, (20.0, 20.0, 20.0), xforms, colors)
+            viewer.end_frame()
+            return viewer.get_frame().numpy()[58:62, 78:82].astype(np.float32).mean(axis=(0, 1))
+
+        original = center_color()
+        self.assertLess(float(np.ptp(original)), 2.0)
+        renderer.fog_range = (500.0, 1000.0)
+        extended = center_color()
+        self.assertGreater(float(extended[0]), 150.0)
+        self.assertLess(float(extended[1:].max()), 20.0)
+        renderer.fog_range = (20.0, 200.0)
+        np.testing.assert_allclose(center_color(), original, atol=1.0)
+
+    def test_checker_scale_changes_visible_cell_spacing(self):
+        """Enlarge checker cells without changing the rendered object's geometry."""
+        viewer = _make_headless_viewer_gl_or_skip(self, width=320, height=160)
+        self.addCleanup(viewer.close)
+        renderer = viewer.renderer
+        renderer.draw_shadows = False
+        renderer.spotlight_enabled = False
+        renderer.diffuse_scale = 0.0
+        renderer.specular_scale = 0.0
+        renderer.ambient_sky = renderer.ambient_ground = (1.0, 1.0, 1.0)
+        renderer.exposure = 1.0
+        viewer.set_camera(wp.vec3(0.0, -10.0, 0.0), pitch=0.0, yaw=90.0)
+        xforms = wp.array([wp.transform_identity()], dtype=wp.transform, device=viewer.device)
+        colors = wp.array([(0.8, 0.8, 0.8)], dtype=wp.vec3, device=viewer.device)
+        materials = wp.array([(0.8, 0.0, 1.0, 0.0)], dtype=wp.vec4, device=viewer.device)
+
+        def transitions():
+            viewer.begin_frame(0.0)
+            viewer.log_shapes("/checker_box", newton.GeoType.BOX, (4.0, 0.05, 4.0), xforms, colors, materials)
+            viewer.end_frame()
+            line = viewer.get_frame().numpy()[80, 100:220].astype(np.float32).mean(axis=1)
+            self.assertGreater(float(np.ptp(line)), 5.0)
+            light = line > 0.5 * (line.min() + line.max())
+            return int(np.count_nonzero(light[1:] != light[:-1]))
+
+        original = transitions()
+        self.assertGreaterEqual(original, 4)
+        renderer.checker_scale = 0.25
+        self.assertLessEqual(transitions(), original // 2)
+
     def test_large_quad_is_stable_under_parallel_camera_translation(self):
         """Keep a large uniform quad stable while translating the camera parallel to it."""
         viewer = _make_headless_viewer_gl_or_skip(self, width=400, height=300)
@@ -475,6 +537,43 @@ class TestViewerGLGetFrame(unittest.TestCase):
             float(np.mean(np.abs(frames[0][bowl] - frames[1][bowl]))),
             2.0,
             "the unobstructed bowl incorrectly shadows itself",
+        )
+
+    def test_large_floor_does_not_shadow_itself(self):
+        """Keep a kilometer-wide unoccluded floor free of shadow noise."""
+        viewer = _make_headless_viewer_gl_or_skip(self, width=1280, height=720)
+        self.addCleanup(viewer.close)
+        builder = newton.ModelBuilder()
+        builder.add_ground_plane(height=0.5, color=(0.8, 0.78, 0.72))
+        body = builder.add_body(xform=wp.transform(wp.vec3(0.0, 0.0, 0.75), wp.quat_identity()))
+        builder.add_shape_box(body, hx=0.5, hy=0.25, hz=0.25)
+        model = builder.finalize(device=viewer.device)
+        viewer.set_model(model)
+        viewer.set_camera(wp.vec3(0.0, -240.0, 124.0))
+        viewer.camera.look_at((0.0, -48.0, 10.04))
+        viewer.camera.fov = 32.64206322821485
+        renderer = viewer.renderer
+        renderer.spotlight_enabled = False
+        renderer.exposure = 1.3
+        renderer.diffuse_scale = 0.75
+        renderer.specular_scale = 0.12
+        renderer.ambient_sky = (0.8, 0.8, 0.78)
+        renderer.ambient_ground = (0.6, 0.59, 0.56)
+        renderer.shadow_extents = 320.0
+        renderer.fog_range = (224.0, 800.0)
+        renderer.checker_scale = 1.0 / 6.0
+        renderer.sky_lower = (0.87, 0.86, 0.82)
+        frames = []
+        for shadows in (False, True):
+            renderer.draw_shadows = shadows
+            viewer.begin_frame(0.0)
+            viewer.log_state(model.state())
+            viewer.end_frame()
+            frames.append(viewer.get_frame().numpy().astype(np.float32))
+        self.assertLess(
+            float(np.abs(frames[0][625:700] - frames[1][625:700]).mean()),
+            2.0,
+            "the unoccluded large floor incorrectly shadows itself",
         )
 
     def test_headless_capture_main_image_frame(self):

@@ -1515,6 +1515,16 @@ class TestContactsExamples(NewtonTestCase):
     pass
 
 
+add_example_test(
+    TestContactsExamples,
+    name="contacts.example_brick_ring",
+    devices=cuda_test_devices,
+    test_options={"num-frames": 40},
+    use_viewer=True,
+    expect_output_regexes=[r"Brick Ring \(28k\): 28,112 bricks \+ 1 sphere, solver=vbd\n"],
+)
+
+
 def test_pyramid_kamino_impact(test, device):
     """Check Kamino pyramid ground clearance through the wrecking-ball impact."""
     from newton.examples.contacts.example_pyramid import (  # noqa: PLC0415

@@ -1180,6 +1180,8 @@ class RendererGL:
 
         self.sky_upper = self.background_color
         self.sky_lower = (40.0 / 255.0, 44.0 / 255.0, 55.0 / 255.0)
+        self._fog_range = (20.0, 200.0)
+        self._checker_scale = 1.0
 
         # Lighting settings
         self._shadow_radius = 3.0
@@ -1377,6 +1379,30 @@ class RendererGL:
 
         if not headless:
             self._setup_window_callbacks()
+
+    @property
+    def fog_range(self) -> tuple[float, float]:
+        """Linear fog start and end distances [m], with ``0 <= start < end``."""
+        return self._fog_range
+
+    @fog_range.setter
+    def fog_range(self, value: tuple[float, float]) -> None:
+        start, end = map(float, value)
+        if not np.isfinite((start, end)).all() or not 0.0 <= start < end:
+            raise ValueError("Fog distances must be finite and satisfy 0 <= start < end.")
+        self._fog_range = (start, end)
+
+    @property
+    def checker_scale(self) -> float:
+        """Checkerboard frequency per local coordinate unit; 1.0 gives unit cells."""
+        return self._checker_scale
+
+    @checker_scale.setter
+    def checker_scale(self, value: float) -> None:
+        value = float(value)
+        if not np.isfinite(value) or value <= 0.0:
+            raise ValueError("Checker scale must be finite and positive.")
+        self._checker_scale = value
 
     @property
     def shadow_radius(self) -> float:
@@ -2206,6 +2232,8 @@ class RendererGL:
             viewport_size=(self._screen_width, self._screen_height),
             view_pos=self.camera.pos,
             fog_color=self.sky_lower,
+            fog_range=self.fog_range,
+            checker_scale=self.checker_scale,
             up_axis=self.camera.up_axis,
             sun_direction=self._sun_direction,
             enable_shadows=self.draw_shadows,

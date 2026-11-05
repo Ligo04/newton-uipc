@@ -991,6 +991,9 @@ python -m newton.examples --describe robot_omniwheel
       </a>
     </td>
     <td align="center" width="33%">
+      <a href="newton/examples/contacts/example_brick_ring.py">
+        <img width="320" src="docs/images/examples/example_brick_ring.jpg" alt="Brick Ring (28k and 110k, VBD or UIPC)">
+      </a>
     </td>
     <td align="center" width="33%">
     </td>
@@ -1000,6 +1003,8 @@ python -m newton.examples --describe robot_omniwheel
       <code>python -m newton.examples uipc_cube_reset</code>
     </td>
     <td align="center" width="33%">
+      <code>python -m newton.examples brick_ring --size 28k --solver vbd</code><br>
+      <code>python -m newton.examples brick_ring --size 110k --solver uipc</code>
     </td>
     <td align="center" width="33%">
       <code>python -m newton.examples newton_cradle</code>
