@@ -40,7 +40,14 @@ from newton import Control, JointTargetMode, JointType, Model, State
 from newton.math import normalize_with_norm
 
 from ...exceptions import NewtonWarning
-from .articulation import Articulation, FreeJointReadbackContext
+from .articulation import (
+    Articulation,
+    FreeJointReadbackContext,
+    _cache_control_kernel,
+    _empty_f32,
+    _free_joint_readback_kernel,
+    _write_readback_kernel,
+)
 from .converter import UIpcMappingInfo, newton_transform_to_mat4
 from .utils import _view_attr
 
@@ -48,22 +55,10 @@ from .utils import _view_attr
 class ArticulationBuilder:
     """Build UIPC joint constitutions from Newton articulation joints.
 
-    For each Newton articulation, an :class:`Articulation` runtime object is
-    created to own the per-joint state, animation callbacks, and readback
-    logic.  This builder handles only the **construction** phase:
-
-    1. Group Newton joints by articulation index.
-    2. Create UIPC geometry (linemesh) for each active joint.
-    3. Register UIPC Animator callbacks that delegate to the owning
-       :class:`Articulation`.
-
-    After :meth:`build_joints`, the builder exposes methods that
-    :class:`SolverUIPC` calls every step:
-
-    - :meth:`cache_joint_control` — extract from Newton ``Control``.
-    - :meth:`update_mimic_constraints` — update coupled-joint predictions.
-    - :meth:`write_joint_readback` — write back to Newton ``State``.
-    - :meth:`increment_step` — bump all articulation frame counters.
+    Geometry and articulation metadata are registered world by world. After
+    all worlds are built, :meth:`finalize_joint_buffers` creates shared control
+    and readback buffers. Per-step transfers and geometry updates operate on
+    those batches rather than launching kernels for individual articulations.
     """
 
     def __init__(
@@ -117,6 +112,27 @@ class ArticulationBuilder:
         # Track revolute/prismatic DOFs skipped when armature is non-positive.
         self._armature_skipped_dofs: list[int] = []
         self._warned_baked_armature = False
+
+        self._active_articulations: list[Articulation] = []
+        self._joint_batches_ready = False
+        self._active_joints_wp: wp.array | None = None
+        self._q_starts_wp: wp.array | None = None
+        self._qd_starts_wp: wp.array | None = None
+        self._control_values_host: wp.array | None = None
+        self._control_values_device: wp.array | None = None
+        self._control_flags_host: wp.array | None = None
+        self._control_flags_device: wp.array | None = None
+        self._joint_state_host: wp.array | None = None
+        self._joint_state_device: wp.array | None = None
+        self._control_values_np = np.empty((3, 0), dtype=np.float64)
+        self._control_flags_np = np.empty((2, 0), dtype=np.int32)
+        self._joint_state_np = np.empty((2, 0), dtype=np.float64)
+        self._aim_blend_weights = np.empty(0, dtype=np.float64)
+        self._effort_armature = np.empty(0, dtype=np.float64)
+        self._joint_state_batches: list[tuple[SimplicialComplexSlot, str, np.ndarray, np.ndarray]] = []
+        self._free_joint_indices_wp: wp.array | None = None
+        self._remaining_free_joint_indices_wp: wp.array | None = None
+        self._world_free_joint_for_body_wp: wp.array | None = None
 
     # Build
 
@@ -340,23 +356,11 @@ class ArticulationBuilder:
             stc = SoftTransformConstraint()
             stc.apply_to(geometry)
 
-        # Finalise all articulations that have active joints
-        for art in self.articulations.values():
-            if art.num_active_joints > 0:
-                art.setup_state()
-
         # Build reflected-inertia constraints for this world's articulations.
         for a in art_indices_in_range:
             art = self.articulations[a]
             if art.num_active_joints > 0:
                 self._build_external_articulation(a, art, model)
-
-        # Seed animator targets from model joint positions.
-        if model.joint_q is not None:
-            joint_q_np = model.joint_q.numpy()
-            for art in self.articulations.values():
-                if art.num_active_joints > 0:
-                    art.seed_initial_targets(joint_q_np)
 
     # Joint building helpers
 
@@ -656,14 +660,21 @@ class ArticulationBuilder:
             self._mapping.joint_geo_slots[j] = jslot
             self._mapping.joint_mesh[j] = jm
 
-        # Single animator callback dispatching to all revolute joints.
+        buffer_rows: np.ndarray | None = None
+        edge_rows = np.array([edge for _, _, edge in anim_dispatch], dtype=np.intp)
+
         def _revolute_batch_anim(info: Animation.UpdateInfo) -> None:
+            nonlocal buffer_rows
             try:
                 geo: SimplicialComplex = info.geo_slots()[0].geometry()
             except (TypeError, IndexError):
                 return
-            for art, newton_j, edge_idx in anim_dispatch:
-                art.revolute_joint_anim(info, geo, newton_j, edge_idx, enable_drive=with_drive)
+            if buffer_rows is None:
+                buffer_rows = np.array(
+                    [art._buffer_offset + art._joint_to_local[joint] for art, joint, _ in anim_dispatch],
+                    dtype=np.intp,
+                )
+            self._animate_joint_batch(geo, buffer_rows, edge_rows, revolute=True, enable_drive=with_drive)
 
         self._scene.animator().insert(jobj, _revolute_batch_anim)
 
@@ -813,13 +824,21 @@ class ArticulationBuilder:
             self._mapping.joint_geo_slots[j] = jslot
             self._mapping.joint_mesh[j] = jm
 
+        buffer_rows: np.ndarray | None = None
+        edge_rows = np.array([edge for _, _, edge in anim_dispatch], dtype=np.intp)
+
         def _prismatic_batch_anim(info: Animation.UpdateInfo) -> None:
+            nonlocal buffer_rows
             try:
                 geo: SimplicialComplex = info.geo_slots()[0].geometry()
             except (TypeError, IndexError):
                 return
-            for art, newton_j, edge_idx in anim_dispatch:
-                art.prismatic_joint_anim(info, geo, newton_j, edge_idx, enable_drive=with_drive)
+            if buffer_rows is None:
+                buffer_rows = np.array(
+                    [art._buffer_offset + art._joint_to_local[joint] for art, joint, _ in anim_dispatch],
+                    dtype=np.intp,
+                )
+            self._animate_joint_batch(geo, buffer_rows, edge_rows, revolute=False, enable_drive=with_drive)
 
         self._scene.animator().insert(jobj, _prismatic_batch_anim)
 
@@ -1406,7 +1425,7 @@ class ArticulationBuilder:
             return
         joint_parent = model.joint_parent.numpy()
         joint_child = model.joint_child.numpy()
-        for art in self.articulations.values():
+        for art in self._active_articulations:
             for newton_idx in art.active_joint_indices:
                 if newton_idx not in art._joint_edge_idx:
                     continue
@@ -1427,6 +1446,8 @@ class ArticulationBuilder:
                     art.aim_blend_weights[local] = damp_blend
                 else:
                     art.aim_blend_weights.pop(local, None)
+
+        self._refresh_joint_batch_parameters()
 
     def refresh_armature(self, model: Any) -> None:
         """Re-read ``model.joint_armature`` into the live armature constraints.
@@ -1454,7 +1475,7 @@ class ArticulationBuilder:
             n = len(dof_indices)
             for local, dof in enumerate(dof_indices):
                 mass_view[local * n + local] = max(float(armature_np[dof]), 0.0)
-        for art in self.articulations.values():
+        for art in self._active_articulations:
             for joint in art._effort_armature:
                 art._effort_armature[joint] = max(float(armature_np[art._joint_qd_start[joint]]), 0.0)
         if not self._warned_baked_armature and any(
@@ -1469,6 +1490,8 @@ class ArticulationBuilder:
                 stacklevel=2,
             )
 
+        self._refresh_joint_batch_parameters()
+
     @staticmethod
     def _joint_body_mass(body_idx: int, model: Any) -> float:
         """Mass [kg] of a joint-side body as UIPC's joint kappa will see it.
@@ -1480,6 +1503,132 @@ class ArticulationBuilder:
             return 1.0
         mass = float(model.body_mass.numpy()[body_idx])
         return mass if mass > 0.0 else 1.0
+
+    def finalize_joint_buffers(self) -> None:
+        """Allocate joint buffers once after every world's joints are registered."""
+        self._active_articulations = [art for art in self.articulations.values() if art.num_active_joints]
+        active = [joint for art in self._active_articulations for joint in art.active_joint_indices]
+        free = [joint for art in self.articulations.values() for joint in art._free_joint_indices]
+        if free:
+            self._free_joint_indices_wp = wp.array(free, dtype=wp.int32, device=self._device)
+            self._remaining_free_joint_indices_wp = self._free_joint_indices_wp
+        count = len(active)
+        if count:
+            q_starts = np.array(
+                [art._joint_q_start[joint] for art in self._active_articulations for joint in art.active_joint_indices],
+                dtype=np.int32,
+            )
+            qd_starts = np.array(
+                [
+                    art._joint_qd_start[joint]
+                    for art in self._active_articulations
+                    for joint in art.active_joint_indices
+                ],
+                dtype=np.int32,
+            )
+            self._active_joints_wp = wp.array(active, dtype=wp.int32, device=self._device)
+            self._q_starts_wp = wp.array(q_starts, dtype=wp.int32, device=self._device)
+            self._qd_starts_wp = wp.array(qd_starts, dtype=wp.int32, device=self._device)
+            self._control_values_host = wp.zeros((3, count), dtype=wp.float64, device="cpu", pinned=True)
+            self._control_flags_host = wp.zeros((2, count), dtype=wp.int32, device="cpu", pinned=True)
+            self._joint_state_host = wp.zeros((2, count), dtype=wp.float64, device="cpu", pinned=True)
+            self._control_values_device = wp.zeros((3, count), dtype=wp.float64, device=self._device)
+            self._control_flags_device = wp.zeros((2, count), dtype=wp.int32, device=self._device)
+            self._joint_state_device = wp.zeros((2, count), dtype=wp.float64, device=self._device)
+            self._control_values_np = self._control_values_host.numpy()
+            self._control_flags_np = self._control_flags_host.numpy()
+            self._joint_state_np = self._joint_state_host.numpy()
+            # Animator callbacks can run during world.init(), before the first control transfer.
+            if self._model.joint_q is not None:
+                initial = self._model.joint_q.numpy()[q_starts]
+                self._control_values_np[0] = initial
+                self._joint_state_np[0] = initial
+            self._aim_blend_weights = np.zeros(count, dtype=np.float64)
+            self._effort_armature = np.zeros(count, dtype=np.float64)
+            groups: dict[tuple[int, str], tuple[SimplicialComplexSlot, str, list[int], list[int]]] = {}
+            offset = 0
+            for art in self._active_articulations:
+                art.bind_state(self._joint_state_host, self._control_values_host, self._control_flags_host, offset)
+                for local, joint in enumerate(art.active_joint_indices):
+                    slot = art.joint_geo_slots[joint]
+                    field = "angle" if art._joint_is_revolute[joint] else "distance"
+                    _, _, rows, edges = groups.setdefault((id(slot), field), (slot, field, [], []))
+                    rows.append(offset + local)
+                    edges.append(art._joint_edge_idx[joint])
+                offset += art.num_active_joints
+            self._joint_state_batches = [
+                (slot, field, np.array(rows, dtype=np.intp), np.array(edges, dtype=np.intp))
+                for slot, field, rows, edges in groups.values()
+            ]
+        self._joint_batches_ready = True
+        self._refresh_joint_batch_parameters()
+
+    def prepare_free_joint_body_readback(self) -> None:
+        """Map world-root FREE joints to bodies that the ABD accessor exports.
+
+        Other FREE joints run in a single later kernel, after all parent body
+        states are available. Repeated children also use that general batch.
+        """
+        if self._free_joint_indices_wp is None or self._mapping.num_mapped_bodies == 0:
+            return
+        free = self._free_joint_indices_wp.numpy()
+        parent = self._model.joint_parent.numpy()
+        child = self._model.joint_child.numpy()
+        mapped = self._mapping.body_indices_wp.numpy()
+        roots = free[(parent[free] == -1) & np.isin(child[free], mapped)]
+        if not len(roots):
+            return
+        counts = np.bincount(child[roots], minlength=self._model.body_count)
+        roots = roots[counts[child[roots]] == 1]
+        if not len(roots):
+            return
+        body_joints = np.full(self._model.body_count, -1, dtype=np.int32)
+        body_joints[child[roots]] = roots
+        self._world_free_joint_for_body_wp = wp.array(body_joints, dtype=wp.int32, device=self._device)
+        remaining = free[~np.isin(free, roots)]
+        self._remaining_free_joint_indices_wp = (
+            wp.array(remaining, dtype=wp.int32, device=self._device) if len(remaining) else None
+        )
+
+    def _refresh_joint_batch_parameters(self) -> None:
+        """Refresh CPU animation coefficients after runtime gain/armature changes."""
+        if not getattr(self, "_joint_batches_ready", False):
+            return
+        self._aim_blend_weights.fill(0.0)
+        self._effort_armature.fill(0.0)
+        for art in self._active_articulations:
+            offset = art._buffer_offset
+            for local, weight in art.aim_blend_weights.items():
+                self._aim_blend_weights[offset + local] = weight
+            for joint, armature in art._effort_armature.items():
+                self._effort_armature[offset + art._joint_to_local[joint]] = armature
+
+    def _animate_joint_batch(
+        self, geo: SimplicialComplex, rows: np.ndarray, edges: np.ndarray, *, revolute: bool, enable_drive: bool
+    ) -> None:
+        """Update each scalar attribute once for a whole revolute/prismatic geometry."""
+        driving = (self._control_flags_np[0, rows] != 0) & enable_drive
+        force_only = (self._control_flags_np[1, rows] != 0) & ~driving
+        if revolute:
+            force_only &= self._effort_armature[rows] <= 0.0
+        force_field = "external_torque" if revolute else "external_force"
+        aim_field = "aim_angle" if revolute else "aim_distance"
+        _view_attr(geo.edges().find("driving/is_constrained")).reshape(-1)[edges] = driving
+        _view_attr(geo.edges().find(force_field + "/is_constrained")).reshape(-1)[edges] = force_only
+        if np.any(force_only):
+            _view_attr(geo.edges().find(force_field)).reshape(-1)[edges[force_only]] = self._control_values_np[
+                2, rows[force_only]
+            ]
+        if np.any(driving):
+            driven_rows = rows[driving]
+            aims = self._control_values_np[0, driven_rows].copy()
+            weights = self._aim_blend_weights[driven_rows]
+            blend = weights != 0.0
+            blended_rows = driven_rows[blend]
+            aims[blend] = (1.0 - weights[blend]) * aims[blend] + weights[blend] * (
+                self._joint_state_np[0, blended_rows] + self._dt * self._control_values_np[1, blended_rows]
+            )
+            _view_attr(geo.edges().find(aim_field)).reshape(-1)[edges[driving]] = aims
 
     # Per-step interface (called by SolverUIPC.step)
 
@@ -1496,12 +1645,7 @@ class ArticulationBuilder:
             control: The Newton control input for this step.
         """
         model = self._model
-        if model.joint_count == 0 or not self.articulations:
-            return
-        if model.joint_type is None or model.joint_q_start is None or model.joint_qd_start is None:
-            return
-
-        if model.joint_target_mode is None:
+        if self._active_joints_wp is None or model.joint_type is None or model.joint_target_mode is None:
             return
 
         # Keep model and control arrays on the solver device.
@@ -1511,16 +1655,29 @@ class ArticulationBuilder:
         target_vel = control.joint_target_qd.to(self._device) if control.joint_target_qd is not None else None
         joint_f = control.joint_f.to(self._device) if control.joint_f is not None else None
 
-        for art in self.articulations.values():
-            if art.num_active_joints > 0:
-                art.cache_control(
-                    joint_type,
-                    joint_target_mode,
-                    target_pos,
-                    target_vel,
-                    joint_f,
-                    blend_aims=self._implicit_pd,
-                )
+        wp.launch(
+            _cache_control_kernel,
+            dim=self._active_joints_wp.size,
+            inputs=[
+                self._active_joints_wp,
+                self._q_starts_wp,
+                self._qd_starts_wp,
+                joint_type,
+                joint_target_mode,
+                target_pos if target_pos is not None else _empty_f32(self._device),
+                target_vel if target_vel is not None else _empty_f32(self._device),
+                joint_f if joint_f is not None else _empty_f32(self._device),
+                int(target_pos is not None),
+                int(target_vel is not None),
+                int(joint_f is not None),
+                int(self._implicit_pd),
+                self._control_values_device,
+                self._control_flags_device,
+            ],
+            device=self._device,
+        )
+        wp.copy(self._control_values_host, self._control_values_device)
+        wp.copy(self._control_flags_host, self._control_flags_device)
 
     def sync_control_transfers(self) -> None:
         """Block until the ``cache_joint_control`` D2H copies have landed.
@@ -1532,67 +1689,75 @@ class ArticulationBuilder:
         wp.synchronize_stream(wp.get_stream(self._device))
 
     def read_joint_state_pre_advance(self) -> None:
-        """Snapshot pre-advance edge attributes on each articulation.
+        """Snapshot one angle/distance view per geometry before world.advance().
 
-        Call **once per step, before** ``world.advance()`` so each
-        :class:`Articulation` records the start-of-step ``angle`` /
-        ``distance`` for finite-difference velocity recovery in
-        :meth:`read_joint_state_post_retrieve`.
+        Call after sync_control_transfers(), which also completes any previous
+        step's asynchronous H2D readback before these pinned values are reused.
         """
-        for art in self.articulations.values():
-            if art.num_active_joints > 0:
-                art.read_pre_advance()
+        for slot, field, rows, edges in self._joint_state_batches:
+            values = _view_attr(slot.geometry().edges().find(field)).reshape(-1)
+            self._joint_state_np[0, rows] = values[edges]
 
     def read_joint_state_post_retrieve(self) -> None:
-        """Re-read UIPC edge attributes after ``world.retrieve()``.
+        """Finite-difference the retrieved coordinates once per geometry."""
+        for slot, field, rows, edges in self._joint_state_batches:
+            values = _view_attr(slot.geometry().edges().find(field)).reshape(-1)[edges]
+            self._joint_state_np[1, rows] = (values - self._joint_state_np[0, rows]) / self._dt
+            self._joint_state_np[0, rows] = values
 
-        Pairs with :meth:`read_joint_state_pre_advance`: each articulation
-        finite-differences the pre-advance and post-retrieve angle /
-        distance to update ``joint_position`` and ``joint_velocity``,
-        which the subsequent :meth:`write_joint_readback` consumes.
-        """
-        for art in self.articulations.values():
-            if art.num_active_joints > 0:
-                art.read_post_retrieve()
+    def write_joint_readback(self, state_out: State, *, world_free_joints_synced: bool = False) -> None:
+        """Scatter active joints and recover FREE joints in at most two kernels.
 
-    def write_joint_readback(self, state_out: State) -> None:
-        """Write joint readback values to Newton state arrays.
-
-        Handles both active (driven) joints and FREE joints. Active joints get
-        their values from the animator finite-difference cache; FREE joints —
-        realized as soft transform constraints rather than active joints — have
-        their joint_q[0:7] / joint_qd[0:6] recovered from the UIPC-integrated
-        body state so IsaacLab consumers reading a floating root pose from
-        joint_q see the motion (mjwarp does this natively; UIPC does not).
-
-        Args:
-            state_out: The output state to write joint positions and
-                velocities into.
+        SolverUIPC sets world_free_joints_synced when body conversion already
+        wrote the mapped world-root FREE joints. Direct callers recover every
+        FREE joint from body state instead. Output buffers may change each step.
         """
         model = self._model
-        if model.joint_count == 0 or not self.articulations:
+        if state_out.joint_q is None or model.joint_q_start is None or model.joint_qd_start is None:
             return
-        if model.joint_q_start is None or model.joint_qd_start is None:
-            return
-
-        if state_out.joint_q is None:
-            return
-
-        # Scatter directly into solver-device joint buffers.
         joint_q = state_out.joint_q.to(self._device)
         joint_qd = state_out.joint_qd.to(self._device) if state_out.joint_qd is not None else None
-
-        # Shared by every articulation; None when no FREE joints are present.
-        free_joint_ctx = self._build_free_joint_context(state_out, joint_qd)
-
-        for art in self.articulations.values():
-            if art.num_active_joints > 0 or art.num_free_joints > 0:
-                art.write_readback(joint_q, joint_qd, free_joint_ctx)
-
-        # Copy back when .to() created a new allocation.
+        if self._active_joints_wp is not None:
+            wp.copy(self._joint_state_device, self._joint_state_host)
+            wp.launch(
+                _write_readback_kernel,
+                dim=self._active_joints_wp.size,
+                inputs=[
+                    self._q_starts_wp,
+                    self._qd_starts_wp,
+                    self._joint_state_device,
+                    joint_q,
+                    joint_qd if joint_qd is not None else _empty_f32(self._device),
+                    int(joint_qd is not None),
+                ],
+                device=self._device,
+            )
+        free = self._remaining_free_joint_indices_wp if world_free_joints_synced else self._free_joint_indices_wp
+        if free is not None:
+            context = self._build_free_joint_context(state_out, joint_qd)
+            if context is not None:
+                wp.launch(
+                    _free_joint_readback_kernel,
+                    dim=free.size,
+                    inputs=[
+                        free,
+                        context.body_q,
+                        context.body_qd,
+                        context.body_com,
+                        context.joint_parent,
+                        context.joint_child,
+                        context.joint_X_p,
+                        context.joint_X_c,
+                        context.joint_q_start,
+                        context.joint_qd_start,
+                        joint_q,
+                        joint_qd,
+                    ],
+                    device=self._device,
+                )
         if joint_q is not state_out.joint_q:
             wp.copy(state_out.joint_q, joint_q)
-        if joint_qd is not None and state_out.joint_qd is not None and joint_qd is not state_out.joint_qd:
+        if joint_qd is not None and joint_qd is not state_out.joint_qd:
             wp.copy(state_out.joint_qd, joint_qd)
 
     def _build_free_joint_context(
@@ -1608,7 +1773,7 @@ class ArticulationBuilder:
         """
         if joint_qd is None:
             return None
-        if not any(art.num_free_joints > 0 for art in self.articulations.values()):
+        if self._free_joint_indices_wp is None:
             return None
 
         model = self._model
@@ -1638,11 +1803,6 @@ class ArticulationBuilder:
             joint_qd_start=model.joint_qd_start.to(self._device),
         )
 
-    def increment_step(self) -> None:
-        """Increment the step counter on all articulations."""
-        for art in self.articulations.values():
-            art.increment_step()
-
     # Mimic joint coupling
 
     def setup_mimic_constraints(self) -> None:
@@ -1650,7 +1810,7 @@ class ArticulationBuilder:
 
         Call **once** after every world has been built via
         :meth:`build_joints` (so all active joints are registered and
-        ``setup_state`` has run). Each relation uses a two-joint
+        ``finalize_joint_buffers`` has run). Each relation uses a two-joint
         :class:`ExternalArticulationConstraint` with rank-one weight matrix
         ``rho * [1, -coef1]^T [1, -coef1]``. Its off-diagonal entries transmit
         reactions between the follower and leader inside the UIPC solve.

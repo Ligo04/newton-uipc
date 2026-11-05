@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     )
     from .converter import (
         UIpcMappingInfo,
+        _read_body_and_free_joint_state_kernel,
         _read_fem_particle_positions_from_backend_kernel,
         _read_fem_particles_from_backend_kernel,
         _read_from_backend_kernel,
@@ -292,7 +293,7 @@ class SolverUIPC(SolverBase):
         global build_gpu_vertex_maps, prepare_contact_gpu_data, retrieve_contact_forces
         global _read_fem_particle_positions_from_backend_kernel, _read_fem_particles_from_backend_kernel
         global _read_from_backend_kernel, _spatial_to_vel_mat44_kernel, _transform_to_mat44_kernel
-        global _gather_body_affine_kernel
+        global _gather_body_affine_kernel, _read_body_and_free_joint_state_kernel
         global _write_fem_particle_positions_to_backend_kernel, _write_fem_particles_to_backend_kernel
         global populate_backend_offsets
         try:
@@ -321,6 +322,7 @@ class SolverUIPC(SolverBase):
             from .converter import (
                 UIpcMappingInfo,
                 _gather_body_affine_kernel,
+                _read_body_and_free_joint_state_kernel,
                 _read_fem_particle_positions_from_backend_kernel,
                 _read_fem_particles_from_backend_kernel,
                 _read_from_backend_kernel,
@@ -1283,6 +1285,8 @@ class SolverUIPC(SolverBase):
             if self._deformable_builder.has_deformable:
                 self._deformable_builder.build(deformable_elems[world_index], particle_range, se)
 
+        self._articulation_builder.finalize_joint_buffers()
+
         # Build coupled mimic energies after registering all world joints.
         self._articulation_builder.setup_mimic_constraints()
 
@@ -1296,6 +1300,7 @@ class SolverUIPC(SolverBase):
             )
 
         populate_backend_offsets(self.mapping, model.device)
+        self._articulation_builder.prepare_free_joint_body_readback()
 
         # Device buffers for reading ABD state back from UIPC.
         self._abd_accessor: AffineBodyStateAccessorFeature = self.world.features().find(AffineBodyStateAccessorFeature)  # ty:ignore[invalid-assignment]
@@ -1496,11 +1501,9 @@ class SolverUIPC(SolverBase):
         self._external_forces.cache(state_in, self._body_affine)
         self._articulation_builder.cache_joint_control(control)
 
-        # Snapshot joint angles and distances before advancing UIPC.
-        self._articulation_builder.read_joint_state_pre_advance()
-
-        # Sync host force and control arrays before UIPC advances.
+        # Complete host transfers before reusing pinned state buffers and advancing UIPC.
         self._articulation_builder.sync_control_transfers()
+        self._articulation_builder.read_joint_state_pre_advance()
         self._external_forces.publish()
         self._rod_builder.publish_forces()
 
@@ -1518,10 +1521,10 @@ class SolverUIPC(SolverBase):
             self._stats.collect()
 
         # Phase 3: Read back results
-        self._sync_body_state_from_uipc(state_out)
+        world_free_joints_synced = self._sync_body_state_from_uipc(state_out)
         self._sync_particle_state_from_uipc(state_out)
         self._articulation_builder.read_joint_state_post_retrieve()
-        self._articulation_builder.write_joint_readback(state_out)
+        self._articulation_builder.write_joint_readback(state_out, world_free_joints_synced=world_free_joints_synced)
         self._rod_builder.read_state(state_in, state_out)
 
         if state_out.body_f is not None:
@@ -1536,7 +1539,6 @@ class SolverUIPC(SolverBase):
             self._export_contacts(contacts, state_out, observables.contact_f)
 
         self._step_count += 1
-        self._articulation_builder.increment_step()
         self._step_time_ms = (perf_counter() - step_start) * 1000.0
 
     def get_frame_stats(self) -> dict[str, Any]:
@@ -2259,13 +2261,13 @@ class SolverUIPC(SolverBase):
 
     # GPU batch sync methods
 
-    def _sync_body_state_from_uipc(self, state_out: State) -> None:
+    def _sync_body_state_from_uipc(self, state_out: State) -> bool:
         """Read UIPC body state back into Newton state arrays via pre-allocated GPU buffers.
 
         Uses ``copy_transform_to`` / ``copy_velocity_to`` to let UIPC copy its
         internal state into our pre-allocated :class:`uipc.adapter.warp` buffers.
         The kernel accounts for Eigen's column-major layout by swapping row/column
-        indices.
+        indices. Returns whether world-root FREE joints were also written.
         """
         model = self.model
         n = self.mapping.num_mapped_bodies
@@ -2278,6 +2280,38 @@ class SolverUIPC(SolverBase):
             buf_count = self.mapping.max_backend_count
             self._abd_accessor.copy_transform_to(self._abd_transform_buf.buffer_view(), 0, buf_count)
             self._abd_accessor.copy_velocity_to(self._abd_velocity_buf.buffer_view(), 0, buf_count)
+            world_free = self._articulation_builder._world_free_joint_for_body_wp
+            if (
+                world_free is not None
+                and state_out.joint_q is not None
+                and state_out.joint_qd is not None
+                and state_out.joint_q.device == model.device
+                and state_out.joint_qd.device == model.device
+            ):
+                wp.launch(
+                    _read_body_and_free_joint_state_kernel,
+                    dim=n,
+                    inputs=[
+                        self.mapping.backend_offsets_wp,
+                        self._abd_transform_buf.warp(),
+                        self._abd_velocity_buf.warp(),
+                        self.mapping.body_indices_wp,
+                        model.body_com,
+                        state_out.body_q,
+                        state_out.body_qd,
+                        self._body_affine,
+                        self._body_affine_valid,
+                        world_free,
+                        model.joint_X_p,
+                        model.joint_X_c,
+                        model.joint_q_start,
+                        model.joint_qd_start,
+                        state_out.joint_q,
+                        state_out.joint_qd,
+                    ],
+                    device=model.device,
+                )
+                return True
             self._update_body_affine_transforms(copy_from_backend=False)
 
             wp.launch(
@@ -2294,6 +2328,8 @@ class SolverUIPC(SolverBase):
                 ],
                 device=model.device,
             )
+
+        return False
 
     def _sync_particle_state_from_uipc(self, state_out: State) -> None:
         """Read UIPC FEM vertex state back into Newton particles."""

@@ -22,6 +22,7 @@ if _HAS_UIPC:
     from uipc.core import SanityCheckResult
 
     from newton._src.solvers.uipc import articulation_builder as articulation_builder_module
+    from newton._src.solvers.uipc import converter as converter_module
     from newton._src.solvers.uipc.converter import UIpcMappingInfo
     from newton._src.solvers.uipc.solver_uipc import SolverUIPC
 
@@ -104,6 +105,73 @@ class TestUIPCFEMSyncToBackend(unittest.TestCase):
 
 @unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
 class TestUIPCFreeJointSoftTransformConstraint(unittest.TestCase):
+    def test_free_joint_batches_match_ik_across_worlds(self):
+        for parented in (False, True):
+            with self.subTest(parented=parented):
+                builder = newton.ModelBuilder(gravity=wp.vec3(0.0, 0.0, -0.5))
+                for world in range(2):
+                    builder.begin_world()
+                    root = builder.add_link(
+                        xform=wp.transform(wp.vec3(4.0 * world, 0.0, 3.0), wp.quat_rpy(0.2, -0.3, 0.4))
+                    )
+                    child = builder.add_link(
+                        xform=wp.transform(wp.vec3(4.0 * world + 1.0, 1.0, 3.0), wp.quat_rpy(-0.3, 0.2, -0.1))
+                    )
+                    for body in (root, child):
+                        builder.add_shape_box(
+                            body, hx=0.05, hy=0.04, hz=0.03, xform=wp.transform(wp.vec3(0.02, -0.01, 0.03))
+                        )
+                        builder.body_qd[body] = wp.spatial_vector(0.1 * (body + 1), -0.2, 0.3, 0.4, -0.2, 0.1)
+                    anchor = wp.transform(wp.vec3(0.1, -0.2, 0.3), wp.quat_rpy(0.1, 0.2, -0.3))
+                    child_anchor = wp.transform(wp.vec3(-0.02, 0.03, 0.01), wp.quat_rpy(-0.2, 0.1, 0.2))
+                    root_joint = builder.add_joint_free(root, parent_xform=anchor, child_xform=child_anchor)
+                    child_joint = builder.add_joint_free(
+                        child, parent=root if parented else -1, parent_xform=anchor, child_xform=child_anchor
+                    )
+                    if parented:
+                        builder.add_articulation([root_joint, child_joint])
+                    else:
+                        builder.add_articulation([root_joint])
+                        builder.add_articulation([child_joint])
+                    # World anchors add backend-only proxy bodies between the worlds.
+                    fixed = builder.add_link(xform=wp.transform(wp.vec3(4.0 * world, 3.0, 3.0)))
+                    builder.add_shape_box(fixed, hx=0.04, hy=0.03, hz=0.02)
+                    joint = builder.add_joint_fixed(
+                        -1, fixed, parent_xform=wp.transform(wp.vec3(4.0 * world, 3.0, 3.0))
+                    )
+                    builder.add_articulation([joint])
+                    builder.end_world()
+                model = builder.finalize()
+                solver = newton.solvers.SolverUIPC(model, dt=1.0 / 240.0, logger_level=uipc.Logger.Error)
+                solver.initialize()
+                self.assertTrue(np.any(model.body_com.numpy() != 0.0))
+                state_in, state_out = model.state(), model.state()
+                control = model.control()
+                with patch.object(wp, "launch", wraps=wp.launch) as launches:
+                    for _ in range(3):
+                        solver.step(state_in, state_out, control, None, solver._dt)
+                        state_in, state_out = state_out, state_in
+                ref_q, ref_qd = wp.zeros_like(state_in.joint_q), wp.zeros_like(state_in.joint_qd)
+                newton.eval_ik(model, state_in, ref_q, ref_qd)
+                np.testing.assert_allclose(state_in.joint_q.numpy(), ref_q.numpy(), atol=1.0e-5)
+                np.testing.assert_allclose(state_in.joint_qd.numpy(), ref_qd.numpy(), atol=1.0e-5)
+                fused = sum(
+                    call.args[0] is converter_module._read_body_and_free_joint_state_kernel
+                    for call in launches.call_args_list
+                )
+                remaining = sum(
+                    call.args[0] is articulation_builder_module._free_joint_readback_kernel
+                    for call in launches.call_args_list
+                )
+                self.assertEqual(fused, 3)
+                self.assertEqual(remaining, 3 if parented else 0)
+                affine, valid = solver.get_body_affine_transforms()
+                bodies = solver.mapping.body_indices_wp.numpy()
+                offsets = solver.mapping.backend_offsets_wp.numpy()
+                exported = solver._abd_transform_buf.warp().numpy()
+                np.testing.assert_allclose(affine.numpy()[bodies], exported[offsets].transpose(0, 2, 1))
+                self.assertTrue(np.all(valid.numpy()[bodies]))
+
     def test_free_joint_applies_soft_transform_once_per_shared_geometry(self):
         class _Geometry:
             pass

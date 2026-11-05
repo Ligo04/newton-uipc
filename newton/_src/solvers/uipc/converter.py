@@ -20,6 +20,7 @@ from uipc.geometry import trimesh as uipc_trimesh
 from newton import Axis, GeoType, Mesh, Model, ShapeFlags
 
 from ...exceptions import NewtonWarning
+from .articulation import _free_joint_state, _store_free_joint_state
 
 # Warp kernels for batch transform conversion
 
@@ -142,33 +143,14 @@ def _gather_body_affine_kernel(
     body_valid[body] = True
 
 
-@wp.kernel(enable_backward=False)
-def _read_from_backend_kernel(
-    backend_offsets: wp.array[wp.uint32],
-    src_transforms: wp.array[wp.mat44d],
-    src_velocities: wp.array[wp.mat44d],
-    body_indices: wp.array[wp.int32],
-    body_com: wp.array[wp.vec3],
-    out_body_q: wp.array[wp.transform],
-    out_body_qd: wp.array[wp.spatial_vector],
-):
-    """Gather UIPC backend transforms/velocities back into Newton state arrays.
+@wp.func
+def _decode_backend_body(m: wp.mat44d, v: wp.mat44d, body_com: wp.vec3):
+    """Decode Eigen-layout affine matrices into a pose and a COM-referenced twist.
 
-    The source matrices are stored in **column-major** order (Eigen convention)
-    but wrapped as Warp ``mat44d`` which uses row-major indexing.  Therefore
-    every element access swaps row and column: ``m[i, j]`` in Warp reads the
-    Eigen element at ``(j, i)``.
-
-    The translation column is the velocity of the body-frame origin, so
-    ``v_com_world = ṫ + Ȧ · com_local``. The angular part needs ``[ωx] = Ȧ · R^T``
-    because UIPC stores ``Ȧ`` (not ``[ωx]``) in the upper 3x3.
+    Eigen matrices are wrapped as row-major Warp matrices, so every element
+    access swaps row and column. Velocity stores the affine derivative, with
+    COM velocity t_dot + A_dot * com and angular part A_dot * A_transpose.
     """
-    tid = wp.tid()
-    backend_idx = backend_offsets[tid]
-    body_idx = body_indices[tid]
-
-    m = src_transforms[backend_idx]
-
     # Extract position (Eigen column 3 → Warp row 3)
     px = wp.float32(m[3, 0])
     py = wp.float32(m[3, 1])
@@ -224,16 +206,15 @@ def _read_from_backend_kernel(
         qz = qz * inv_norm
         qw = qw * inv_norm
 
-    out_body_q[body_idx] = wp.transform(
+    position = wp.transform(
         wp.vec3(px, py, pz),
         wp.quat(wp.float32(qx), wp.float32(qy), wp.float32(qz), wp.float32(qw)),
     )
 
     # Convert the affine velocity matrix to angular velocity.
-    v = src_velocities[backend_idx]
 
     # Shift the body-origin velocity to COM, using the full affine derivative.
-    com = wp.vec3d(body_com[body_idx])
+    com = wp.vec3d(body_com)
     v_com = wp.vec3(
         wp.float32(v[3, 0] + v[0, 0] * com[0] + v[1, 0] * com[1] + v[2, 0] * com[2]),
         wp.float32(v[3, 1] + v[0, 1] * com[0] + v[1, 1] * com[1] + v[2, 1] * com[2]),
@@ -263,7 +244,73 @@ def _read_from_backend_kernel(
     omega_y = v00 * m02 + v10 * m12 + v20 * m22
     omega_z = v01 * m00 + v11 * m10 + v21 * m20
 
-    out_body_qd[body_idx] = wp.spatial_vector(v_com, wp.vec3(omega_x, omega_y, omega_z))
+    velocity = wp.spatial_vector(v_com, wp.vec3(omega_x, omega_y, omega_z))
+    return position, velocity
+
+
+@wp.kernel(enable_backward=False)
+def _read_from_backend_kernel(
+    backend_offsets: wp.array[wp.uint32],
+    src_transforms: wp.array[wp.mat44d],
+    src_velocities: wp.array[wp.mat44d],
+    body_indices: wp.array[wp.int32],
+    body_com: wp.array[wp.vec3],
+    out_body_q: wp.array[wp.transform],
+    out_body_qd: wp.array[wp.spatial_vector],
+):
+    """Gather UIPC affine state into Newton body poses and COM twists."""
+    i = wp.tid()
+    backend = backend_offsets[i]
+    body = body_indices[i]
+    position, velocity = _decode_backend_body(src_transforms[backend], src_velocities[backend], body_com[body])
+    out_body_q[body] = position
+    out_body_qd[body] = velocity
+
+
+@wp.kernel(enable_backward=False)
+def _read_body_and_free_joint_state_kernel(
+    backend_offsets: wp.array[wp.uint32],
+    src_transforms: wp.array[wp.mat44d],
+    src_velocities: wp.array[wp.mat44d],
+    body_indices: wp.array[wp.int32],
+    body_com: wp.array[wp.vec3],
+    out_body_q: wp.array[wp.transform],
+    out_body_qd: wp.array[wp.spatial_vector],
+    body_affine: wp.array[wp.mat44d],
+    body_valid: wp.array[wp.bool],
+    world_free_joint_for_body: wp.array[wp.int32],
+    joint_X_p: wp.array[wp.transform],
+    joint_X_c: wp.array[wp.transform],
+    joint_q_start: wp.array[wp.int32],
+    joint_qd_start: wp.array[wp.int32],
+    joint_q: wp.array[float],
+    joint_qd: wp.array[float],
+):
+    """Decode bodies, preserve affine rendering state, and recover world-root FREE joints."""
+    i = wp.tid()
+    backend = backend_offsets[i]
+    body = body_indices[i]
+    matrix = src_transforms[backend]
+    position, velocity = _decode_backend_body(matrix, src_velocities[backend], body_com[body])
+    out_body_q[body] = position
+    out_body_qd[body] = velocity
+    body_affine[body] = wp.transpose(matrix)
+    body_valid[body] = True
+    joint = world_free_joint_for_body[body]
+    if joint >= 0:
+        # Use register values; other threads need not have written their bodies yet.
+        joint_position, joint_velocity = _free_joint_state(
+            wp.transform_identity(),
+            wp.spatial_vector(),
+            wp.vec3(),
+            position,
+            velocity,
+            body_com[body],
+            joint_X_p[joint],
+            joint_X_c[joint],
+            False,
+        )
+        _store_free_joint_state(joint, joint_position, joint_velocity, joint_q_start, joint_qd_start, joint_q, joint_qd)
 
 
 @wp.kernel(enable_backward=False)

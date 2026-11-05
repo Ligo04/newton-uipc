@@ -1,0 +1,1 @@
+Batch SolverUIPC joint control and state transfers across articulations, and fuse world-root FREE joint recovery into ABD body readback. Existing solver configuration and joint control APIs require no changes.

@@ -1090,6 +1090,138 @@ class TestUIPCArmatureRuntimeRefresh(unittest.TestCase):
 
 
 @unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+class TestUIPCJointTransferBatches(unittest.TestCase):
+    """Joint transfers must preserve state while scaling across articulations."""
+
+    def test_mixed_joint_transfers_across_worlds(self):
+        modes = (
+            JointTargetMode.POSITION,
+            JointTargetMode.POSITION_VELOCITY,
+            JointTargetMode.VELOCITY,
+            JointTargetMode.EFFORT,
+            JointTargetMode.NONE,
+        )
+        builder = newton.ModelBuilder(gravity=wp.vec3(0.0))
+        active_joints = []
+        for _ in range(2):
+            builder.begin_world()
+            for mode in modes:
+                for joint_type in (JointType.REVOLUTE, JointType.PRISMATIC):
+                    # Interleaving FREE joints makes q and qd offsets differ.
+                    root = builder.add_body(xform=wp.transform(wp.vec3(len(active_joints), 0.0, 2.0)))
+                    builder.add_shape_box(root, hx=0.05, hy=0.04, hz=0.03)
+                    child = builder.add_link(xform=wp.transform(wp.vec3(len(active_joints), 1.0, 2.0)))
+                    builder.add_shape_box(child, hx=0.05, hy=0.04, hz=0.03)
+                    if joint_type == JointType.REVOLUTE:
+                        joint = builder.add_joint_revolute(-1, child, axis=newton.Axis.Y)
+                    else:
+                        joint = builder.add_joint_prismatic(-1, child, axis=newton.Axis.Y)
+                    builder.add_articulation([joint])
+                    dof = builder.joint_qd_start[joint]
+                    builder.joint_target_mode[dof] = int(mode)
+                    builder.joint_target_ke[dof] = 10.0
+                    builder.joint_target_kd[dof] = 1.0
+                    active_joints.append((joint, mode))
+            builder.end_world()
+        model = builder.finalize()
+        solver = newton.solvers.SolverUIPC(
+            model, backend="none", logger_level=uipc.Logger.Error, implicit_pd=True, auto_sync_inertia=False
+        )
+        solver.initialize()
+        joints = solver._articulation_builder
+        control = model.control()
+        target_q = np.arange(model.joint_coord_count, dtype=np.float32) * 0.01
+        target_qd = np.arange(model.joint_dof_count, dtype=np.float32) * 0.02
+        effort = np.arange(model.joint_dof_count, dtype=np.float32) * 0.03
+        control.joint_target_q.assign(target_q)
+        control.joint_target_qd.assign(target_qd)
+        control.joint_f.assign(effort)
+        joints.cache_joint_control(control)
+        joints.sync_control_transfers()
+
+        with patch.object(wp, "launch", wraps=wp.launch) as launches, patch.object(wp, "copy", wraps=wp.copy) as copies:
+            joints.cache_joint_control(control)
+        joints.sync_control_transfers()
+        for art in joints.articulations.values():
+            for joint in art.active_joint_indices:
+                local = art._joint_to_local[joint]
+                mode = JointTargetMode(int(model.joint_target_mode.numpy()[art._joint_qd_start[joint]]))
+                q = art._joint_q_start[joint]
+                qd = art._joint_qd_start[joint]
+                self.assertEqual(int(art.is_constrained.numpy()[local]), int(mode in modes[:3]))
+                self.assertEqual(int(art.is_force_constrained.numpy()[local]), int(mode == JointTargetMode.EFFORT))
+                if mode in modes[:2]:
+                    self.assertAlmostEqual(float(art.target_position.numpy()[local]), float(target_q[q]))
+                expected_velocity = target_qd[qd] if mode in modes[1:3] else 0.0
+                self.assertAlmostEqual(float(art.target_velocity.numpy()[local]), float(expected_velocity))
+                if mode == JointTargetMode.EFFORT:
+                    self.assertAlmostEqual(float(art.target_force.numpy()[local]), float(effort[qd]))
+
+        # Supply measured edge coordinates without running the physics backend.
+        for art in joints.articulations.values():
+            for joint in art.active_joint_indices:
+                geo = art.joint_geo_slots[joint].geometry()
+                field = "angle" if art._joint_is_revolute[joint] else "distance"
+                attr = geo.edges().find(field)
+                if attr is None:
+                    attr = geo.edges().create(field, 0.0)
+                uipc_articulation_builder._view_attr(attr)[art._joint_edge_idx[joint]] = 0.1 * (joint + 1)
+        joints.read_joint_state_pre_advance()
+        for art in joints.articulations.values():
+            for joint in art.active_joint_indices:
+                geo = art.joint_geo_slots[joint].geometry()
+                field = "angle" if art._joint_is_revolute[joint] else "distance"
+                uipc_articulation_builder._view_attr(geo.edges().find(field))[art._joint_edge_idx[joint]] += 0.01
+        joints.read_joint_state_post_retrieve()
+        state = model.state()
+        joints.write_joint_readback(state)
+        with (
+            patch.object(wp, "launch", wraps=wp.launch) as read_launches,
+            patch.object(wp, "copy", wraps=wp.copy) as read_copies,
+        ):
+            joints.write_joint_readback(state)
+        q = state.joint_q.numpy()
+        qd = state.joint_qd.numpy()
+        for art in joints.articulations.values():
+            for joint in art.active_joint_indices:
+                self.assertAlmostEqual(float(q[art._joint_q_start[joint]]), 0.1 * (joint + 1) + 0.01, places=5)
+                self.assertAlmostEqual(float(qd[art._joint_qd_start[joint]]), 0.01 / solver._dt, places=5)
+        ref_q = wp.zeros_like(state.joint_q)
+        ref_qd = wp.zeros_like(state.joint_qd)
+        newton.eval_ik(model, state, ref_q, ref_qd)
+        free_indices = np.flatnonzero(model.joint_type.numpy() == int(JointType.FREE))
+        for joint in free_indices:
+            qs = int(model.joint_q_start.numpy()[joint])
+            qds = int(model.joint_qd_start.numpy()[joint])
+            np.testing.assert_allclose(q[qs : qs + 7], ref_q.numpy()[qs : qs + 7], atol=1.0e-6)
+            np.testing.assert_allclose(qd[qds : qds + 6], ref_qd.numpy()[qds : qds + 6], atol=1.0e-6)
+        self.assertEqual(launches.call_count, 1)
+        self.assertEqual(copies.call_count, 2)
+        self.assertEqual(read_launches.call_count, 2)
+        self.assertEqual(read_copies.call_count, 1)
+
+        # Optional controls and q-only CPU output still use the same scatter semantics.
+        control.joint_target_q = None
+        control.joint_target_qd = None
+        control.joint_f = None
+        joints.cache_joint_control(control)
+        joints.sync_control_transfers()
+        for art in joints.articulations.values():
+            if art.num_active_joints:
+                np.testing.assert_array_equal(art.target_velocity.numpy(), 0.0)
+                np.testing.assert_array_equal(art.is_force_constrained.numpy(), 0)
+        state.joint_q = state.joint_q.to("cpu")
+        state.joint_qd = None
+        joints.write_joint_readback(state)
+        wp.synchronize_device()
+        for art in joints.articulations.values():
+            for joint in art.active_joint_indices:
+                self.assertAlmostEqual(
+                    float(state.joint_q.numpy()[art._joint_q_start[joint]]), 0.1 * (joint + 1) + 0.01, places=5
+                )
+
+
+@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
 class TestUIPCCacheControlGraphCapture(unittest.TestCase):
     """``cache_joint_control`` must stay CUDA-graph capturable.
 
