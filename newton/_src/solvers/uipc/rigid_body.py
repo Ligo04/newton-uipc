@@ -20,6 +20,7 @@ from newton import BodyFlags, GeoType, Model, ShapeFlags
 
 from .converter import (
     UIpcMappingInfo,
+    _spatial_to_vel_mat44_kernel,
     _transform_to_mat44_kernel,
     build_body_mesh,
     newton_transform_to_mat4,
@@ -38,48 +39,6 @@ class _BodyInfo:
     contact_elem: Any
     is_kinematic: bool
     kappa: float
-
-
-def _compute_shape_key(model: Model, body_idx: int) -> tuple[Any, ...] | None:
-    """Compute a lightweight key that identifies a body's canonical shape.
-
-    Two bodies with the same shape_key produce identical meshes from
-    :func:`build_body_mesh`. The key is built from per-shape
-    ``(geo_type, scale, shape_transform)`` tuples (and ``id(shape_source)``
-    for mesh/convex-mesh types), avoiding the cost of full mesh generation.
-
-    Returns:
-        A hashable tuple, or ``None`` if the body has no shapes.
-    """
-    if (
-        model.shape_body is None
-        or model.shape_type is None
-        or model.shape_transform is None
-        or model.shape_scale is None
-    ):
-        return None
-
-    shape_body_np = model.shape_body.numpy()
-    shape_type_np = model.shape_type.numpy()
-    shape_transform_np = model.shape_transform.numpy()
-    shape_scale_np = model.shape_scale.numpy()
-
-    parts: list[tuple[Any, ...]] = []
-    for s in range(model.shape_count):
-        if shape_body_np[s] != body_idx:
-            continue
-        geo_type = int(shape_type_np[s])
-        if geo_type == int(GeoType.PLANE):
-            continue
-        scale = tuple(float(x) for x in shape_scale_np[s])
-        tf = shape_transform_np[s].tobytes()
-        if geo_type in (int(GeoType.MESH), int(GeoType.CONVEX_MESH)):
-            src_id = id(model.shape_source[s])
-            parts.append((geo_type, scale, tf, src_id))
-        else:
-            parts.append((geo_type, scale, tf))
-
-    return tuple(parts) if parts else None
 
 
 class RigidBodyBuilder:
@@ -110,13 +69,15 @@ class RigidBodyBuilder:
         # Track whether prismatic joints absorb armature through aim drive.
         self._implicit_pd = implicit_pd
 
-        # Body world transforms — populated by init_body_transforms()
+        # Body world transforms and affine velocities — populated by init_body_transforms()
         self._body_transforms: np.ndarray | None = None
+        self._body_velocities: np.ndarray | None = None
 
         # Cache host-side numpy views (computed lazily, shared across methods)
         self._shape_body_np: np.ndarray | None = None
         self._shape_type_np: np.ndarray | None = None
         self._shape_transform_np: np.ndarray | None = None
+        self._shape_scale_np: np.ndarray | None = None
         self._shape_constitutions = self._constitution_values("shape_constitution", model.shape_count, "")
         self._validate_constitutions()
 
@@ -182,10 +143,10 @@ class RigidBodyBuilder:
         return True
 
     def init_body_transforms(self) -> np.ndarray | None:
-        """Initialize body transforms from ``model.body_q``.
+        """Initialize body transforms and affine velocities from the Newton model.
 
-        Seeds ``self._body_transforms`` from the builder's initial body
-        poses using a batched Warp kernel.  Must be called **before**
+        Seeds transforms and velocities from the builder's initial body
+        poses and spatial velocities using batched Warp kernels. Must be called **before**
         :meth:`build_affine_bodies` so that per-instance world-space
         transforms are available.
 
@@ -208,6 +169,15 @@ class RigidBodyBuilder:
                 device=model.device,
             )
             self._body_transforms = out.numpy().reshape(n, 4, 4)
+            if model.body_qd is not None and model.body_com is not None:
+                velocities = wp.empty(n, dtype=wp.mat44d, device=model.device)
+                wp.launch(
+                    _spatial_to_vel_mat44_kernel,
+                    dim=n,
+                    inputs=[model.body_qd, model.body_q, model.body_com, indices, velocities],
+                    device=model.device,
+                )
+                self._body_velocities = velocities.numpy().reshape(n, 4, 4)
         else:
             self._body_transforms = np.tile(np.eye(4, dtype=np.float64), (n, 1, 1))
 
@@ -333,6 +303,32 @@ class RigidBodyBuilder:
             return actor_elem
         return env_elem
 
+    def _compute_shape_key(self, body_idx: int) -> tuple[Any, ...] | None:
+        """Identify a canonical mesh from cached, body-local shape data.
+
+        Reuse the body-to-shape map instead of copying and scanning every
+        shape array for every body in a large instanced scene.
+        """
+        if not self._ensure_shape_cache() or self._model.shape_scale is None:
+            return None
+        if self._shape_scale_np is None:
+            self._shape_scale_np = self._model.shape_scale.numpy()
+        assert self._shape_type_np is not None
+        assert self._shape_transform_np is not None
+
+        parts: list[tuple[Any, ...]] = []
+        for shape in self._mapping.body_shapes.get(body_idx, ()):
+            geo_type = int(self._shape_type_np[shape])
+            if geo_type == int(GeoType.PLANE):
+                continue
+            scale = tuple(float(x) for x in self._shape_scale_np[shape])
+            transform = self._shape_transform_np[shape].tobytes()
+            if geo_type in (int(GeoType.MESH), int(GeoType.CONVEX_MESH)):
+                parts.append((geo_type, scale, transform, id(self._model.shape_source[shape])))
+            else:
+                parts.append((geo_type, scale, transform))
+        return tuple(parts) if parts else None
+
     def build_affine_bodies(
         self,
         env_elem: ContactElement,
@@ -414,7 +410,7 @@ class RigidBodyBuilder:
         for b in range(body_range[0], body_range[1]):
             if b in self._mapping.fem_rod_bodies:
                 continue
-            sk = _compute_shape_key(model, b)
+            sk = self._compute_shape_key(b)
             if sk is None:
                 continue
 
@@ -521,6 +517,14 @@ class RigidBodyBuilder:
             for i, info in enumerate(group_bodies):
                 if info.is_kinematic:
                     is_fixed_view[i] = 1  # pyright: ignore[reportArgumentType]
+
+            if self._body_velocities is not None:
+                velocity = sc.instances().find(uipc_builtin.velocity)
+                if velocity is None:
+                    velocity = sc.instances().create(uipc_builtin.velocity, np.zeros((4, 4), dtype=np.float64))
+                velocity_view = _view_attr(velocity)
+                for i, info in enumerate(group_bodies):
+                    velocity_view[i] = self._body_velocities[info.body_idx]
 
             # Create UIPC object and geometry slot
             body_labels = "_".join(str(info.body_idx) for info in group_bodies)

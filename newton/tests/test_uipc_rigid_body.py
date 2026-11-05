@@ -107,6 +107,58 @@ class TestUIPCRigidBodyBuilder(unittest.TestCase):
             np.array([3.0e8, 3.0e8], dtype=np.float32),
         )
 
+    def test_initial_velocities_preserve_instancing(self):
+        """Seed distinct linear and angular velocities on shared geometry instances."""
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
+        newton.solvers.SolverUIPC.register_custom_attributes(builder)
+        body_a = self._add_box_body(builder, 0.0)
+        body_b = self._add_box_body(builder, 0.3)
+        builder.body_qd[body_a] = wp.spatial_vector(0.3, 0.0, 0.0, 0.0, 0.0, 1.0)
+        builder.body_qd[body_b] = wp.spatial_vector(0.0, -0.2, 0.0, 0.0, 0.0, 0.0)
+        model = builder.finalize()
+        solver = newton.solvers.SolverUIPC(
+            model, backend="none", logger_level=uipc.Logger.Error, auto_sync_inertia=False
+        )
+        solver.initialize(model.state())
+
+        shared_slot = solver.mapping.body_geo_slots[body_a]
+        self.assertIs(shared_slot, solver.mapping.body_geo_slots[body_b])
+        np.testing.assert_allclose(
+            uipc.view(shared_slot.geometry().instances().find("velocity")),
+            np.array(
+                [
+                    [[0.0, -1.0, 0.0, 0.3], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]],
+                    [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, -0.2], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]],
+                ]
+            ),
+            atol=1.0e-7,
+        )
+
+    def test_compound_local_transforms_distinguish_instances(self):
+        """Share equal compound shapes and keep different local offsets separate."""
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
+        newton.solvers.SolverUIPC.register_custom_attributes(builder)
+        bodies = []
+        for x, offset in ((0.0, 0.2), (0.3, 0.2), (0.6, -0.2)):
+            body = self._add_box_body(builder, x)
+            builder.add_shape_box(
+                body,
+                xform=wp.transform(wp.vec3(offset, 0.0, 0.0), wp.quat_identity()),
+                hx=0.025,
+                hy=0.05,
+                hz=0.05,
+            )
+            bodies.append(body)
+        model = builder.finalize()
+        solver = newton.solvers.SolverUIPC(
+            model, backend="none", logger_level=uipc.Logger.Error, auto_sync_inertia=False
+        )
+        solver.initialize(model.state())
+
+        slots = [solver.mapping.body_geo_slots[body] for body in bodies]
+        self.assertIs(slots[0], slots[1])
+        self.assertIsNot(slots[0], slots[2])
+
     @unittest.skipUnless(USD_AVAILABLE, "Requires usd-core")
     def test_usd_rigid_constitutions_preserve_static_and_dynamic_roles(self):
         """Import ABD bodies and split static ABD and Empty collision geometry."""
