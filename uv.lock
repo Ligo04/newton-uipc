@@ -3745,7 +3745,7 @@ wheels = [
 
 [[package]]
 name = "newton"
-version = "1.8.0.dev0"
+version = "1.9.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "pyuipc", marker = "python_full_version < '3.14' or (extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13')" },

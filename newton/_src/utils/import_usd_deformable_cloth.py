@@ -28,6 +28,7 @@ from .import_usd_deformable_utils import (
     _deformable_body_skip_reason,
     _deformable_collision_enabled,
     _DeformableImportContext,
+    _has_graphics_material_subsets,
     _is_ignored_path,
     _read_deformable_element_array,
     _resolve_deformable_density,
@@ -598,6 +599,10 @@ def _deformable_import_cloth(ctx: _DeformableImportContext) -> None:
         if not collision_enabled:
             _warn_collision_not_disableable(path)
 
+        # The cloth gets one color and opacity, so subset materials are ignored, with the visual-mesh importer's message.
+        if _has_graphics_material_subsets(prim):
+            logger.warning("%s: graphics material subsets are not supported; using only the mesh-level material.", path)
+        material_props = usd.resolve_material_properties_for_prim(prim, include_subsets=False)
         p0, t0, e0 = builder.particle_count, builder.tri_count, builder.edge_count
         cloth_row = len(builder.surface_label)
         group_values = usd.get_custom_attribute_values(prim, group_attributes)
@@ -613,6 +618,8 @@ def _deformable_import_cloth(ctx: _DeformableImportContext) -> None:
             tri_ka=tri_ka,
             edge_ke=edge_ke,
             particle_radius=particle_radius,
+            color=material_props.get("color"),
+            opacity=material_props.get("opacity"),
             label=path,
         )
         builder._process_custom_attributes(
