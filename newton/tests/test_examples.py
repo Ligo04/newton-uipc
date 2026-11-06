@@ -2501,6 +2501,13 @@ if _HAS_UIPC:
     )
     add_example_test(
         TestUIPCSoftbodyExamples,
+        name="uipc.softbody.example_uipc_softbody_franka_lulu",
+        devices=cuda_test_devices,
+        test_options={"usd_required": True, "num-frames": 660},
+        use_viewer=True,
+    )
+    add_example_test(
+        TestUIPCSoftbodyExamples,
         name="uipc.multiphysics.example_uipc_softbody_dropping_to_cloth",
         devices=cuda_test_devices,
         test_options={"num-frames": 1},

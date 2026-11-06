@@ -33,6 +33,8 @@ def set_gripper_q(joint_q: wp.array2d[float], finger_pos: wp.array[float], idx0:
 
 
 class Example:
+    workspace = "/tmp/newton_uipc/uipc_softbody_franka"
+
     def __init__(self, viewer, args=None):
         self.sim_substeps = 1
         self.iterations = 5
@@ -61,6 +63,40 @@ class Example:
         table_cfg = ModelBuilder.ShapeConfig(mu=0.8, ke=1.0e4, kd=1.0e1)
         self.scene.add_shape_box(table_body, hx=0.4, hy=0.4, hz=0.1, cfg=table_cfg, label="table")
 
+        self.create_soft_body()
+
+        self.scene.color()
+        self.model = self.scene.finalize(requires_grad=False)
+
+        self.state_0 = self.model.state()
+        self.state_1 = self.model.state()
+        self.control = self.model.control()
+        self.contacts = newton.CollisionPipeline(self.model).contacts()
+
+        self.viewer.set_model(self.model)
+        self.viewer.set_camera(wp.vec3(-0.6, 0.6, 1.24), -42.0, -58.0)
+
+        eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
+        self.set_up_ik()
+
+        self.solver = SolverUIPC(
+            workspace=self.workspace,
+            model=self.model,
+            dt=self.sim_dt,
+            logger_level=uipc.Logger.Warn,
+            auto_sync_inertia=False,
+        )
+        self.solver.set_contact(enable=True, d_hat=self.soft_body_contact_margin)
+        self.solver.initialize(self.state_0)
+
+        self.joint_targets_flat = wp.zeros_like(self.control.joint_target_q)
+        wp.copy(self.joint_targets_flat, self.model.joint_q)
+        wp.copy(self.control.joint_target_q, self.joint_targets_flat)
+
+        self.viewer._paused = True
+
+    def create_soft_body(self):
+        """Load the duck tetrahedral mesh and place it on the table."""
         duck_path = newton.utils.download_asset("manipulation_objects/rubber_duck")
         usd_stage = Usd.Stage.Open(str(duck_path / "model.usda"))
         prim = usd_stage.GetPrimAtPath("/root/Model/TetMesh")
@@ -78,36 +114,6 @@ class Example:
             k_damp=1.0e-6,
             particle_radius=self.particle_radius,
         )
-
-        self.scene.color()
-        self.model = self.scene.finalize(requires_grad=False)
-
-        self.state_0 = self.model.state()
-        self.state_1 = self.model.state()
-        self.control = self.model.control()
-        self.contacts = newton.CollisionPipeline(self.model).contacts()
-
-        self.viewer.set_model(self.model)
-        self.viewer.set_camera(wp.vec3(-0.6, 0.6, 1.24), -42.0, -58.0)
-
-        eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
-        self.set_up_ik()
-
-        self.solver = SolverUIPC(
-            workspace="/tmp/newton_uipc/uipc_softbody_franka",
-            model=self.model,
-            dt=self.sim_dt,
-            logger_level=uipc.Logger.Warn,
-            auto_sync_inertia=False,
-        )
-        self.solver.set_contact(enable=True, d_hat=self.soft_body_contact_margin)
-        self.solver.initialize(self.state_0)
-
-        self.joint_targets_flat = wp.zeros_like(self.control.joint_target_q)
-        wp.copy(self.joint_targets_flat, self.model.joint_q)
-        wp.copy(self.control.joint_target_q, self.joint_targets_flat)
-
-        self.viewer._paused = True
 
     def set_up_ik(self):
         """Set up GPU IK solver for end-effector pose tracking."""
