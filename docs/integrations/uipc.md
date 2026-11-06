@@ -102,16 +102,17 @@ explicit initialization is recommended whenever you use `configure_scene`,
 
 ## Native sample scenes
 
-Two examples port scenes from
+Three examples port scenes from
 [libuipc-samples](https://github.com/spiriMirror/libuipc-samples/tree/b70f32294e31e9e3dcc12445b72fa9f4698ff5b1):
 
 ```bash
 uv run -m newton.examples uipc_stiff_gipc_benchmark
 uv run -m newton.examples uipc_rigid_wrecking_balls
+uv run -m newton.examples cube-wall-cloth
 ```
 
-Both use Newton's viewer, example browser, and live UIPC statistics. They start
-paused. The first run downloads the source assets at the pinned revision into
+All use Newton's viewer, example browser, and live UIPC statistics. The first
+run downloads the source assets at the pinned revision into
 Newton's asset cache. To reuse an existing checkout, pass
 `--asset-dir /path/to/libuipc-samples/assets/sim_data`.
 
@@ -128,6 +129,13 @@ Newton's asset cache. To reuse an existing checkout, pass
   Original mesh surfaces, body transforms, and densities are preserved; no
   joints or sphere approximations replace the chain and ball. The time step
   is `0.02 s`.
+- **Cube wall cloth (sample 93):** 1,920 affine bodies fall onto cloth pinned
+  along its two sides. The port retains the source layout, `100 MPa` ABD
+  rigidity, cloth materials, `strain_rate=10000`, and `0.01 s` time step.
+  The per-triangle shell coefficient is authored through
+  `custom_attributes_triangles={"uipc:tri_strain_rate": values}`. Registered
+  USD cloth imports also accept a `uipc:tri_strain_rate` float array in
+  triangulated face order. Unauthored triangles use the native default `100.0`.
 
 The examples preserve authored scene-relative tolerances and contact settings.
 Native UIPC may clamp contact resistance according to its computed scene scale.

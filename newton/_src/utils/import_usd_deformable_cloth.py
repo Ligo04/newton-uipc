@@ -19,6 +19,7 @@ import warp as wp
 
 from ..exceptions import NewtonDeprecationWarning, NewtonWarning
 from ..geometry.rest_shape import _dihedral_angles, _triangle_rest_geometry
+from ..sim.model import Model
 from .import_usd_deformable_utils import (
     _AOUSD_DEFAULT_POISSONS_RATIO,
     _AOUSD_DEFAULT_THICKNESS,
@@ -387,6 +388,7 @@ def _deformable_import_cloth(ctx: _DeformableImportContext) -> None:
     path_cloth_attrs = ctx.path_cloth_attrs
     group_frequency = "uipc:cloth"
     group_attributes = builder.get_custom_attributes_by_frequency([group_frequency])
+    triangle_attributes = builder.get_custom_attributes_by_frequency([Model.AttributeFrequency.TRIANGLE])
 
     if not (root_prim and root_prim.IsValid()):
         return
@@ -606,6 +608,24 @@ def _deformable_import_cloth(ctx: _DeformableImportContext) -> None:
         p0, t0, e0 = builder.particle_count, builder.tri_count, builder.edge_count
         cloth_row = len(builder.surface_label)
         group_values = usd.get_custom_attribute_values(prim, group_attributes)
+        triangle_values = usd._get_deformable_custom_attribute_values(prim, triangle_attributes)
+        imported_triangle_values = {}
+        for attr in triangle_attributes:
+            if attr.key not in triangle_values:
+                continue
+            values = triangle_values[attr.key]
+            actual_count = values.shape[0] if values.ndim else 1
+            if values.ndim == 0 or actual_count != len(tri_faces):
+                logger.warning(
+                    "%s: registered cloth attribute '%s' has array length %s, which does not match "
+                    "triangle count %s; skipping the attribute.",
+                    path,
+                    attr.usd_attribute_name,
+                    actual_count,
+                    len(tri_faces),
+                )
+                continue
+            imported_triangle_values[attr.key] = values
         builder.add_cloth_mesh(
             pos=wp.vec3(0.0, 0.0, 0.0),
             rot=wp.quat_identity(),
@@ -621,6 +641,7 @@ def _deformable_import_cloth(ctx: _DeformableImportContext) -> None:
             color=material_props.get("color"),
             opacity=material_props.get("opacity"),
             label=path,
+            custom_attributes_triangles=imported_triangle_values,
         )
         builder._process_custom_attributes(
             cloth_row,

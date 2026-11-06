@@ -171,6 +171,7 @@ world mask 分别更新 body 位置和速度。
 | `default_tri_ke` | `100.0` | `tri_materials[:, 0]` | 使用：写入 cloth triangle `mu`。 |
 | `default_tri_ka` | `100.0` | `tri_materials[:, 1]` | 使用：写入 cloth triangle `lambda`。 |
 | `default_tri_kd` | `10.0` | `tri_materials[:, 2]` | 未使用。 |
+| `uipc:tri_strain_rate` | `100.0` | 每个布料三角形的自定义属性 | 映射到 strain-limiting Baraff-Witkin shell 的 `strain_rate`，值须为有限正数。通过 `custom_attributes_triangles` 设置，或在 USD simulation mesh 上以同名 `float[]` 按三角化后的三角形顺序设置。 |
 | `default_tri_drag` | `0.0` | `tri_materials[:, 3]` | 未使用。 |
 | `default_tri_lift` | `0.0` | `tri_materials[:, 4]` | 未使用。 |
 | `default_edge_ke` | `100.0` | `edge_bending_properties[:, 0]` | 使用：写入 cloth edge `bending_stiffness`。 |

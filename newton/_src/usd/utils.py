@@ -681,11 +681,11 @@ def get_custom_attribute_values(
     return out
 
 
-def _get_tetmesh_custom_attribute_values(
+def _get_deformable_custom_attribute_values(
     prim: Usd.Prim,
     custom_attributes: Sequence[ModelBuilder.CustomAttribute],
 ) -> dict[str, np.ndarray]:
-    """Read builder-declared TetMesh arrays without inferring their frequency."""
+    """Read builder-declared deformable arrays without inferring their frequency."""
     out: dict[str, np.ndarray] = {}
     for spec in custom_attributes:
         usd_name = spec.usd_attribute_name

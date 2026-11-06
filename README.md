@@ -1058,7 +1058,11 @@ python -m newton.examples --describe robot_omniwheel
         <img width="320" src="docs/images/examples/example_uipc_rigid_wrecking_balls.jpg" alt="UIPC Rigid Wrecking Balls">
       </a>
     </td>
-    <td align="center" width="33%"></td>
+    <td align="center" width="33%">
+      <a href="newton/examples/uipc/multiphysics/example_cube_wall_cloth.py">
+        <img width="320" src="docs/images/examples/example_cube_wall_cloth.jpg" alt="Cube Wall Cloth: 1920 UIPC affine bodies on pinned cloth">
+      </a>
+    </td>
   </tr>
   <tr>
     <td align="center" width="33%">
@@ -1067,7 +1071,9 @@ python -m newton.examples --describe robot_omniwheel
     <td align="center" width="33%">
       <code>python -m newton.examples uipc_rigid_wrecking_balls</code>
     </td>
-    <td align="center" width="33%"></td>
+    <td align="center" width="33%">
+      <code>python -m newton.examples cube-wall-cloth</code>
+    </td>
   </tr>
   <tr>
     <td colspan="3"><h3>Softbody Examples</h3></td>

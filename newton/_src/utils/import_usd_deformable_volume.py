@@ -146,13 +146,13 @@ def _deformable_import_volume(ctx: _DeformableImportContext) -> None:
             for attr in builder.custom_attributes.values()
             if attr.frequency in supported_frequencies and attr.usd_attribute_name != "*"
         ]
-        registered_values = usd._get_tetmesh_custom_attribute_values(prim, registered_attributes)
+        registered_values = usd._get_deformable_custom_attribute_values(prim, registered_attributes)
         once_attributes = [
             attr
             for attr in builder.custom_attributes.values()
             if attr.frequency == Model.AttributeFrequency.ONCE and attr.usd_attribute_name != "*"
         ]
-        once_values = usd._get_tetmesh_custom_attribute_values(prim, once_attributes)
+        once_values = usd._get_deformable_custom_attribute_values(prim, once_attributes)
         for attr in once_attributes:
             if attr.key in once_values:
                 warnings.warn(

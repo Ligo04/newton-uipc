@@ -325,6 +325,12 @@ class ClothBuilder:
             faces = np.asarray(_view_attr(sc.triangles().topo()), dtype=np.int32).reshape(-1, 3)
             full_thickness = 2.0 * np.mean(radii[faces], axis=1)
             lam = (lam + 2.0 * mu) * full_thickness
+            strain_rates = getattr(getattr(model, "uipc", None), "tri_strain_rate", None)
+            if strain_rates is not None:
+                values = strain_rates.numpy()[selected_tri_ids]
+                if not np.isfinite(values).all() or np.any(values <= 0.0):
+                    raise ValueError("uipc:tri_strain_rate must contain finite positive values.")
+                _view_attr(sc.triangles().find("strain_rate"))[:] = values
         mu_view[:] = np.asarray(mu, dtype=mu_view.dtype)
         lambda_view[:] = np.asarray(lam, dtype=lambda_view.dtype)
 

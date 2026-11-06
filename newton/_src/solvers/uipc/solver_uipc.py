@@ -197,6 +197,8 @@ class SolverUIPC(SolverBase):
         ``uipc:shape_constitution`` selects ABD or Empty for world-static
         colliders. Both read ``uipc:constitution`` from the corresponding USD prim.
         Cloth and deformable groups read the same token from their simulation mesh.
+        ``uipc:tri_strain_rate`` maps the per-triangle strain-limiting shell
+        coefficient, with the native default of ``100.0``.
         ``uipc:rod_model`` reads it from simulation curves and selects the
         HookeanSpring centerline approximation; bending is applied separately.
         """
@@ -220,6 +222,17 @@ class SolverUIPC(SolverBase):
                 default="abd",
                 namespace="uipc",
                 usd_attribute_name="uipc:constitution",
+            )
+        )
+        builder.add_custom_attribute(
+            ModelBuilder.CustomAttribute(
+                name="tri_strain_rate",
+                frequency=Model.AttributeFrequency.TRIANGLE,
+                assignment=Model.AttributeAssignment.MODEL,
+                dtype=wp.float32,
+                default=100.0,
+                namespace="uipc",
+                usd_attribute_name="uipc:tri_strain_rate",
             )
         )
         builder.add_custom_attribute(

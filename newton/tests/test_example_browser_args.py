@@ -500,6 +500,8 @@ class TestExampleDiscovery(unittest.TestCase):
     def test_get_examples_discovers_grouped_uipc_examples(self):
         examples = newton.examples.get_examples()
 
+        self.assertEqual(examples["cube-wall-cloth"], "newton.examples.uipc.multiphysics.example_cube_wall_cloth")
+
         self.assertEqual(
             examples["uipc_cloth_franka"],
             "newton.examples.uipc.cloth.example_uipc_cloth_franka",
@@ -541,6 +543,12 @@ class TestExampleDiscovery(unittest.TestCase):
                 if group == "multiphysics":
                     self.assertEqual(defaults.fem_preconditioner, "mas")
                     self.assertEqual(parser.parse_args(["--fem-preconditioner", "diag"]).fem_preconditioner, "diag")
+
+        module = importlib.import_module("newton.examples.uipc.multiphysics.example_cube_wall_cloth")
+        defaults = newton.examples.default_args(module.Example.create_parser())
+        self.assertEqual(defaults.num_frames, 100)
+        self.assertEqual(defaults.use_graph, 2)
+        self.assertEqual(defaults.fem_preconditioner, "mas")
 
     def test_example_browser_uses_nested_uipc_group_names(self):
         class _BrowserViewer(_StubViewer):

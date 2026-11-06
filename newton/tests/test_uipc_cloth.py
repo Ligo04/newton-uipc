@@ -160,6 +160,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
                 tri_ka=1.0e3,
                 tri_kd=0.0,
                 label=f"cloth_{i}",
+                custom_attributes_triangles={"uipc:tri_strain_rate": [10000.0] * 8} if i == 1 else None,
             )
 
         model = builder.finalize()
@@ -172,6 +173,9 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
         self.assertEqual(model.uipc.cloth_label, ["cloth_0", "cloth_1"])
         self.assertEqual(len(solver.mapping.cloth_geo_slots), 2)
         self.assertEqual(len(solver.mapping.cloth_particle_indices), 2)
+        for index, slot in enumerate(solver.mapping.cloth_geo_slots):
+            strain_rates = np.asarray(view(slot.geometry().triangles().find("strain_rate")))
+            np.testing.assert_array_equal(strain_rates, 10000.0 if index == 1 else 100.0)
 
     @staticmethod
     def _add_minimal_cloth(builder: newton.ModelBuilder) -> None:
@@ -188,6 +192,17 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
             tri_ka=1.0e3,
             tri_kd=0.0,
         )
+
+    def test_strain_limiting_rejects_invalid_strain_rates(self):
+        """Reject nonpositive and nonfinite triangle coefficients before creating a world."""
+        builder = newton.ModelBuilder()
+        newton.solvers.SolverUIPC.register_custom_attributes(builder)
+        self._add_minimal_cloth(builder)
+        model = builder.finalize("cpu")
+        for value in (0.0, -1.0, float("nan"), float("inf")):
+            model.uipc.tri_strain_rate.fill_(value)
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "finite positive"):
+                newton.solvers.SolverUIPC(model, backend="none").initialize(model.state())
 
     def test_register_custom_attributes_adds_default_cloth_model(self):
         """Materialize default constitutions and range metadata for cloth rows."""
@@ -264,7 +279,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
 
     @unittest.skipUnless(USD_AVAILABLE, "Requires usd-core")
     def test_usd_constitution_selects_imported_cloth_models(self):
-        """Import schema and custom membrane tokens into the correct cloth rows."""
+        """Import membrane tokens and triangle coefficients into the correct cloth rows."""
         builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
         self._add_minimal_cloth(builder)
@@ -286,7 +301,17 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
                     attr = prim.CreateAttribute("uipc:constitution", Sdf.ValueTypeNames.Token)
                 if constitution is not None:
                     attr.Set(constitution)
-            builder.add_usd(stage, ignore_paths=["/World/Ignored"])
+                if name == "BaraffWitkin":
+                    prim.CreateAttribute("uipc:tri_strain_rate", Sdf.ValueTypeNames.FloatArray).Set([10000.0, 20000.0])
+                elif name == "Default":
+                    prim.CreateAttribute("uipc:tri_strain_rate", Sdf.ValueTypeNames.FloatArray).Set([500.0])
+            if use_schema:
+                with self.assertLogs("newton", level="WARNING") as caught:
+                    builder.add_usd(stage, ignore_paths=["/World/Ignored"])
+                self.assertIn("uipc:tri_strain_rate", "\n".join(caught.output))
+                self.assertIn("triangle count 2", "\n".join(caught.output))
+            else:
+                builder.add_usd(stage, ignore_paths=["/World/Ignored"])
 
         model = builder.finalize(device="cpu")
         self.assertEqual(
@@ -307,6 +332,12 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
             int(view(slot.geometry().meta().find("constitution_uid"))[0]) for slot in solver.mapping.cloth_geo_slots
         ]
         self.assertEqual(uids, [bw_uid, bw_uid, neo_uid, bw_uid, neo_uid])
+        np.testing.assert_array_equal(
+            model.uipc.tri_strain_rate.numpy(), [100.0] * 2 + [10000.0, 20000.0] + [100.0] * 6
+        )
+        np.testing.assert_array_equal(
+            view(solver.mapping.cloth_geo_slots[1].geometry().triangles().find("strain_rate")), [10000.0, 20000.0]
+        )
         for slot in solver.mapping.cloth_geo_slots:
             self.assertIsNotNone(slot.geometry().edges().find("bending_stiffness"))
 

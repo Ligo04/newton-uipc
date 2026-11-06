@@ -22,6 +22,7 @@ import newton
 from newton.tests.unittest_utils import find_nan_members
 
 _DEPRECATED_WARP_CONFIG_KEYS = {"quiet", "verbose"}
+_EXAMPLE_DISPLAY_NAMES = {"cube_wall_cloth": "cube-wall-cloth"}
 logger = logging.getLogger(__name__)
 
 
@@ -730,6 +731,7 @@ def get_examples() -> dict[str, str]:
     examples_dir = get_source_directory()
     for rel_parts, filename in _iter_example_files(examples_dir):
         example_name = filename[8:-3]
+        example_name = _EXAMPLE_DISPLAY_NAMES.get(example_name, example_name)
         module_path = ".".join(("newton", "examples", *rel_parts, filename[:-3]))
         example_map[example_name] = module_path
     return dict(sorted(example_map.items()))
