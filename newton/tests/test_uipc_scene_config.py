@@ -28,6 +28,7 @@ class TestUIPCSceneConfig(unittest.TestCase):
         self.assertEqual(solver._scene_config["linear_system"]["use_cuda_graph"], 2)
         self.assertEqual(solver._scene_config["linear_system"]["fem_preconditioner"], "mas")
         self.assertEqual(solver._scene_config["contact"]["constitution"], "ipc")
+        self.assertEqual(solver._scene_config["contact"]["eps_velocity"], 0.001)
 
     def test_explicit_scene_config_preserves_linear_solver_options(self):
         """Preserve explicit scene configuration overrides."""
@@ -37,6 +38,7 @@ class TestUIPCSceneConfig(unittest.TestCase):
         scene_config["linear_system"]["use_cuda_graph"] = 0
         scene_config["linear_system"]["fem_preconditioner"] = "diag"
         scene_config["contact"]["constitution"] = "al-ipc"
+        scene_config["contact"]["eps_velocity"] = 0.004
 
         solver = newton.solvers.SolverUIPC(
             model,
@@ -49,6 +51,32 @@ class TestUIPCSceneConfig(unittest.TestCase):
         self.assertEqual(solver._scene_config["linear_system"]["use_cuda_graph"], 0)
         self.assertEqual(solver._scene_config["linear_system"]["fem_preconditioner"], "diag")
         self.assertEqual(solver._scene_config["contact"]["constitution"], "al-ipc")
+        self.assertEqual(solver._scene_config["contact"]["eps_velocity"], 0.004)
+
+        solver.configure_scene({"contact": {"eps_velocity": 0.002}})
+        self.assertEqual(solver._scene_config["contact"]["eps_velocity"], 0.002)
+
+    def test_scene_config_defaults_friction_transition_velocity(self):
+        """Use 1 mm/s in native scenes when the friction transition is omitted."""
+        model = newton.ModelBuilder().finalize(device="cpu")
+
+        for explicit_config in (False, True):
+            with self.subTest(explicit_config=explicit_config), tempfile.TemporaryDirectory() as workspace:
+                scene_config = None
+                if explicit_config:
+                    scene_config = uipc.Scene.default_config()
+                    scene_config["contact"].pop("eps_velocity")
+                solver = newton.solvers.SolverUIPC(
+                    model,
+                    backend="none",
+                    workspace=workspace,
+                    scene_config=scene_config,
+                    logger_level=uipc.Logger.Error,
+                )
+                solver.initialize()
+
+                velocity = solver.scene.config().find("contact/eps_velocity")
+                self.assertEqual(uipc.view(velocity)[0], 0.001)
 
     def test_explicit_scene_config_defaults_missing_fem_preconditioner_to_mas(self):
         """Use MAS in the UIPC scene when an explicit config omits its selector."""

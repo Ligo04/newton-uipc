@@ -26,7 +26,7 @@ from .utils import _clone_geometry_with_positions, _rest_positions_from_model, _
 def _stable_neo_hookean_lame_coefficients() -> tuple[float, float]:
     """Read the installed constitution's conversion, including newer SNK1 builds."""
     positions = np.ascontiguousarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=np.float64)
-    topology = np.ascontiguousarray(((0, 1, 2, 3),), dtype=np.int32)
+    topology = np.ascontiguousarray(a=((0, 1, 2, 3),), dtype=np.int32)
     reference = uipc_tetmesh(positions, topology)
     label_surface(reference)
     StableNeoHookean().apply_to(reference, ElasticModuli.lame(0.0, 1.0), 1.0)

@@ -14,6 +14,7 @@ Use this skill to work on Newton's UIPC solver integration with repo-local evide
 1. Read `references/uipc-surface-map.md` for the maintained UIPC file map and quick facts.
 2. For docs tasks, read `docs/integrations/uipc.md` and the requested reference doc before editing.
 3. For code or behavior tasks, inspect the current implementation before trusting any summary.
+4. For grasp slip or `contact.eps_velocity` tuning, read [friction tuning](../../../.agents/skills/uipc-contact-tabular/references/friction-tuning.md).
 
 ## Core workflow
 

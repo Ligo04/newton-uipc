@@ -1,6 +1,6 @@
 ---
 name: uipc-contact-tabular
-description: Use when configuring, tuning, or debugging contact behavior in SolverUIPC — friction/stiffness per pair, enabling/disabling contact between specific body categories, adding custom contact elements (e.g. a separate "gripper" element), or overriding the default element of a specific body. Covers the four built-in elements (ground/env/robo/actor), the default tabular inserted by the solver, the `configure_contact_tabular` callback signature, and per-body overrides via the return dict.
+description: Use when configuring, tuning, or debugging contact behavior in SolverUIPC — friction/stiffness per pair, global friction smoothing and eps_velocity, enabling/disabling contact between specific body categories, adding custom contact elements (e.g. a separate "gripper" element), or overriding the default element of a specific body. Covers the four built-in elements (ground/env/robo/actor), the default tabular inserted by the solver, the `configure_contact_tabular` callback signature, and per-body overrides via the return dict.
 ---
 
 # UIPC Contact Tabular
@@ -155,6 +155,13 @@ def setup(tabular, wi, ground, env, robo, actor):
     tabular.insert(pad, robo, 0.5, 1e9, False)  # no self-collision with arm
     return {left_finger_idx + wi * bodies_per_world: pad, right_finger_idx + wi * bodies_per_world: pad}
 ```
+
+### Low-speed grasp slip
+
+`contact.eps_velocity` controls scene-wide friction smoothing. `SolverUIPC`
+defaults to `0.001 m/s`, with explicit configuration values taking precedence.
+For slow sliding, configuration examples, and the measured Lulu comparison,
+read [friction tuning](references/friction-tuning.md).
 
 ### Enabling robot self-collision on a subset of links
 ```python
