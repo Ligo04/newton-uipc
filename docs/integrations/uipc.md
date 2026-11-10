@@ -116,22 +116,25 @@ run downloads the source assets at the pinned revision into
 Newton's asset cache. To reuse an existing checkout, pass
 `--asset-dir /path/to/libuipc-samples/assets/sim_data`.
 
+Each example advances one physics step at 60 Hz. The default frame counts
+preserve the source presets' simulated durations.
+
 - **Sample 88:** two FEM bunnies (159,870 tetrahedra total) coupled to an
   unpinned cloth sheet (8,192 triangles), with a floor at `y = -1`. The port
   uses the source code's actual bunny Young's modulus of `1e4 Pa`; the source
   file's introductory comment instead lists `1e7 Pa`. Cloth retains separate
   stretch (`5e4 Pa`) and shear (`10 Pa`) moduli, bending, density, and thickness.
-  The default time step is `0.01 s`, with semi-implicit Newton and the MAS FEM
+  The default time step is `1/60 s`, with semi-implicit Newton and the MAS FEM
   preconditioner. Use `--fem-preconditioner diag` for the source's diagonal
   preconditioner variant.
 - **Rigid wrecking balls (sample 6):** the original 560 cubes, 13 chain links
   (one fixed), and wrecking ball. The chain is held together by mesh contact.
   Original mesh surfaces, body transforms, and densities are preserved; no
   joints or sphere approximations replace the chain and ball. The time step
-  is `0.02 s`.
+  is `1/60 s`.
 - **Cube wall cloth (sample 93):** 1,920 affine bodies fall onto cloth pinned
   along its two sides. The port retains the source layout, `100 MPa` ABD
-  rigidity, cloth materials, `strain_rate=10000`, and `0.01 s` time step.
+  rigidity, cloth materials, and `strain_rate=10000`, with a `1/60 s` time step.
   The per-triangle shell coefficient is authored through
   `custom_attributes_triangles={"uipc:tri_strain_rate": values}`. Registered
   USD cloth imports also accept a `uipc:tri_strain_rate` float array in
@@ -799,8 +802,12 @@ produce one aggregated warning. Recreate the solver when those properties
 change.
 
 `set_contact` is safe before or after initialization. `set_animator_substep`
-can be called after initialization to change how many times UIPC animator
-callbacks fire within one `world.advance()`.
+can be called after initialization to spread animation constraint targets over
+Newton iterations. For a value `n`, the interpolation ratio is
+`min((iteration + 1) / n, 1)`. Each `world.advance()` advances the configured
+physics time step and updates ordinary frontend animation callbacks once.
+UIPC examples default to one physical advance per 60 Hz frame. UIPC-facing
+`substeps` options control this Animator setting.
 
 ## Solver options
 

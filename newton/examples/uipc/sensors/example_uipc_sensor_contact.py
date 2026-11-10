@@ -23,7 +23,8 @@ STACK_GAP = 0.02
 
 class Example:
     def __init__(self, viewer: newton.viewer.ViewerBase, args):
-        self.fps = 120
+        solver_name = getattr(args, "solver", "uipc")
+        self.fps = 60 if solver_name == "uipc" else 120
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 0.0
         self.sim_substeps = 1
@@ -31,8 +32,6 @@ class Example:
 
         self.viewer = viewer
         self.test_mode = getattr(args, "test", False)
-
-        solver_name = getattr(args, "solver", "uipc")
 
         builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
         if solver_name == "mujoco":

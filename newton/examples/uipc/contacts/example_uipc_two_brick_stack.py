@@ -28,7 +28,7 @@ from newton.examples.uipc.contacts.example_uipc_brick_stacking import (
 )
 
 UIPC_GAP = 0.0001
-DEFAULT_NUM_FRAMES = 60
+DEFAULT_NUM_FRAMES = 30
 WORKSPACE_ROOT = "/tmp/newton_uipc/two_brick_stack"
 # Size underside tubes to interlock the two bricks.
 INTERLOCK_TUBE_OUTER_RADIUS = float(np.hypot(0.5 * PITCH, 0.5 * PITCH) - STUD_RADIUS - UIPC_GAP)
@@ -36,7 +36,7 @@ INTERLOCK_TUBE_OUTER_RADIUS = float(np.hypot(0.5 * PITCH, 0.5 * PITCH) - STUD_RA
 
 class Example:
     def __init__(self, viewer: newton.viewer.ViewerBase, args):
-        self.fps = 120
+        self.fps = 60
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 0.0
         self.sim_substeps = 1

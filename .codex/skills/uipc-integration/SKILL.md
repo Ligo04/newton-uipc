@@ -46,6 +46,23 @@ Use this skill to work on Newton's UIPC solver integration with repo-local evide
 - Contact is computed inside UIPC. Allocate reporting contacts with `CollisionPipeline`, request `ObservableKind.CONTACT_F`, and pass the same contacts and observables to `step` and consumers. UIPC no longer implements `update_contacts` or writes contact forces into state/legacy contact buffers.
 - Global UIPC contact is disabled by default; examples usually call `solver.set_contact(True, d_hat=...)`.
 - UIPC uses a fixed constructor `dt`; do not imply per-step `dt` retunes UIPC.
+- Default UIPC examples and integrations to one temporal substep at 60 Hz,
+  using `dt = 1 / 60` unless the task specifies another target frequency.
+  Pass the same fixed `dt` to the constructor and `step`.
+- Use `solver.set_animator_substep(n)` after `initialize()` for UIPC animation
+  substeps, with a default of one. Route UIPC-facing `substeps` options to this
+  Animator setting. The native Animator progressively applies
+  animation constraint targets across Newton iterations with
+  `alpha = min((newton_iteration + 1) / n, 1)`. One `world.advance()` advances
+  the configured `dt`; ordinary frontend animation callbacks run once per
+  advance. A Python loop over `solver.step()` performs additional physics
+  advances and has its own time-step and controller update semantics.
+- When porting scenes or comparing solvers, align the simulated time advanced
+  per 60 Hz frame and the total simulated duration. Resolve each solver's
+  substeps independently. For example, VBD may take four `1 / 240` s substeps
+  while UIPC takes one `1 / 60` s step; both advance `1 / 60` s per frame.
+  Configure rendering and control rates separately. Use additional UIPC temporal
+  substeps when explicitly requested or established by scenario validation.
 - Active driven/read-back joints are revolute and prismatic. Ball joints constrain anchors but are not active UIPC articulation controls.
 - Most shape, actuator, inertial, and joint-DOF changes are baked at initialization; recreate the solver unless `notify_model_changed` explicitly supports the flag.
 - Rigid AffineBody meshes must be closed and positive-volume; use `ModelBuilder.approximate_meshes` guidance for non-watertight inputs.

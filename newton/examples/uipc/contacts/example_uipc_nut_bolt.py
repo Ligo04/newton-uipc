@@ -125,7 +125,7 @@ def _transform_with_mesh_center(base: wp.transform, center_vec: wp.vec3) -> wp.t
 
 class Example:
     def __init__(self, viewer, args):
-        self.fps = 120
+        self.fps = 60
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 0.0
         self.sim_substeps = 1
@@ -384,8 +384,8 @@ class Example:
     def create_parser():
         parser = newton.examples.create_parser()
         newton.examples.add_world_count_arg(parser)
-        # Gravity-driven threading needs about six seconds to descend 5 mm.
-        parser.set_defaults(world_count=1, num_frames=720)
+        # Allow 15 seconds for gravity-driven threading to descend 5 mm at 60 Hz.
+        parser.set_defaults(world_count=1, num_frames=900)
         parser.add_argument(
             "--num-per-world",
             type=int,

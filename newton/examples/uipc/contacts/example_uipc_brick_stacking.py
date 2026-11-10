@@ -393,7 +393,7 @@ def advance_task_kernel(
 
 class Example:
     def __init__(self, viewer, args):
-        self.fps = 120
+        self.fps = 60
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 0.0
         self.sim_substeps = 1
@@ -502,7 +502,7 @@ class Example:
     @classmethod
     def create_parser(cls):
         parser = newton.examples.create_parser()
-        parser.set_defaults(num_frames=1800)
+        parser.set_defaults(num_frames=900)
         parser.add_argument(
             "--enable-contact",
             action=argparse.BooleanOptionalAction,

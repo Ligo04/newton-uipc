@@ -8,6 +8,8 @@ https://github.com/sbobyn/three-avbd/blob/afc1442e64e4b36f2d49be70bf35ea0c9b85cf
 The source's MIT notice is in newton/licenses/three-avbd-LICENSE.txt.
 The presets contain 28,112 and 110,440 bricks respectively, plus one sphere.
 Bricks are 1 x 0.5 x 0.5 m, with density 1 kg/m^3.
+Each frame advances 1/60 s, using one UIPC step or four VBD substeps by default.
+UIPC's --substeps option controls animation target interpolation.
 Friction is disabled for both solvers; UIPC uses semi-implicit Newton updates.
 Both solvers start with 2 mm of vertical clearance between courses and above
 the floor so that UIPC initializes without touching surfaces. Solver settings
@@ -55,13 +57,16 @@ _BRICK_COLORS = (
 
 class Example:
     def __init__(self, viewer, args):
-        if args.substeps < 1 or args.vbd_iterations < 1:
+        substeps = args.substeps
+        if substeps is None:
+            substeps = 1 if args.solver == "uipc" else 4
+        if substeps < 1 or args.vbd_iterations < 1:
             raise ValueError("Substeps and VBD iterations must be positive.")
 
         self.viewer = viewer
         self.sim_time = 0.0
         self.frame_dt = 1.0 / 60.0
-        self.sim_substeps = args.substeps
+        self.sim_substeps = 1 if args.solver == "uipc" else substeps
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.solver_type = args.solver
         self.radius, courses, tier, rows = _PRESETS[args.size]
@@ -163,6 +168,7 @@ class Example:
                 }
             )
             self.solver.initialize(self.state_0)
+            self.solver.set_animator_substep(substeps)
 
         print(f"Brick Ring ({args.size}): {self.brick_count:,} bricks + 1 sphere, solver={self.solver_type}")
         self.viewer.set_model(self.model)
@@ -250,7 +256,12 @@ class Example:
         parser = newton.examples.create_parser()
         parser.add_argument("--size", choices=tuple(_PRESETS), default="28k", help="Brick-ring scale preset.")
         parser.add_argument("--solver", choices=("vbd", "uipc"), default="vbd", help="Rigid-body solver.")
-        parser.add_argument("--substeps", type=int, default=4, help="Physics substeps per 60 Hz frame.")
+        parser.add_argument(
+            "--substeps",
+            type=int,
+            default=None,
+            help="UIPC animation substeps (default 1) or VBD physics substeps (default 4) per 60 Hz frame.",
+        )
         parser.add_argument("--vbd-iterations", type=int, default=10, help="VBD iterations per physics substep.")
         return parser
 

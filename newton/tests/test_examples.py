@@ -1955,7 +1955,7 @@ class TestUIPCSoftbodyExamples(unittest.TestCase):
         self.assertIn("floor_center_z = floor_z + BRICK_HZ", source)
         self.assertIn("for ix, dx in enumerate((-1.5 * bw, -0.5 * bw, 0.5 * bw, 1.5 * bw))", source)
         self.assertIn("for iy, dy in enumerate((-0.5 * bl, 0.5 * bl))", source)
-        self.assertIn("parser.set_defaults(num_frames=1800)", source)
+        self.assertIn("parser.set_defaults(num_frames=900)", source)
 
     def test_uipc_brick_stacking_contact_flag_defaults_on_and_can_disable(self):
         if not _HAS_UIPC:
@@ -2093,6 +2093,7 @@ class TestUIPCSoftbodyExamples(unittest.TestCase):
         args = types.SimpleNamespace(test=True, uipc_gap=UIPC_TWO_BRICK_GAP)
         with wp.ScopedDevice(cuda_test_devices[0]):
             example = UIPCTwoBrickStackExample(DummyViewer(), args)
+            self.assertAlmostEqual(example.sim_dt, 1.0 / 60.0)
             self.assertEqual([example.model.body_label[i] for i in example.brick_bodies], ["brick_bottom", "brick_top"])
             self.assertTrue(example.solver.is_contact_enabled(example.brick_bodies[0], example.brick_bodies[1]))
             self.assertTrue(example.solver.is_contact_enabled(-1, example.brick_bodies[0]))

@@ -685,10 +685,11 @@ class SolverUIPC(SolverBase):
     def set_animator_substep(self, substep: int) -> None:
         """Set the number of animator substeps per simulation step.
 
-        Controls how many times the UIPC animator callbacks fire within a
-        single ``world.advance()`` call.  Higher values give smoother
-        kinematic target interpolation at the cost of more callback
-        invocations.
+        Animation constraint targets progress across Newton iterations with
+        ratio ``min((iteration + 1) / substep, 1)``. Each ``world.advance()``
+        advances the configured physics time step and updates ordinary
+        frontend animation callbacks once. Higher values spread target
+        interpolation over more Newton iterations.
 
         Must be called **after** :meth:`initialize`.
 

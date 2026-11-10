@@ -24,14 +24,14 @@ TABLE_HY = 0.30
 TABLE_HZ = 0.05
 TABLE_TOP_Z = 2.0 * TABLE_HZ  # table body sits with base at z=0
 UIPC_GAP = 0.001
-RESET_INTERVAL = 60  # frames
+RESET_INTERVAL = 30  # frames (0.5 s)
 MIN_SEPARATION = 3.0 * CUBE_HALF
-DEFAULT_NUM_FRAMES = 240
+DEFAULT_NUM_FRAMES = 120
 
 
 class Example:
     def __init__(self, viewer: newton.viewer.ViewerBase, args):
-        self.fps = 120
+        self.fps = 60
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 0.0
         self.sim_substeps = 1

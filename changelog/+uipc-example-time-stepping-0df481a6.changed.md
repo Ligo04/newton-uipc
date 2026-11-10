@@ -1,0 +1,1 @@
+Run UIPC examples at 60 Hz with one physical advance per frame. Route Brick Ring's UIPC `--substeps` option to native Animator target interpolation. Adjust scene-specific default frame counts and reset intervals for 60 Hz, allowing 15 seconds for the nut/bolt threading checks. Retune explicit cartpole PD gains for the 60 Hz update rate.

@@ -53,7 +53,7 @@ def broadcast_ik_solution_kernel(
 class Example:
     def __init__(self, viewer, args):
         self.scene = SceneType(args.scene)
-        self.fps = 120
+        self.fps = 60
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 0.0
         self.sim_substeps = 1
@@ -428,7 +428,7 @@ class Example:
     def create_parser():
         parser = newton.examples.create_parser()
         newton.examples.add_world_count_arg(parser)
-        parser.set_defaults(world_count=1, num_frames=720)
+        parser.set_defaults(world_count=1, num_frames=360)
         parser.add_argument(
             "--scene",
             type=str,

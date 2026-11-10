@@ -30,8 +30,7 @@ class Example:
         self.fps = 60
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 0.0
-        # Resolve the explicit PD feedback at 240 Hz to avoid force oscillation.
-        self.sim_substeps = 4
+        self.sim_substeps = 1
         self.sim_dt = self.frame_dt / self.sim_substeps
 
         self.world_count = args.world_count
@@ -41,9 +40,9 @@ class Example:
         self.cart_amplitude = 0.8  # [m]
         self.cart_frequency = 0.5  # [Hz]
 
-        # PD gains for the cart actuator.
-        self.kp = 2000.0
-        self.kd = 200.0
+        # Explicit effort gains for the 60 Hz feedback update.
+        self.kp = 200.0
+        self.kd = 10.0
         self.max_force = 1.0e4
 
         cartpole = newton.ModelBuilder(up_axis=newton.Axis.Z)

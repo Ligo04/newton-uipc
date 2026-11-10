@@ -530,8 +530,8 @@ class TestExampleDiscovery(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("uipc"), "uipc is not installed")
     def test_uipc_sample_parsers_preserve_browser_defaults(self):
         for group, name, frames in (
-            ("contacts", "uipc_rigid_wrecking_balls", 120),
-            ("multiphysics", "uipc_stiff_gipc_benchmark", 250),
+            ("contacts", "uipc_rigid_wrecking_balls", 144),
+            ("multiphysics", "uipc_stiff_gipc_benchmark", 150),
         ):
             with self.subTest(example=name):
                 module = importlib.import_module(f"newton.examples.uipc.{group}.example_{name}")
@@ -546,7 +546,7 @@ class TestExampleDiscovery(unittest.TestCase):
 
         module = importlib.import_module("newton.examples.uipc.multiphysics.example_cube_wall_cloth")
         defaults = newton.examples.default_args(module.Example.create_parser())
-        self.assertEqual(defaults.num_frames, 100)
+        self.assertEqual(defaults.num_frames, 60)
         self.assertEqual(defaults.use_graph, 2)
         self.assertEqual(defaults.fem_preconditioner, "mas")
 

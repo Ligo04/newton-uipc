@@ -5,6 +5,7 @@
 
 import importlib.util
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import warp as wp
@@ -21,6 +22,48 @@ class TestUIPCSampleExamples(unittest.TestCase):
     def setUp(self):
         self.enterContext(wp.ScopedDevice(_CUDA_DEVICES[0]))
 
+    def test_brick_ring_substeps_advance_one_60hz_frame(self):
+        """Exercise the UIPC default and explicit override with a compact ring."""
+        from newton.examples.contacts import example_brick_ring  # noqa: PLC0415
+
+        with patch.dict(example_brick_ring._PRESETS, {"28k": (2.0, 2, 1, 1)}):
+            for options, animator_substeps in (([], 1), (["--substeps", "4"], 4)):
+                with self.subTest(options=options):
+                    args = example_brick_ring.Example.create_parser().parse_args(["--solver", "uipc", *options])
+                    example = example_brick_ring.Example(newton.viewer.ViewerNull(), args)
+                    self.assertEqual(example.sim_substeps, 1)
+                    self.assertAlmostEqual(example.frame_dt, 1.0 / 60.0)
+                    self.assertAlmostEqual(example.sim_dt, 1.0 / 60.0)
+                    self.assertEqual(example.solver.scene.animator().substep(), animator_substeps)
+                    example.step()
+                    example.test_final()
+                    self.assertEqual(example.solver.get_frame_stats()["frame"], 1)
+                    self.assertAlmostEqual(example.sim_time, 1.0 / 60.0)
+
+    def test_cartpole_pd_examples_advance_at_60hz(self):
+        """Run the effort controllers with one physical advance per frame."""
+        from newton.examples.uipc.robot import (  # noqa: PLC0415
+            example_uipc_cartpole_pd_balance,
+            example_uipc_cartpole_pd_force,
+        )
+
+        cases = (
+            (example_uipc_cartpole_pd_force.Example, []),
+            (example_uipc_cartpole_pd_balance.Example, []),
+            (example_uipc_cartpole_pd_balance.Example, ["--stable-pd"]),
+        )
+        for example_type, options in cases:
+            with self.subTest(example=example_type.__module__, options=options):
+                args = example_type.create_parser().parse_args(options)
+                example = example_type(newton.viewer.ViewerNull(), args)
+                self.assertEqual(example.sim_substeps, 1)
+                self.assertAlmostEqual(example.sim_dt, 1.0 / 60.0)
+                for _ in range(120):
+                    example.step()
+                example.test_final()
+                self.assertEqual(example.solver.get_frame_stats()["frame"], 120)
+                self.assertAlmostEqual(example.sim_time, 2.0)
+
     def test_sample_88_matches_native_materials(self):
         import uipc  # noqa: PLC0415
         from uipc.constitution import (  # noqa: PLC0415
@@ -34,6 +77,7 @@ class TestUIPCSampleExamples(unittest.TestCase):
         from newton.examples.uipc.multiphysics.example_uipc_stiff_gipc_benchmark import Example  # noqa: PLC0415
 
         example = Example(newton.viewer.ViewerNull(), newton.examples.default_args(Example.create_parser()))
+        self.assertAlmostEqual(example.sim_dt, 1.0 / 60.0)
         self.assertEqual(example.model.particle_count, 42611)
         self.assertEqual(example.model.tet_count, 159870)
         self.assertEqual(len(example.solver.mapping.deformable_geo_slots), 2)
@@ -87,6 +131,7 @@ class TestUIPCSampleExamples(unittest.TestCase):
         from newton.examples.uipc.contacts.example_uipc_rigid_wrecking_balls import Example  # noqa: PLC0415
 
         example = Example(newton.viewer.ViewerNull(), newton.examples.default_args(Example.create_parser()))
+        self.assertAlmostEqual(example.sim_dt, 1.0 / 60.0)
         self.assertEqual(example.model.body_count, 574)
         # Newton adds a root Free joint for each independent rigid body.
         self.assertTrue(np.all(example.model.joint_parent.numpy() == -1))

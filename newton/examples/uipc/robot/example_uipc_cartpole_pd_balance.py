@@ -45,7 +45,7 @@ class Example:
         self.fps = 60
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 0.0
-        self.sim_substeps = 4
+        self.sim_substeps = 1 if args.solver == "uipc" else 4
         self.sim_dt = self.frame_dt / self.sim_substeps
 
         self.world_count = args.world_count
@@ -65,6 +65,10 @@ class Example:
         # Pole2 joint-lock gains (turns the double-pole into a single rod)
         self.k_lock = 400.0  # [N m / rad]
         self.k_lock_d = 20.0  # [N m s / rad]
+        if self.solver_name == "uipc" and not self.stable_pd:
+            # Resolve the explicit joint lock at the 60 Hz feedback rate.
+            self.k_lock = 100.0
+            self.k_lock_d = 2.0
         self.max_torque_lock = 200.0  # [N m]
 
         cartpole = newton.ModelBuilder(up_axis=newton.Axis.Z)
@@ -267,7 +271,7 @@ class Example:
             )
 
     def simulate(self):
-        # Recompute feedback inside each substep for stability.
+        # Refresh feedback at the solver's physical step rate.
         for _ in range(self.sim_substeps):
             self._apply_feedback()
             self.state_0.clear_forces()

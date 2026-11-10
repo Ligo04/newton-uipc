@@ -35,7 +35,7 @@ class Example:
     def __init__(self, viewer, args):
         self.viewer = viewer
         self.sim_time = 0.0
-        self.frame_dt = self.sim_dt = 0.01
+        self.frame_dt = self.sim_dt = 1.0 / 60.0
         self.sim_substeps = 1
         assets = asset_directory(args.asset_dir)
 
@@ -151,7 +151,7 @@ class Example:
     @staticmethod
     def create_parser():
         parser = newton.examples.create_parser()
-        parser.set_defaults(num_frames=100)
+        parser.set_defaults(num_frames=60)
         parser.add_argument("--asset-dir", help="Sample sim_data directory; otherwise download the pinned assets.")
         parser.add_argument("--fem-preconditioner", choices=("mas", "diag"), default="mas")
         parser.add_argument("--use-graph", type=int, choices=(0, 1, 2), default=2, help="UIPC PCG CUDA Graph mode.")
