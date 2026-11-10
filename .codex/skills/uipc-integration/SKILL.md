@@ -60,7 +60,7 @@ Use this skill to work on Newton's UIPC solver integration with repo-local evide
 - When porting scenes or comparing solvers, align the simulated time advanced
   per 60 Hz frame and the total simulated duration. Resolve each solver's
   substeps independently. For example, VBD may take four `1 / 240` s substeps
-  while UIPC takes one `1 / 60` s step; both advance `1 / 60` s per frame.
+  while UIPC takes one `1 / 60` s step. Both advance `1 / 60` s per frame.
   Configure rendering and control rates separately. Use additional UIPC temporal
   substeps when explicitly requested or established by scenario validation.
 - Active driven/read-back joints are revolute and prismatic. Ball joints constrain anchors but are not active UIPC articulation controls.
