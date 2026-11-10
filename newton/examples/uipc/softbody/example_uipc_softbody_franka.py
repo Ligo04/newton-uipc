@@ -86,7 +86,7 @@ class Example:
             logger_level=uipc.Logger.Warn,
             auto_sync_inertia=False,
         )
-        self.solver.set_contact(enable=True, d_hat=self.soft_body_contact_margin)
+        self.configure_solver()
         self.solver.initialize(self.state_0)
 
         self.joint_targets_flat = wp.zeros_like(self.control.joint_target_q)
@@ -94,6 +94,10 @@ class Example:
         wp.copy(self.control.joint_target_q, self.joint_targets_flat)
 
         self.viewer._paused = True
+
+    def configure_solver(self):
+        """Configure contact before initializing the solver."""
+        self.solver.set_contact(enable=True, d_hat=self.soft_body_contact_margin)
 
     def create_soft_body(self):
         """Load the duck tetrahedral mesh and place it on the table."""

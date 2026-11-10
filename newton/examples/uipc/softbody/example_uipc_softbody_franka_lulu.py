@@ -41,6 +41,32 @@ class Example(FrankaExample):
         self.viewer._paused = bool(getattr(args, "paused", False))
         self.viewer.set_camera(wp.vec3(0.28, -0.85, 0.40), -6.0, 127.0)
 
+    def configure_solver(self):
+        """Give the hand and fingers higher friction against Lulu."""
+        super().configure_solver()
+        self.solver.configure_scene(
+            {
+                "contact": {"eps_velocity": 1.0e-3, "eps_velocity_relative": 0.0},
+                "newton": {"semi_implicit": {"enable": 0}},
+            }
+        )
+        gripper_bodies = (
+            self.endeffector_id,
+            next(i for i, label in enumerate(self.model.body_label) if label.endswith("/fr3_leftfinger")),
+            next(i for i, label in enumerate(self.model.body_label) if label.endswith("/fr3_rightfinger")),
+        )
+
+        def setup_contacts(tabular, world_index, ground, environment, robot, actor):
+            gripper = tabular.create(f"gripper_{world_index}")
+            tabular.insert(gripper, actor, 0.9, -1.0, True)
+            tabular.insert(gripper, ground, 0.5, -1.0, False)
+            tabular.insert(gripper, environment, 0.5, -1.0, False)
+            tabular.insert(gripper, robot, 0.5, -1.0, False)
+            tabular.insert(gripper, gripper, 0.5, -1.0, False)
+            return dict.fromkeys(gripper_bodies, gripper)
+
+        self.solver.configure_contact_tabular(setup_contacts)
+
     def create_soft_body(self):
         """Load Lulu from USD and rest its back above the tabletop."""
         stage = Usd.Stage.Open(newton.examples.get_asset("toy_lulu_tet.usd"))
@@ -50,16 +76,18 @@ class Example(FrankaExample):
         rotated_vertices = tetmesh.vertices @ rotation_matrix.T
         bottom = float(rotated_vertices[:, 2].min()) * LULU_SCALE
         self.particle_radius = 0.002
+        youngs_modulus = 30_000.0
+        poisson_ratio = 0.3
         self.scene.add_soft_mesh(
             pos=wp.vec3(0.0, -0.5, 0.2 - bottom + self.particle_radius),
             rot=rotation,
             scale=LULU_SCALE,
             vel=wp.vec3(0.0, 0.0, 0.0),
             mesh=tetmesh,
-            density=100.0,
-            k_mu=1.0e6,
-            k_lambda=1.0e6,
-            k_damp=1.0e-6,
+            density=225.0,
+            k_mu=youngs_modulus / (2.0 * (1.0 + poisson_ratio)),
+            k_lambda=youngs_modulus * poisson_ratio / ((1.0 + poisson_ratio) * (1.0 - 2.0 * poisson_ratio)),
+            k_damp=0,
             particle_radius=self.particle_radius,
             color=wp.vec3(0.9, 0.5, 0.58),
             opacity=0.85,

@@ -40,6 +40,7 @@
 - `newton/tests/test_uipc_cloth.py` — cloth material and soft-position behavior.
 - `newton/tests/test_uipc_ur10_force.py` — UIPC UR10 force/stable-PD parity helpers.
 - `newton/tests/test_uipc_sanity_check_backend.py` — backend sanity-check behavior.
+- `newton/tests/test_uipc_scene_config.py` — scene defaults, omitted friction transition velocity, and explicit configuration overrides.
 - `newton/tests/test_example_browser_args.py` — grouped UIPC example discovery.
 - `newton/tests/test_examples.py` — example source expectations for UIPC contact/configuration.
 - `scripts/compare_uipc_newton_inertia.py` — inertia bridge diagnostic.
@@ -50,6 +51,7 @@
 - Dependency: `pyuipc>=0.0.25` in `pyproject.toml` for Python 3.10-3.13.
 - Default backend: `backend="cuda"`; some tests use `backend="none"` for configuration checks.
 - Scene defaults in `SolverUIPC.__init__`: contact disabled, `d_hat=0.001`, Newton velocity tolerance `0.001`, translation tolerance `0.01`, gravity copied from the model.
+- The absolute friction transition velocity `contact.eps_velocity` defaults to `0.001 m/s` in `SolverUIPC`. Explicit configuration values take precedence.
 - Contact elements: shared ground plus per-world env/robot/actor; default pairs use friction `0.5` and stiffness `1 GPa` with selected pairs disabled.
 - Active joint target modes: `POSITION`/`POSITION_VELOCITY` write position targets; `EFFORT` writes external force/torque; `VELOCITY` is passive.
 - Runtime notify support: body properties, joint properties via FK/state push, and model gravity. Other notify flags warn and require solver reconstruction.

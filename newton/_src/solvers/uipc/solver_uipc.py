@@ -403,10 +403,11 @@ class SolverUIPC(SolverBase):
             dt: Time step [s]. UIPC uses a fixed time step configured here.
             scene_config: Optional UIPC scene configuration dict passed directly
                 to ``uipc.Scene()``. If ``None``, uses ``Scene.default_config()``
-                with full-GPU FusedPCG CUDA Graph mode enabled and ``dt`` and
-                ``gravity`` overridden from the Newton model. FEM preconditioning
-                defaults to ``"mas"`` when omitted, including in explicit configs.
-                Explicit preconditioner choices such as ``"diag"`` are preserved.
+                with full-GPU FusedPCG CUDA Graph mode enabled, a friction
+                transition velocity of ``0.001 m/s``, and ``dt`` and ``gravity``
+                overridden from the Newton model. FEM preconditioning defaults
+                to ``"mas"`` and ``contact.eps_velocity`` to ``0.001`` when omitted,
+                including in explicit configs. Explicit values are preserved.
             kappa: AffineBody stiffness parameter [Pa]. Defaults to ``1 GPa``.
             default_mass_density: Default mass density [kg/m^3] for bodies.
                 Also determines the rigidity volume of geometry-free articulation
@@ -521,10 +522,12 @@ class SolverUIPC(SolverBase):
             scene_config["linear_system"]["use_cuda_graph"] = 2
             scene_config["linear_system"]["fem_preconditioner"] = "mas"
             scene_config["contact"]["constitution"] = "ipc"
+            scene_config["contact"]["eps_velocity"] = 1.0e-3
         scene_config.setdefault("linear_system", {}).setdefault("fem_preconditioner", "mas")
         scene_config["dt"] = dt
         scene_config["contact"]["d_hat"] = 0.001
         scene_config["contact"]["enable"] = False
+        scene_config["contact"].setdefault("eps_velocity", 1.0e-3)
         scene_config["newton"]["velocity_tol"] = 0.001
         scene_config["newton"]["transrate_tol"] = 0.01
         if model.gravity is not None:

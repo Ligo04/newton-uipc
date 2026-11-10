@@ -43,6 +43,7 @@
 | `scene_config["contact"]["constitution"]` | `"ipc"` | 选择 IPC contact；AL-IPC 会关闭 FusedPCG CUDA Graph。 |
 | `scene_config["contact"]["enable"]` | `False` | UIPC contact 默认关闭；需要在 scene config 中打开后才启用。 |
 | `scene_config["contact"]["d_hat"]` | `0.001` | IPC 接触安全层距离 [m]。 |
+| `scene_config["contact"]["eps_velocity"]` | `0.001` | 摩擦平滑过渡速度 [m/s]；显式配置值优先，也可在初始化前通过 `configure_scene()` 覆盖。 |
 | `scene_config["newton"]["velocity_tol"]` | `0.001` | UIPC Newton 迭代速度容差。 |
 | `scene_config["newton"]["transrate_tol"]` | `0.01` | UIPC Newton 迭代平移容差。 |
 | `scene_config["gravity"]` | 来自 `model.gravity` | 若 model 有 gravity，则写入 UIPC scene。 |

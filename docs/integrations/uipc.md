@@ -811,6 +811,10 @@ Important constructor arguments:
 | `auto_sync_inertia` | `True` | Sync final UIPC AffineBody inertia back into Newton after initialization. |
 | `enable_soft_position_constraint` | `True` | Adds dormant cloth/deformable soft-position attributes. |
 
+The absolute friction transition velocity, `contact.eps_velocity`, defaults to
+`0.001 m/s`. Explicit `scene_config` values and pre-initialization
+`configure_scene` overrides take precedence.
+
 Use `configure_scene` for UIPC scene configuration not exposed as constructor
 arguments. It deep-merges nested dictionaries before initialization.
 
