@@ -14,8 +14,10 @@ Friction is disabled for both solvers; UIPC uses semi-implicit Newton updates.
 Both solvers start with 2 mm of vertical clearance between courses and above
 the floor so that UIPC initializes without touching surfaces. Solver settings
 and collision representations differ from three-avbd; this is a scene port.
-The UIPC initialization sanity scan is disabled because expanding all shared
-instances exceeds the host memory budget; runtime collision detection remains active.
+UIPC initialization sanity checking is opt-in because older libuipc wheels use
+quadratic host memory when expanding shared instances. Enable --sanity-check
+with a build containing the fix from spiriMirror/libuipc#508.
+Runtime collision detection remains active with either setting.
 The GL view uses deterministic pastel colors, a warm checkerboard floor, and soft lighting.
 
 Success criteria:
@@ -29,6 +31,7 @@ Runs:
 - `python -m newton.examples brick_ring --size 110k --solver vbd`
 - `python -m newton.examples brick_ring --size 28k --solver uipc`
 - `python -m newton.examples brick_ring --size 110k --solver uipc`
+- `python -m newton.examples brick_ring --size 28k --solver uipc --sanity-check`
 """
 
 import math
@@ -157,10 +160,10 @@ class Example:
                 enable_soft_position_constraint=False,
             )
             self.solver.set_contact(True, d_hat=0.001)
-            # The host sanity scan expands shared instance attributes and exhausts memory.
+            # Older wheels need the shared-instance memory fix before enabling this scan.
             self.solver.configure_scene(
                 {
-                    "sanity_check": {"enable": 0},
+                    "sanity_check": {"enable": int(args.sanity_check)},
                     "newton": {"semi_implicit": {"enable": 1}},
                     "contact": {"friction": {"enable": 0}},
                     "linear_system": {"tol_rate": 1.0e-4},
@@ -256,6 +259,11 @@ class Example:
         parser = newton.examples.create_parser()
         parser.add_argument("--size", choices=tuple(_PRESETS), default="28k", help="Brick-ring scale preset.")
         parser.add_argument("--solver", choices=("vbd", "uipc"), default="vbd", help="Rigid-body solver.")
+        parser.add_argument(
+            "--sanity-check",
+            action="store_true",
+            help="Enable UIPC initialization sanity checks; requires libuipc's shared-instance memory fix.",
+        )
         parser.add_argument(
             "--substeps",
             type=int,
