@@ -81,15 +81,6 @@ enable these GPUs. They need Warp 1.18.0 or newer built with CUDA 12.0 through
 12.8; see `Warp's CUDA 12.9 ARM64 limitation
 <https://nvidia.github.io/warp/v1.18/user_guide/installation.html#cuda-12-9-limitation-on-linux-arm-platforms>`__.
 
-Installing the ``examples`` extra on ARM64 Linux systems such as NVIDIA Jetson
-Thor and DGX Spark also requires X11 development libraries to build
-``imgui_bundle`` from source:
-
-.. code-block:: console
-
-    sudo apt-get update
-    sudo apt-get install -y libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
-
 **Windows ARM64 (experimental)**
 
 Windows on ARM64 requires Warp 1.19 or newer and Python 3.11 or newer. Several
