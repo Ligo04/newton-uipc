@@ -58,7 +58,7 @@ class Example(FrankaExample):
 
         def setup_contacts(tabular, world_index, ground, environment, robot, actor):
             gripper = tabular.create(f"gripper_{world_index}")
-            tabular.insert(gripper, actor, 0.9, -1.0, True)
+            tabular.insert(gripper, actor, 0.5, -1.0, True)
             tabular.insert(gripper, ground, 0.5, -1.0, False)
             tabular.insert(gripper, environment, 0.5, -1.0, False)
             tabular.insert(gripper, robot, 0.5, -1.0, False)
