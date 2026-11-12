@@ -68,6 +68,36 @@ class TestUIPCRod(unittest.TestCase):
             solver.initialize(model.state() if state is None else state)
         return solver
 
+    @unittest.skipUnless(_CUDA_TEST_DEVICES, "CUDA device unavailable")
+    def test_cuda_masked_reset_preserves_global_rod_nodes(self):
+        builder = newton.ModelBuilder()
+        points = [(0, 0, 1), (0.2, 0, 1), (0.4, 0, 1)]
+        builder.add_rod(rod=newton.Rod(points, radius=0.01), label="global")
+        builder.begin_world()
+        builder.add_rod(rod=newton.Rod(points, radius=0.01), label="local")
+        builder.end_world()
+        model = builder.finalize(_CUDA_TEST_DEVICES[0])
+        state = model.state()
+        solver = self._initialize(model, state, backend="cuda")
+        nodes = solver.get_rod_state()
+        before = nodes.positions.numpy().copy()
+        poses = state.body_q.numpy()
+        poses[:, 2] += 0.5
+        state.body_q.assign(poses)
+        solver.reset(
+            state,
+            world_mask=wp.array([True, False], dtype=wp.bool, device=model.device),
+            flags=newton.StateFlags.BODY_Q,
+        )
+        starts = nodes.curve_vertex_start.numpy()
+        after = nodes.positions.numpy()
+        for index, world in enumerate(nodes.world_indices.numpy()):
+            bounds = slice(starts[index], starts[index + 1])
+            if world == -1:
+                np.testing.assert_array_equal(after[bounds], before[bounds])
+            else:
+                np.testing.assert_allclose(after[bounds], before[bounds] + [0, 0, 0.5], atol=1e-6)
+
     def test_rod_uses_fem_constitutions_and_preserves_mass(self):
         model, bodies, _ = self._model()
         solver = self._initialize(model)
@@ -140,6 +170,103 @@ class TestUIPCRod(unittest.TestCase):
         self.assertEqual(geo.vertices().size(), 4)
         self.assertEqual(geo.edges().size(), 4)
         self.assertTrue(np.all(np.asarray(view(geo.vertices().find("bending_stiffness"))) > 0.0))
+        nodes = solver.get_rod_state()
+        np.testing.assert_array_equal(nodes.curve_vertex_start.numpy(), [0, 4])
+        np.testing.assert_array_equal(nodes.curve_edge_start.numpy(), [0, 4])
+        self.assertEqual(nodes.positions.size, 4)
+        np.testing.assert_array_equal(nodes.edges.numpy(), np.asarray(view(geo.edges().topo())).reshape(-1, 2))
+
+    @unittest.skipUnless(_CUDA_TEST_DEVICES, "CUDA device is unavailable")
+    def test_cuda_native_nodes_drive_visual_mesh_and_masked_reset(self):
+        """Drive a higher-resolution visual mesh from stretched nodes across a partial reset."""
+        prototype = newton.ModelBuilder(gravity=wp.vec3(0.0))
+        bodies, _ = prototype.add_rod(
+            rod=newton.Rod([(0, 0, 1), (0.2, 0, 1), (0.4, 0, 1)], radius=0.01, youngs_modulus=1.0e4, poissons_ratio=0.3)
+        )
+        vertices = [(0, 0, 1), (0.2, 0, 1), (0, 0.01, 1), (0.2, 0, 1), (0.4, 0, 1), (0.2, 0.01, 1)]
+        prototype.add_deformable_visual_mesh(
+            vertices,
+            [0, 1, 2, 3, 4, 5],
+            kind="body",
+            parent=[bodies[0]] * 3 + [bodies[1]] * 3,
+            uvs=[(0, 0), (1, 0), (0, 1)] * 2,
+            texture=np.array([[[255, 0, 0]]], dtype=np.uint8),
+        )
+        prototype.shape_flags = [flags & ~newton.ShapeFlags.VISIBLE for flags in prototype.shape_flags]
+        builder = newton.ModelBuilder(gravity=wp.vec3(0.0))
+        builder.replicate(prototype, copy_count=2, xforms=[wp.transform(), wp.transform(wp.vec3(2.0, 0.0, 0.0))])
+        model = builder.finalize(_CUDA_TEST_DEVICES[0])
+        state, result = model.state(), model.state()
+        solver = newton.solvers.SolverUIPC(model, dt=0.002)
+        with self.assertRaisesRegex(RuntimeError, "initialize"):
+            solver.get_rod_state()
+        with self.assertWarnsRegex(NewtonWarning, "ROD.*centerline"):
+            solver.initialize(state)
+        nodes = solver.get_rod_state()
+        np.testing.assert_array_equal(nodes.curve_vertex_start.numpy(), [0, 3, 6])
+        np.testing.assert_array_equal(nodes.curve_edge_start.numpy(), [0, 2, 4])
+        np.testing.assert_array_equal(nodes.world_indices.numpy(), [0, 1])
+        np.testing.assert_array_equal(nodes.body_indices.numpy(), [0, 1, 2, 3])
+
+        # Author real FEM strain through the backend state accessor.
+        native = solver._fem_accessor.create_geometry()
+        native.vertices().create("position", np.zeros(3))
+        native.vertices().create("velocity", np.zeros(3))
+        solver._fem_accessor.copy_to(native)
+        for slot in solver.mapping.rod_geo_slots:
+            offset = int(np.asarray(view(slot.geometry().meta().find("backend_fem_vertex_offset"))).flat[0])
+            points = view(native.vertices().find("position")).reshape(-1, 3)[offset : offset + 3]
+            points[:, 0] = points[0, 0] + 1.5 * (points[:, 0] - points[0, 0])
+        solver._fem_accessor.copy_from(native)
+        solver.step(state, result, None, dt=0.002)
+        actual = np.concatenate(
+            [np.asarray(view(slot.geometry().positions())).reshape(-1, 3) for slot in solver.mapping.rod_geo_slots]
+        )
+        np.testing.assert_allclose(nodes.positions.numpy(), actual, atol=1.0e-12)
+        self.assertGreater(np.linalg.norm(actual[1] - actual[0]), 0.21)
+        self.assertIs(nodes, solver.get_rod_state())
+        affine, valid = solver.get_body_affine_transforms()
+        np.testing.assert_array_equal(valid.numpy(), [True, True, True, True])
+        visuals = newton.geometry.DeformableVisuals(model)
+        visuals.update(result, body_affine=affine, body_affine_valid=valid)
+        for world in range(2):
+            points = visuals.get_points(world).numpy()
+            np.testing.assert_allclose(points[[0, 1, 3, 4]], actual[3 * world + np.array([0, 1, 1, 2])], atol=2e-6)
+            self.assertAlmostEqual(float(np.linalg.norm(points[2] - points[0])), 0.01, places=6)
+
+        # This pixel lies beyond the rest-length cable but inside its stretched skin.
+        camera = newton.sensors.SensorCamera(
+            model, default_render_config=newton.sensors.SensorCamera.RenderConfig(enable_textures=True)
+        )
+        rays = camera.compute_camera_rays_pinhole(1, 1, camera_fov=1.0, device=model.device)
+        camera_pose = wp.array([wp.transform(wp.vec3(0.5, 0.001, 2.0))], dtype=wp.transform, device=model.device)
+        depth = camera.allocate_image_depth(1, 1, 1)
+        albedo = camera.allocate_image_albedo(1, 1, 1)
+        model.bvh_refit_shapes(result)
+        camera.update(result, camera_pose, rays, depth_image=depth, albedo_image=albedo, deformable_visuals=visuals)
+        self.assertAlmostEqual(float(depth.numpy()[0, 0, 0]), 1.0, places=4)
+        np.testing.assert_allclose(albedo.numpy().view(np.uint8).reshape(-1, 4)[0, :3], [255, 0, 0], atol=1)
+
+        before = nodes.positions.numpy().copy()
+        before_affine = affine.numpy().copy()
+        reset = model.state()
+        pose = reset.body_q.numpy()
+        pose[model.body_world.numpy() == 0, :3] += [0.3, 0.2, 0.1]
+        reset.body_q.assign(pose)
+        solver.reset(
+            reset,
+            world_mask=wp.array([True, False], dtype=wp.bool, device=model.device),
+            flags=newton.StateFlags.BODY_Q | newton.StateFlags.BODY_QD,
+        )
+        np.testing.assert_allclose(
+            nodes.positions.numpy()[:3], [[0.3, 0.2, 1.1], [0.5, 0.2, 1.1], [0.7, 0.2, 1.1]], atol=2e-6
+        )
+        np.testing.assert_array_equal(nodes.positions.numpy()[3:], before[3:])
+        np.testing.assert_array_equal(affine.numpy()[2:], before_affine[2:])
+        visuals.update(reset, body_affine=affine, body_affine_valid=valid)
+        np.testing.assert_allclose(
+            visuals.get_points(0).numpy()[[0, 1, 3, 4]], nodes.positions.numpy()[[0, 1, 1, 2]], atol=2e-6
+        )
 
     @unittest.skipUnless(USD_AVAILABLE, "usd-core is not installed")
     def test_usd_selector_follows_curve_rows_across_imports(self):

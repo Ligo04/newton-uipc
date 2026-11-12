@@ -1,0 +1,1 @@
+Expose native UIPC rod-node positions, velocities, topology, and world mappings through `SolverUIPC.get_rod_state()`. Preserve solved axial stretch in BODY-bound visual meshes through rod affine transforms, including masked resets.

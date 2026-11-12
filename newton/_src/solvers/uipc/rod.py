@@ -92,6 +92,68 @@ def _read_segments(
 
 
 @wp.kernel(enable_backward=False)
+def _gather_rod_state(
+    offsets: wp.array[wp.uint32],
+    positions: wp.array[wp.vec3d],
+    velocities: wp.array[wp.vec3d],
+    output_positions: wp.array[wp.vec3d],
+    output_velocities: wp.array[wp.vec3d],
+):
+    node = wp.tid()
+    output_positions[node] = positions[offsets[node]]
+    output_velocities[node] = velocities[offsets[node]]
+
+
+@wp.kernel(enable_backward=False)
+def _read_rod_affine(
+    rows: wp.array[wp.int32],
+    bodies: wp.array[wp.int32],
+    nodes: wp.array[wp.vec2i],
+    midpoints: wp.array[wp.vec3],
+    axes: wp.array[wp.vec3],
+    lengths: wp.array[float],
+    positions: wp.array[wp.vec3d],
+    body_q: wp.array[wp.transform],
+    affine: wp.array[wp.mat44d],
+    valid: wp.array[wp.bool],
+):
+    row = rows[wp.tid()]
+    body = bodies[row]
+    p0 = positions[nodes[row][0]]
+    p1 = positions[nodes[row][1]]
+    edge = p1 - p0
+    rotation = wp.transform_get_rotation(body_q[body])
+    if wp.length(edge) > wp.float64(1.0e-10):
+        tangent = wp.vec3(wp.normalize(edge))
+        previous = wp.quat_rotate(rotation, axes[row])
+        rotation = wp.normalize(quat_between_vectors_robust(previous, tangent) * rotation)
+    axis = wp.normalize(wp.vec3d(axes[row]))
+    linear = wp.quat_to_matrix(wp.quatd(rotation))
+    # Replace the axial component so both rest endpoints map to native nodes.
+    linear += wp.outer(edge / wp.float64(lengths[row]) - linear * axis, axis)
+    origin = wp.float64(0.5) * (p0 + p1) - linear * wp.vec3d(midpoints[row])
+    affine[body] = wp.mat44d(
+        linear[0, 0],
+        linear[0, 1],
+        linear[0, 2],
+        origin[0],
+        linear[1, 0],
+        linear[1, 1],
+        linear[1, 2],
+        origin[1],
+        linear[2, 0],
+        linear[2, 1],
+        linear[2, 2],
+        origin[2],
+        wp.float64(0.0),
+        wp.float64(0.0),
+        wp.float64(0.0),
+        wp.float64(1.0),
+    )
+    valid[body] = True
+
+
+@wp.kernel(enable_backward=False)
 def _gather_forces(
     bodies: wp.array[wp.int32],
     nodes: wp.array[wp.vec2i],
@@ -135,6 +197,7 @@ class _RodGroup:
     mass: np.ndarray
     midpoints: np.ndarray
     axes: np.ndarray
+    lengths: np.ndarray
     radius: float
     stretch: np.ndarray
     bending: np.ndarray
@@ -387,6 +450,7 @@ class RodBuilder:
                 np.asarray(masses),
                 midpoints,
                 axes,
+                lengths,
                 radii[0],
                 stretch,
                 bending,
@@ -447,41 +511,65 @@ class RodBuilder:
                 )
         return result
 
-    def attach_backend(self, accessor: Any) -> None:
+    def attach_backend(self, accessor: Any, affine: wp.array, affine_valid: wp.array) -> None:
         self._accessor = accessor
-        if not self._built or accessor is None:
-            return
         device = self._model.device
+        groups = [group for group, _, _ in self._built]
+        self.labels = tuple(group.label for group in groups)
+        self.positions = wp.array(
+            np.concatenate([group.points for group in groups]) if groups else np.empty((0, 3)),
+            dtype=wp.vec3d,
+            device=device,
+        )
+        self.velocities = wp.array(
+            np.concatenate([self._initial_velocities(group) for group in groups]) if groups else np.empty((0, 3)),
+            dtype=wp.vec3d,
+            device=device,
+        )
+        self.edges = wp.array(
+            np.concatenate([group.edges + rows.start for group, _, rows in self._built])
+            if groups
+            else np.empty((0, 2), dtype=np.int32),
+            dtype=wp.vec2i,
+            device=device,
+        )
+        body_indices = np.concatenate([group.bodies for group in groups]) if groups else np.empty(0, dtype=np.int32)
+        self.body_indices = wp.array(body_indices, dtype=wp.int32, device=device)
+        self.curve_vertex_start = wp.array(
+            np.cumsum([0, *[len(group.points) for group in groups]]), dtype=wp.int32, device=device
+        )
+        self.curve_edge_start = wp.array(
+            np.cumsum([0, *[len(group.bodies) for group in groups]]), dtype=wp.int32, device=device
+        )
+        body_world = self._model.body_world.numpy()
+        self.world_indices = wp.array(
+            [int(body_world[group.bodies[0]]) for group in groups], dtype=wp.int32, device=device
+        )
+        self._edge_worlds = body_world[body_indices]
+        self._affine, self._affine_valid = affine, affine_valid
+        if not groups:
+            return
+        self._lengths = wp.array(np.concatenate([group.lengths for group in groups]), dtype=float, device=device)
+        self._segment_rows = wp.array(np.arange(self.body_indices.size), dtype=wp.int32, device=device)
+        self._midpoints = wp.array(np.concatenate([group.midpoints for group in groups]), dtype=wp.vec3, device=device)
+        self._axes = wp.array(np.concatenate([group.axes for group in groups]), dtype=wp.vec3, device=device)
+        if accessor is None:
+            self.refresh_state(self._model.body_q)
+            return
         self._positions = uipc.adapter.warp.buffer(accessor.vertex_count(), dtype=wp.vec3d, device=device)
         self._velocities = uipc.adapter.warp.buffer(accessor.vertex_count(), dtype=wp.vec3d, device=device)
-        offsets, bodies, nodes, midpoints, axes, sources, points, weights, kinematic = (
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-        )
-        for group, slot, rows in self._built:
+        offsets, sources, points, weights, kinematic = [], [], [], [], []
+        for group, slot, _ in self._built:
             offset = int(_view_attr(slot.geometry().meta().find("backend_fem_vertex_offset"))[0])
             offsets.extend(offset + np.arange(len(group.points)))
-            bodies.extend(group.bodies)
-            nodes.extend(group.edges + rows.start)
-            midpoints.extend(group.midpoints)
-            axes.extend(group.axes)
             sources.extend(group.sources)
             points.extend(group.local_points)
             weights.extend(group.weights)
             kinematic.extend(group.kinematic)
         self._offsets_host = np.asarray(offsets, dtype=np.int64)
         self._offsets = wp.array(offsets, dtype=wp.uint32, device=device)
-        self._bodies_wp = wp.array(bodies, dtype=wp.int32, device=device)
-        self._nodes = wp.array(nodes, dtype=wp.vec2i, device=device)
-        self._midpoints = wp.array(midpoints, dtype=wp.vec3, device=device)
-        self._axes = wp.array(axes, dtype=wp.vec3, device=device)
+        self._bodies_wp = self.body_indices
+        self._nodes = self.edges
         self._sources_host = np.asarray(sources, dtype=np.int32)
         self._sources = wp.array(sources, dtype=wp.vec2i, device=device)
         self._points = wp.array(np.asarray(points), dtype=wp.vec3, ndim=2, device=device)
@@ -492,6 +580,48 @@ class RodBuilder:
         self._joint_starts = wp.array(self._joint_indices, dtype=wp.int32, device=device)
         self._joint_ends = wp.array(self._joint_indices + 1, dtype=wp.int32, device=device)
         self._read_buffers()
+        self.refresh_state(self._model.body_q)
+
+    def refresh_state(self, body_q: wp.array | None = None, world_mask: np.ndarray | None = None) -> None:
+        """Publish native nodes and selected segment frames into stable device arrays."""
+        if not self.has_rods:
+            return
+        device = self._model.device
+        if self._accessor is not None:
+            wp.launch(
+                _gather_rod_state,
+                dim=self._node_count,
+                inputs=[
+                    self._offsets,
+                    self._positions.warp(),
+                    self._velocities.warp(),
+                    self.positions,
+                    self.velocities,
+                ],
+                device=device,
+            )
+        if body_q is not None:
+            rows = self._segment_rows
+            if world_mask is not None:
+                selected = world_mask[self._edge_worlds]
+                rows = wp.array(np.flatnonzero(selected), dtype=wp.int32, device=device)
+            wp.launch(
+                _read_rod_affine,
+                dim=rows.size,
+                inputs=[
+                    rows,
+                    self.body_indices,
+                    self.edges,
+                    self._midpoints,
+                    self._axes,
+                    self._lengths,
+                    self.positions,
+                    body_q,
+                    self._affine,
+                    self._affine_valid,
+                ],
+                device=device,
+            )
 
     def _read_buffers(self) -> None:
         count = self._accessor.vertex_count()
@@ -549,6 +679,7 @@ class RodBuilder:
             outputs=[state_out.joint_q, state_out.joint_qd],
             device=model.device,
         )
+        self.refresh_state(state_out.body_q)
 
     def cache_forces(self, state: State) -> None:
         if not self.has_rods or self._accessor is None:
@@ -599,10 +730,7 @@ class RodBuilder:
             rows = np.arange(self._node_count, dtype=np.int32)
         if world_mask is not None:
             worlds = self._model.body_world.numpy()[self._sources_host[rows, 0]]
-            selected = np.full(len(rows), bool(np.any(world_mask)))
-            local = worlds >= 0
-            selected[local] = world_mask[worlds[local]]
-            rows = rows[selected]
+            rows = rows[world_mask[worlds]]
         if not len(rows):
             return
         wp.launch(
@@ -639,6 +767,7 @@ class RodBuilder:
             ]
         self._accessor.copy_from(geometry)
         self._read_buffers()
+        self.refresh_state(body_q if write_position else None, world_mask)
 
     def update_kinematic(self, state: State) -> None:
         if self.has_rods and self._accessor is not None and len(self._kinematic):

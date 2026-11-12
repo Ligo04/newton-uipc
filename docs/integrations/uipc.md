@@ -355,7 +355,8 @@ does not preserve multiple authored groups that share one Newton world.
 `SolverUIPC.get_body_affine_transforms()` exports full `wp.mat44d` transforms
 and a `wp.bool` validity mask in Newton body order. After initializing the
 solver, pass these stable buffers to `newton.geometry.DeformableVisuals.update`
-to preserve ABD stretch and shear in BODY-bound visual meshes:
+to preserve ABD stretch and shear and ROD axial stretch in BODY-bound visual
+meshes:
 
 ```python
 body_affine, body_affine_valid = solver.get_body_affine_transforms()
@@ -367,13 +368,17 @@ visuals.update(state, body_affine=body_affine, body_affine_valid=body_affine_val
 viewer.log_state(state)
 ```
 
-Entries with a false validity marker use `state.body_q`, including the FEM
-rod segment bodies. World-fixed visual vertices stay fixed. The matrix maps
-the same body-local bind coordinates used by BODY visual bindings to world
-coordinates; its upper 3x3 retains stretch and shear. Normals are recomputed
-from the deformed triangles. Keep the solver-owned arrays alive during
-evaluation and graph replay, and order the visual update after the physics
-step. This does not change the simulation state or regular shape rendering.
+The matrix maps body-local bind coordinates to world coordinates. For rods,
+it uses the transported segment frame and scales the local segment axis so
+both rest endpoints map to the solved native nodes. The transverse scale is
+preserved. Entries with a false validity marker use `state.body_q`.
+World-fixed visual vertices stay fixed, and normals are recomputed from the
+deformed triangles. Keep the solver-owned arrays alive during evaluation
+and graph replay, and order the visual update after the physics step.
+
+The skinned mesh retains its original topology, UVs, and materials. Pass the
+same `visuals` to `newton.sensors.SensorCamera.update` using
+`deformable_visuals=visuals` to render it in Newton cameras.
 
 ## Rods
 
@@ -385,6 +390,29 @@ reconstructs Newton body poses, COM velocities, and joint coordinates after
 each solve. Segment roll is parallel transported; there is no axial spin.
 Newton capsule shapes retain their rest lengths while the FEM centerline can
 stretch, so reconstructed capsules approximate the solved geometry.
+
+### Native rod state
+
+After solver initialization, `SolverUIPC.get_rod_state()` returns an
+experimental read-only view of the native centerlines:
+
+```python
+rods = solver.get_rod_state()
+positions = rods.positions  # wp.vec3d, world-space meters
+velocities = rods.velocities  # wp.vec3d, world-space meters/second
+edges = rods.edges  # wp.vec2i, indices into positions
+body_indices = rods.body_indices  # Newton body index for each edge
+```
+
+`curve_vertex_start` and `curve_edge_start` are CSR offsets with one trailing
+sentinel. They delimit each curve in the node and edge arrays. `labels` and
+`world_indices` identify the corresponding curves. Closed curves contain
+each node once and include the closing edge.
+
+The solver owns these device buffers and updates them in place during
+initialization, stepping, and reset. Clone arrays to retain snapshots. When
+replacing the solver, acquire a new view and recreate dependent bindings.
+Calling the getter before initialization raises `RuntimeError`.
 
 For each ROD joint, let `L_dual` be the mean adjacent capsule rest length.
 The adapter recovers `EA = stretch_stiffness * L_dual` and

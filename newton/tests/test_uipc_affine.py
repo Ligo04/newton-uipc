@@ -37,8 +37,8 @@ class TestUIPCAffine(unittest.TestCase):
                 builder = newton.ModelBuilder(gravity=wp.vec3(0.0))
                 abd = builder.add_body()
                 builder.add_shape_box(abd, hx=0.1, hy=0.1, hz=0.1)
-                rod_bodies, _ = builder.add_rod(rod=newton.Rod([(2, 3, 4), (2.2, 3, 4), (2.4, 3, 4)], radius=0.01))
-                rigid = rod_bodies[0]
+                builder.add_rod(rod=newton.Rod([(2, 3, 4), (2.2, 3, 4), (2.4, 3, 4)], radius=0.01))
+                rigid = builder.add_link(xform=wp.transform(wp.vec3(2, 3, 4)))
                 vertices = np.array([[0, 0, 0], [0.05, 0, 0], [0, 0.05, 0.05]], dtype=np.float32)
                 rigid_vertices = vertices + np.array([2, 3, 4], dtype=np.float32)
                 builder.add_deformable_visual_mesh(vertices, [0, 1, 2], kind="body", parent=[abd] * 3)
@@ -49,7 +49,7 @@ class TestUIPCAffine(unittest.TestCase):
                 with self.assertWarnsRegex(UserWarning, "ROD.*centerline"):
                     solver.initialize(state)
                 affine, valid = solver.get_body_affine_transforms()
-                np.testing.assert_array_equal(valid.numpy(), [True, False, False])
+                np.testing.assert_array_equal(valid.numpy(), [True, True, True, False])
 
                 # Set native strain directly; converting it through a quaternion
                 # would hide the stretch/shear this rendering interface preserves.

@@ -10,6 +10,7 @@ import os
 import warnings
 import weakref
 from collections.abc import Callable
+from dataclasses import dataclass
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
@@ -163,6 +164,33 @@ class SolverUIPC(SolverBase):
           :meth:`notify_model_changed` with ``JOINT_DOF_PROPERTIES`` for
           joints that carried armature at build time.
     """
+
+    @dataclass(frozen=True)
+    class RodState:
+        """Solver-owned centerline state and topology, available after initialization.
+
+        Experimental API. Arrays are read-only views on ``model.device`` and
+        update in place after stepping and resetting. Clone arrays for snapshots.
+        Curve ranges use exclusive ends in the following start entry. Rebuild
+        consumers when replacing the solver.
+        """
+
+        positions: wp.array[wp.vec3d]
+        """World-space node positions [m], shape [node_count]."""
+        velocities: wp.array[wp.vec3d]
+        """World-space node velocities [m/s], shape [node_count]."""
+        edges: wp.array[wp.vec2i]
+        """Node indices for each segment, shape [segment_count]."""
+        body_indices: wp.array[wp.int32]
+        """Newton body for each segment, shape [segment_count]."""
+        curve_vertex_start: wp.array[wp.int32]
+        """Node range boundaries, shape [curve_count + 1]."""
+        curve_edge_start: wp.array[wp.int32]
+        """Segment range boundaries, shape [curve_count + 1]."""
+        world_indices: wp.array[wp.int32]
+        """Newton world for each curve, shape [curve_count], with -1 for global entities."""
+        labels: tuple[str, ...]
+        """Curve labels in range order, including directly authored ROD groups."""
 
     _backend_imported: bool = False
     """Whether :meth:`import_uipc` has already loaded the libuipc backend."""
@@ -1338,7 +1366,17 @@ class SolverUIPC(SolverBase):
         self._fem_accessor: FiniteElementStateAccessorFeature = self.world.features().find(
             FiniteElementStateAccessorFeature
         )  # ty:ignore[invalid-assignment]
-        self._rod_builder.attach_backend(self._fem_accessor)
+        self._rod_builder.attach_backend(self._fem_accessor, self._body_affine, self._body_affine_valid)
+        self._rod_state = self.RodState(
+            positions=self._rod_builder.positions,
+            velocities=self._rod_builder.velocities,
+            edges=self._rod_builder.edges,
+            body_indices=self._rod_builder.body_indices,
+            curve_vertex_start=self._rod_builder.curve_vertex_start,
+            curve_edge_start=self._rod_builder.curve_edge_start,
+            world_indices=self._rod_builder.world_indices,
+            labels=self._rod_builder.labels,
+        )
         self._fem_position_buf = None
         self._fem_velocity_buf = None
         self._fem_backend_offsets_wp = None
@@ -1402,6 +1440,24 @@ class SolverUIPC(SolverBase):
 
     # Solver interface
 
+    def get_rod_state(self) -> RodState:
+        """Return the latest native centerline positions, velocities, and topology.
+
+        Experimental API. The solver-owned arrays are updated in place after
+        initialization, stepping, and masked body resets. Treat them as read-only
+        and clone to retain a snapshot. Empty models return empty node/edge arrays
+        and range boundaries ``[0]``. Topology remains fixed for this solver.
+
+        Returns:
+            Native centerline state on :attr:`model.device`.
+
+        Raises:
+            RuntimeError: If :meth:`initialize` has not completed.
+        """
+        if not self._initialized:
+            raise RuntimeError("get_rod_state() requires initialize() first.")
+        return self._rod_state
+
     def get_body_affine_transforms(self) -> tuple[wp.array[wp.mat44d], wp.array[wp.bool]]:
         """Return full affine transforms and validity in Newton body order.
 
@@ -1416,9 +1472,12 @@ class SolverUIPC(SolverBase):
         scale is already baked into collision-rest coordinates. This is not
         the raw transposed Eigen buffer or a transform reconstructed from ``body_q``.
 
-        Unmapped bodies (and backends without a state accessor) have an identity
-        matrix and a false validity entry; consumers must use their rigid-pose
-        fallback for those entries. Available after :meth:`initialize`.
+        Centerline rods use transported segment frames with axial stretch from
+        their native endpoints. Transverse scale follows the authored section.
+
+        Bodies without affine data have an identity matrix and a false validity
+        entry. Consumers use their rigid-pose fallback for those entries.
+        Available after :meth:`initialize`.
 
         Pass the returned arrays as ``body_affine`` and ``body_affine_valid``
         to :meth:`newton.geometry.DeformableVisuals.update` to retain affine
