@@ -31,11 +31,14 @@ if _HAS_UIPC and USD_AVAILABLE:
 
 @unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
 class TestUIPCRod(unittest.TestCase):
-    def _model(self, device="cpu", *, origin="start", fixed=False, colliders=False):
+    def _model(self, device="cpu", *, origin="start", fixed=False, colliders=False, ground_plane=False):
         builder = newton.ModelBuilder(gravity=wp.vec3(0.0, 0.0, 0.0))
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
         if colliders:
-            builder.add_shape_box(body=-1, xform=wp.transform(wp.vec3(0.0, 0.0, -0.05)), hx=3.0, hy=3.0, hz=0.05)
+            if ground_plane:
+                builder.add_ground_plane()
+            else:
+                builder.add_shape_box(body=-1, xform=wp.transform(wp.vec3(0.0, 0.0, -0.05)), hx=3.0, hy=3.0, hz=0.05)
             body = builder.add_link(xform=wp.transform(wp.vec3(2.0, 0.0, 1.0)))
             builder.add_shape_box(body=body, hx=0.1, hy=0.1, hz=0.1)
             builder.add_articulation([builder.add_joint_free(child=body)])
@@ -277,7 +280,15 @@ class TestUIPCRod(unittest.TestCase):
     @unittest.skipUnless(_CUDA_TEST_DEVICES, "CUDA device is unavailable")
     def test_cuda_rod_and_abd_settle_on_empty_static_collider(self):
         """Report ground reactions on rod segments and an ABD body after settling."""
-        model, bodies, _ = self._model(_CUDA_TEST_DEVICES[0], colliders=True)
+        self._assert_ground_reactions(ground_plane=False)
+
+    @unittest.skipUnless(_CUDA_TEST_DEVICES, "CUDA device is unavailable")
+    def test_cuda_rod_and_abd_settle_on_halfplane(self):
+        """Report rod and ABD support forces and contact points on an implicit halfplane."""
+        self._assert_ground_reactions(ground_plane=True)
+
+    def _assert_ground_reactions(self, *, ground_plane):
+        model, bodies, _ = self._model(_CUDA_TEST_DEVICES[0], colliders=True, ground_plane=ground_plane)
         model.gravity.assign(np.tile([0.0, 0.0, -9.81], (model.gravity.size, 1)).astype(np.float32))
         state, result = model.state(), model.state()
         solver = self._initialize(model, state, backend="cuda", contact=True)
@@ -305,6 +316,9 @@ class TestUIPCRod(unittest.TestCase):
         self.assertTrue(np.all(support > 0.0))
         expected = model.body_mass.numpy()[[0, *bodies]] * 9.81
         np.testing.assert_allclose(support, expected, rtol=0.3, atol=1.0e-4)
+        positions = sensor.position_matrix.numpy()[:, 0]
+        self.assertTrue(np.all(np.isfinite(positions)))
+        np.testing.assert_allclose(positions[:, 2], 0.0, atol=0.003)
 
     @unittest.skipUnless(_CUDA_TEST_DEVICES, "CUDA device is unavailable")
     def test_cuda_crossed_rods_report_segment_contact_pairs(self):
