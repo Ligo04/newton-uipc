@@ -446,6 +446,8 @@ class UIpcMappingInfo:
     rod_geo_slots: list[Any] = field(default_factory=list)
     rod_rest_geo_slots: list[Any] = field(default_factory=list)
     rod_body_indices: list[np.ndarray] = field(default_factory=list)
+    rod_vertex_sources: list[np.ndarray] = field(default_factory=list)
+    rod_vertex_weights: list[np.ndarray] = field(default_factory=list)
 
     # GPU lookup tables for contact force scatter (populated by build_gpu_vertex_maps)
     vertex_to_body_wp: wp.array | None = None  # (max_global_vertex,) int32

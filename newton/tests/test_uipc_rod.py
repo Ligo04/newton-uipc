@@ -13,7 +13,8 @@ import numpy as np
 import warp as wp
 
 import newton
-from newton._src.exceptions import NewtonWarning
+from newton._src.exceptions import NewtonDeprecationWarning, NewtonWarning
+from newton.sensors import SensorContact
 from newton.tests._usd_deformable_test_utils import _add_cable_curve, _deformable_stage
 from newton.tests.unittest_utils import USD_AVAILABLE, get_selected_cuda_test_devices
 
@@ -39,7 +40,7 @@ class TestUIPCRod(unittest.TestCase):
             builder.add_shape_box(body=body, hx=0.1, hy=0.1, hz=0.1)
             builder.add_articulation([builder.add_joint_free(child=body)])
         with (
-            self.assertWarnsRegex(newton.exceptions.NewtonDeprecationWarning, 'body_frame_origin="start"')
+            self.assertWarnsRegex(NewtonDeprecationWarning, 'body_frame_origin="start"')
             if origin == "start"
             else nullcontext()
         ):
@@ -275,20 +276,105 @@ class TestUIPCRod(unittest.TestCase):
 
     @unittest.skipUnless(_CUDA_TEST_DEVICES, "CUDA device is unavailable")
     def test_cuda_rod_and_abd_settle_on_empty_static_collider(self):
-        model, _, _ = self._model(_CUDA_TEST_DEVICES[0], colliders=True)
+        """Report ground reactions on rod segments and an ABD body after settling."""
+        model, bodies, _ = self._model(_CUDA_TEST_DEVICES[0], colliders=True)
         model.gravity.assign(np.tile([0.0, 0.0, -9.81], (model.gravity.size, 1)).astype(np.float32))
         state, result = model.state(), model.state()
         solver = self._initialize(model, state, backend="cuda", contact=True)
         self.assertEqual(set(solver.mapping.body_geo_slots), {0})
-        for _ in range(300):
-            solver.step(state, result, None, dt=0.002)
+        sensor = SensorContact(
+            model, sensing_bodies=[0, *bodies], counterpart_shapes=[0], request_contact_attributes=False
+        )
+        contacts = newton.CollisionPipeline(model, rigid_contact_max=solver.get_max_contact_count()).contacts()
+        observables = solver.observables(sensor.solver_observable_kinds, contacts=contacts)
+        reactions = []
+        for step in range(300):
+            solver.step(state, result, None, contacts, 0.002, observables=observables)
             state, result = result, state
+            if step >= 280:
+                sensor.update(state, contacts, observables=observables)
+                reactions.append(sensor.total_force.numpy()[:, 2])
         rod_points = np.asarray(view(solver.mapping.rod_geo_slots[0].geometry().positions())).reshape(-1, 3)
         self.assertTrue(np.all(np.isfinite(state.body_q.numpy())))
         self.assertGreater(float(np.min(rod_points[:, 2])), 0.009)
         self.assertLess(float(np.max(rod_points[:, 2])), 0.03)
         self.assertGreater(float(state.body_q.numpy()[0, 2]), 0.099)
         self.assertLess(float(state.body_q.numpy()[0, 2]), 0.12)
+        support = np.mean(reactions, axis=0)
+        self.assertTrue(np.all(np.isfinite(support)))
+        self.assertTrue(np.all(support > 0.0))
+        expected = model.body_mass.numpy()[[0, *bodies]] * 9.81
+        np.testing.assert_allclose(support, expected, rtol=0.3, atol=1.0e-4)
+
+    @unittest.skipUnless(_CUDA_TEST_DEVICES, "CUDA device is unavailable")
+    def test_cuda_crossed_rods_report_segment_contact_pairs(self):
+        """Resolve edge contacts to capsule segments and report equal opposite reactions."""
+        builder = newton.ModelBuilder(gravity=wp.vec3(0.0))
+        newton.solvers.SolverUIPC.register_custom_attributes(builder)
+        first, _ = builder.add_rod(rod=newton.Rod([(-0.3, 0.0, 0.2), (0.1, 0.0, 0.2), (0.4, 0.0, 0.2)], radius=0.01))
+        second, _ = builder.add_rod(
+            rod=newton.Rod([(0.0, -0.3, 0.2205), (0.0, 0.1, 0.2205), (0.0, 0.4, 0.2205)], radius=0.01)
+        )
+        model = builder.finalize(_CUDA_TEST_DEVICES[0])
+        state, result = model.state(), model.state()
+        solver = self._initialize(model, state, backend="cuda", contact=True)
+        sensor = SensorContact(
+            model,
+            sensing_bodies=[*first, *second],
+            counterpart_bodies=[*first, *second],
+            request_contact_attributes=False,
+        )
+        contacts = newton.CollisionPipeline(model, rigid_contact_max=solver.get_max_contact_count()).contacts()
+        observables = solver.observables(sensor.solver_observable_kinds, contacts=contacts)
+        solver.step(state, result, None, contacts, 0.002, observables=observables)
+        sensor.update(result, contacts, observables=observables)
+        forces = sensor.total_force.numpy()
+        self.assertGreater(int(contacts.rigid_contact_count.numpy()[0]), 0)
+        self.assertLess(float(forces[0, 2]), -1.0e-6)
+        self.assertGreater(float(forces[2, 2]), 1.0e-6)
+        np.testing.assert_allclose(forces.sum(axis=0), 0.0, atol=1.0e-6)
+        np.testing.assert_allclose(forces[[1, 3]], 0.0, atol=1.0e-6)
+        np.testing.assert_allclose(sensor.position_matrix.numpy()[0, 2, :2], 0.0, atol=1.0e-3)
+
+    def test_rod_contact_gradient_packing_preserves_force_channels(self):
+        """Preserve normal and friction loads for shared points and mixed ABD/rod edges."""
+        from newton._src.solvers.uipc.contact_forces import _pack_rod_contacts, _RodContactVertex  # noqa: PLC0415
+
+        vertices = {
+            0: _RodContactVertex(np.array([0, 0]), np.array([1.0, 0.0]), np.array([0.0, 0.0, 0.0]), 0.1),
+            1: _RodContactVertex(np.array([0, 1]), np.array([0.25, 0.75]), np.array([1.0, 0.0, 0.0]), 0.1),
+            2: _RodContactVertex(np.array([1, 1]), np.array([1.0, 0.0]), np.array([2.0, 0.0, 0.0]), 0.1),
+        }
+        edges = {(0, 1): 0, (1, 2): 1}
+        vertex_to_body = np.array([-1, -1, -1, 2])
+        data = _pack_rod_contacts(
+            "PH",
+            np.array([[0], [1]]),
+            np.array([[[0.0, 0.0, 4.0]], [[0.0, 0.0, 8.0]]]),
+            np.array([[[2.0, 0.0, 0.0]]]),
+            vertices,
+            edges,
+            vertex_to_body,
+            friction_topology=np.array([[1]]),
+        )
+        np.testing.assert_array_equal(data.body_a, [0, 0, 1])
+        np.testing.assert_allclose(data.forces_n, [[0.0, 0.0, 4.0], [0.0, 0.0, 2.0], [0.0, 0.0, 6.0]])
+        np.testing.assert_allclose(data.forces_f, [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [1.5, 0.0, 0.0]])
+        np.testing.assert_allclose(data.point_a, [[0.0, 0.0, -0.1], [1.0, 0.0, -0.1], [1.0, 0.0, -0.1]])
+        data = _pack_rod_contacts(
+            "PE",
+            np.array([[3, 0, 1]]),
+            np.array([[[0.0, 0.0, 8.0], [0.0, 0.0, -2.0], [0.0, 0.0, -6.0]]]),
+            np.array([[[2.0, 0.0, 0.0], [-0.5, 0.0, 0.0], [-1.5, 0.0, 0.0]]]),
+            vertices,
+            edges,
+            vertex_to_body,
+        )
+        np.testing.assert_array_equal(data.vert_a, [3])
+        np.testing.assert_array_equal(data.body_b, [0])
+        np.testing.assert_allclose(data.forces_n, [[0.0, 0.0, 8.0]])
+        np.testing.assert_allclose(data.forces_f, [[2.0, 0.0, 0.0]])
+        np.testing.assert_allclose(data.point_b, [[0.75, 0.0, 0.1]])
 
     def test_direct_rod_joints_accept_world_fixed_and_ball_roots(self):
         """Accept direct rod articulations with fixed or ball roots and preserve their fixed vertices."""

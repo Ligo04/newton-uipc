@@ -407,9 +407,12 @@ per-body contact-element overrides, and coupling proxy rods raise errors.
 This approximation omits shear, twist, material damping, and intrinsic rest
 curvature and emits a warning at initialization. A curved rod will tend
 toward a straight stress-free centerline. Native contact with other UIPC
-geometry is available. `CONTACT_F` observables are not supported for scenes
-containing these rods because a shared centerline node has no unique Newton
-body owner.
+geometry is available. `CONTACT_F` observables report reactions on the Newton
+capsule segment shapes. Edge contacts belong to the segment represented by that
+edge. A contact at a shared centerline vertex is distributed to its incident
+segments using the same weights as node reconstruction, preserving the total
+contact force. Reported contact positions use the centerline contact location
+offset by the rod radius along the contact normal.
 
 The experimental `NewtonUIPCRodAPI` declares the USD selector:
 

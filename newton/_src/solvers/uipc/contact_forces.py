@@ -224,7 +224,7 @@ def _build_vertex_to_body_np(mapping: UIpcMappingInfo) -> np.ndarray | None:
     # their range addressable while leaving their reporting entries unmapped.
     for slot in mapping.rod_geo_slots:
         geo = slot.geometry()
-        offset = geo.meta().find("backend_fem_vertex_offset") or geo.meta().find(uipc_builtin.global_vertex_offset)
+        offset = geo.meta().find(uipc_builtin.global_vertex_offset) or geo.meta().find("backend_fem_vertex_offset")
         if offset is not None:
             max_gv = max(max_gv, int(_view_attr(offset)[0]) + geo.vertices().size())
 
@@ -287,7 +287,7 @@ def build_gpu_vertex_maps(mapping: UIpcMappingInfo, body_count: int, device: wp.
 
     for slot in mapping.rod_geo_slots:
         geo = slot.geometry()
-        offset = geo.meta().find("backend_fem_vertex_offset") or geo.meta().find(uipc_builtin.global_vertex_offset)
+        offset = geo.meta().find(uipc_builtin.global_vertex_offset) or geo.meta().find("backend_fem_vertex_offset")
         if offset is not None:
             max_gv = max(max_gv, int(_view_attr(offset)[0]) + geo.vertices().size())
 
@@ -334,6 +334,10 @@ def _populate_contact_pairs_kernel(
     body_q: wp.array[wp.transform],
     particle_q: wp.array[wp.vec3],
     body_to_first_shape: wp.array[wp.int32],
+    rod_body_a: wp.array[wp.int32],
+    rod_body_b: wp.array[wp.int32],
+    rod_point_a: wp.array[wp.vec3],
+    rod_point_b: wp.array[wp.vec3],
     body_count: int,
     max_global_vertex: int,
     ground_shape: int,
@@ -354,6 +358,13 @@ def _populate_contact_pairs_kernel(
         return
 
     body_a = vertex_to_body[gv_a]
+    override_a = int(-1)
+    override_b = int(-1)
+    if rod_body_a:
+        override_a = rod_body_a[tid]
+        override_b = rod_body_b[tid]
+    if override_a >= 0:
+        body_a = override_a
     if body_a < 0 or body_a >= body_count:
         return
 
@@ -362,7 +373,10 @@ def _populate_contact_pairs_kernel(
     shape_b = ground_shape
     body_b = int(-1)
     particle_b = int(-1)
-    if gv_b >= 0 and gv_b < max_global_vertex:
+    if override_b >= 0:
+        body_b = override_b
+        shape_b = body_to_first_shape[body_b]
+    elif gv_b >= 0 and gv_b < max_global_vertex:
         bb = vertex_to_body[gv_b]
         if bb >= 0 and bb < body_count:
             body_b = bb
@@ -389,8 +403,12 @@ def _populate_contact_pairs_kernel(
 
     # Map contact points into SensorContact.position_matrix.
     point_a = vertex_local_pos[gv_a]
+    if override_a >= 0:
+        point_a = wp.transform_point(wp.transform_inverse(body_q[body_a]), rod_point_a[tid])
     contact_point0[slot] = point_a
-    if body_b >= 0:
+    if override_b >= 0:
+        contact_point1[slot] = wp.transform_point(wp.transform_inverse(body_q[body_b]), rod_point_b[tid])
+    elif body_b >= 0:
         contact_point1[slot] = vertex_local_pos[gv_b]
     elif particle_b >= 0 and particle_q:
         contact_point1[slot] = particle_q[particle_b]
@@ -409,10 +427,159 @@ class GpuContactData:
     vert_b: np.ndarray  # (M,) int32 — per-instance body-B representative vertex
     forces_n: np.ndarray  # (M, 3) float32 — normal channel force sum per instance
     forces_f: np.ndarray  # (M, 3) float32 — friction channel force sum per instance
+    # Rod sides override the vertex-to-body lookup and supply world-space surface points.
+    body_a: np.ndarray | None = None
+    body_b: np.ndarray | None = None
+    point_a: np.ndarray | None = None
+    point_b: np.ndarray | None = None
+
+
+@dataclass
+class _RodContactVertex:
+    bodies: np.ndarray
+    weights: np.ndarray
+    position: np.ndarray
+    radius: float
+
+
+@dataclass
+class _ContactOwner:
+    body: int
+    vertex: int
+    weight: float = 1.0
+    point: np.ndarray | None = None
+
+
+def _rod_contact_maps(
+    mapping: UIpcMappingInfo,
+) -> tuple[dict[int, _RodContactVertex], dict[tuple[int, int], int]]:
+    """Resolve native rod vertices and edges to their Newton segment bodies."""
+    vertices = {}
+    edges = {}
+    for slot, bodies, sources, weights in zip(
+        mapping.rod_geo_slots,
+        mapping.rod_body_indices,
+        mapping.rod_vertex_sources,
+        mapping.rod_vertex_weights,
+        strict=True,
+    ):
+        geo = slot.geometry()
+        offset_attr = geo.meta().find(uipc_builtin.global_vertex_offset) or geo.meta().find("backend_fem_vertex_offset")
+        if offset_attr is None:
+            continue
+        offset = int(_view_attr(offset_attr)[0])
+        positions = np.asarray(_view_attr(geo.positions())).reshape(-1, 3)
+        radii = np.asarray(_view_attr(geo.vertices().find("thickness"))).reshape(-1)
+        for local, position in enumerate(positions):
+            vertices[offset + local] = _RodContactVertex(sources[local], weights[local], position, float(radii[local]))
+        topology = np.asarray(_view_attr(geo.edges().topo())).reshape(-1, 2)
+        for body, edge in zip(bodies, topology, strict=True):
+            edges[tuple(sorted((offset + int(edge[0]), offset + int(edge[1]))))] = int(body)
+    return vertices, edges
+
+
+def _rod_contact_owners(
+    indices: np.ndarray,
+    forces: np.ndarray,
+    vertices: dict[int, _RodContactVertex],
+    edges: dict[tuple[int, int], int],
+    vertex_to_body: np.ndarray,
+) -> list[_ContactOwner]:
+    """Resolve one stencil side, splitting shared point loads with rod node weights."""
+    if len(indices) == 2 and tuple(sorted(indices)) in edges:
+        nodes = [vertices[int(index)] for index in indices]
+        magnitudes = np.linalg.norm(forces, axis=1)
+        weights = magnitudes / magnitudes.sum() if magnitudes.sum() > 0.0 else np.full(2, 0.5)
+        point = np.sum(np.asarray([node.position for node in nodes]) * weights[:, None], axis=0)
+        owners = [_ContactOwner(edges[tuple(sorted(indices))], int(indices[0]), point=point)]
+        radius = nodes[0].radius
+    elif len(indices) == 1 and int(indices[0]) in vertices:
+        node = vertices[int(indices[0])]
+        owners = [
+            _ContactOwner(int(body), int(indices[0]), float(weight), node.position.copy())
+            for body, weight in zip(node.bodies, node.weights, strict=True)
+            if weight > 0.0
+        ]
+        radius = node.radius
+    else:
+        for index in indices:
+            if 0 <= index < len(vertex_to_body) and vertex_to_body[index] >= 0:
+                return [_ContactOwner(int(vertex_to_body[index]), int(index))]
+        return [_ContactOwner(-1, int(indices[0]) if len(indices) else -1)]
+    force = forces.sum(axis=0)
+    magnitude = np.linalg.norm(force)
+    if magnitude > 0.0:
+        for owner in owners:
+            owner.point = owner.point - radius * force / magnitude
+    return owners
+
+
+def _pack_rod_contacts(
+    primitive: str,
+    topology: np.ndarray,
+    normal: np.ndarray,
+    friction: np.ndarray,
+    vertices: dict[int, _RodContactVertex],
+    edges: dict[tuple[int, int], int],
+    vertex_to_body: np.ndarray,
+    *,
+    friction_topology: np.ndarray | None = None,
+) -> GpuContactData | None:
+    """Pack rod stencils as shape pairs while conserving each contact's total force."""
+    if friction_topology is not None and not np.array_equal(topology, friction_topology):
+        friction_by_stencil = dict(zip(map(tuple, friction_topology), friction, strict=True))
+        aligned = np.zeros_like(normal)
+        for row, indices in enumerate(topology):
+            values = friction_by_stencil.get(tuple(indices))
+            if values is not None:
+                aligned[row] = values
+        friction = aligned
+    records = []
+    split = _PRIM_SPLIT[primitive]
+    for indices, fn, ff in zip(topology, normal, friction, strict=True):
+        owners_a = _rod_contact_owners(indices[:split], fn[:split], vertices, edges, vertex_to_body)
+        owners_b = _rod_contact_owners(indices[split:], fn[split:], vertices, edges, vertex_to_body)
+        force_n, force_f = fn[:split].sum(axis=0), ff[:split].sum(axis=0)
+        if all(owner.body < 0 for owner in owners_a):
+            owners_a, owners_b = owners_b, owners_a
+            force_n, force_f = fn[split:].sum(axis=0), ff[split:].sum(axis=0)
+        for owner_a in owners_a:
+            if owner_a.body < 0:
+                continue
+            for owner_b in owners_b:
+                weight = owner_a.weight * owner_b.weight
+                records.append(
+                    (
+                        owner_a.vertex,
+                        owner_b.vertex,
+                        force_n * weight,
+                        force_f * weight,
+                        owner_a.body if owner_a.point is not None else -1,
+                        owner_b.body if owner_b.point is not None else -1,
+                        owner_a.point if owner_a.point is not None else np.zeros(3),
+                        owner_b.point if owner_b.point is not None else np.zeros(3),
+                    )
+                )
+    if not records:
+        return None
+    columns = list(zip(*records, strict=True))
+    return GpuContactData(
+        vert_a=np.asarray(columns[0], dtype=np.int32),
+        vert_b=np.asarray(columns[1], dtype=np.int32),
+        forces_n=np.asarray(columns[2], dtype=np.float32),
+        forces_f=np.asarray(columns[3], dtype=np.float32),
+        body_a=np.asarray(columns[4], dtype=np.int32),
+        body_b=np.asarray(columns[5], dtype=np.int32),
+        point_a=np.asarray(columns[6], dtype=np.float32),
+        point_b=np.asarray(columns[7], dtype=np.float32),
+    )
 
 
 def prepare_contact_gpu_data(
-    csf: ContactSystemFeature, dt: float = 1.0, vertex_to_body: np.ndarray | None = None
+    csf: ContactSystemFeature,
+    dt: float = 1.0,
+    vertex_to_body: np.ndarray | None = None,
+    mapping: UIpcMappingInfo | None = None,
 ) -> GpuContactData | None:
     """Read all UIPC contact gradients and pack into flat arrays.
 
@@ -428,7 +595,8 @@ def prepare_contact_gpu_data(
     body-body pairs resolve exactly; otherwise a first-``_PRIM_SPLIT`` heuristic
     is used.
 
-    No per-element Python loops — uses vectorized numpy operations.
+    ABD-only stencils use vectorized NumPy packing. Rod stencils additionally
+    resolve segment ownership and shared-node weights from ``mapping``.
     Returns None if no contact data is available.
     """
     inv_dt2 = 1.0 / (dt * dt) if dt != 0.0 else 1.0
@@ -438,12 +606,16 @@ def prepare_contact_gpu_data(
     inst_vert_b: list[np.ndarray] = []
     inst_force_n: list[np.ndarray] = []
     inst_force_f: list[np.ndarray] = []
+    rod_vertices, rod_edges = _rod_contact_maps(mapping) if mapping is not None else ({}, {})
+    rod_indices = np.fromiter(rod_vertices, dtype=np.int32)
+    inst_body_a, inst_body_b, inst_point_a, inst_point_b = [], [], [], []
 
     for prim in PRIMITIVE_TYPES:
         arity = _PRIM_ARITY[prim]
 
         pair_force: dict[str, np.ndarray] = {}
         pair_topo: tuple[np.ndarray, np.ndarray] | None = None
+        rod_channels = {}
 
         for chan_label in FORCE_CHANNELS:
             data = _read_gradient(csf, f"{prim}+{chan_label}")
@@ -458,6 +630,10 @@ def prepare_contact_gpu_data(
                 continue  # unexpected layout: skip pair export
             sv = verts_flat.reshape(-1, arity)
             sf = forces_flat.reshape(-1, arity, 3)
+            if rod_vertices:
+                rod_rows = np.isin(sv, rod_indices).any(axis=1)
+                rod_channels[chan_label] = (sv[rod_rows], sf[rod_rows])
+                sv, sf = sv[~rod_rows], sf[~rod_rows]
             n_stencils = sv.shape[0]
             rows = np.arange(n_stencils)
 
@@ -495,6 +671,34 @@ def prepare_contact_gpu_data(
             inst_force_f.append(ff)
         else:
             inst_force_f.append(np.zeros_like(fn))
+        if rod_vertices:
+            inst_body_a.append(np.full(len(va), -1, dtype=np.int32))
+            inst_body_b.append(np.full(len(va), -1, dtype=np.int32))
+            inst_point_a.append(np.zeros((len(va), 3), dtype=np.float32))
+            inst_point_b.append(np.zeros((len(va), 3), dtype=np.float32))
+            topology, normal = rod_channels["N"]
+            friction_topology, friction = rod_channels.get("F", (None, None))
+            if friction_topology is None:
+                friction = np.zeros_like(normal)
+            rod_data = _pack_rod_contacts(
+                prim,
+                topology,
+                normal,
+                friction,
+                rod_vertices,
+                rod_edges,
+                vertex_to_body,
+                friction_topology=friction_topology,
+            )
+            if rod_data is not None:
+                inst_vert_a.append(rod_data.vert_a)
+                inst_vert_b.append(rod_data.vert_b)
+                inst_force_n.append(rod_data.forces_n)
+                inst_force_f.append(rod_data.forces_f)
+                inst_body_a.append(rod_data.body_a)
+                inst_body_b.append(rod_data.body_b)
+                inst_point_a.append(rod_data.point_a)
+                inst_point_b.append(rod_data.point_b)
 
     if not inst_vert_a:
         return None
@@ -509,4 +713,8 @@ def prepare_contact_gpu_data(
         vert_b=vert_b_cat,
         forces_n=forces_n_cat,
         forces_f=forces_f_cat,
+        body_a=np.concatenate(inst_body_a) if rod_vertices else None,
+        body_b=np.concatenate(inst_body_b) if rod_vertices else None,
+        point_a=np.concatenate(inst_point_a) if rod_vertices else None,
+        point_b=np.concatenate(inst_point_b) if rod_vertices else None,
     )

@@ -426,6 +426,8 @@ class RodBuilder:
             self._mapping.rod_geo_slots.append(slot)
             self._mapping.rod_rest_geo_slots.append(rest_slot)
             self._mapping.rod_body_indices.append(group.bodies)
+            self._mapping.rod_vertex_sources.append(group.sources)
+            self._mapping.rod_vertex_weights.append(group.weights)
             rows = slice(self._node_count, self._node_count + len(group.points))
             self._built.append((group, slot, rows))
             self._node_count = rows.stop

@@ -1,0 +1,1 @@
+Support `CONTACT_F` observables in UIPC scenes containing centerline rods, reporting edge contacts on their capsule segments and distributing shared-node reactions with the rod reconstruction weights.

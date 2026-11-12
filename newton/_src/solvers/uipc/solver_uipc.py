@@ -1492,15 +1492,6 @@ class SolverUIPC(SolverBase):
 
         step_start = perf_counter()
 
-        if (
-            self._rod_builder.has_rods
-            and observables is not None
-            and observables.is_requested(self.ObservableKind.CONTACT_F)
-        ):
-            raise NotImplementedError(
-                "SolverUIPC ROD contact wrench observables are not supported; native rod contact simulation remains available"
-            )
-
         if abs(dt - self._dt) > 1e-10 and self._step_count == 0:
             warnings.warn(
                 f"SolverUIPC: step dt={dt} differs from configured dt={self._dt}. "
@@ -2230,7 +2221,9 @@ class SolverUIPC(SolverBase):
         if self._csf is None or self.mapping.vertex_to_body_wp is None:
             return
 
-        gpu_data = prepare_contact_gpu_data(self._csf, dt=self._dt, vertex_to_body=self.mapping.vertex_to_body_np)
+        gpu_data = prepare_contact_gpu_data(
+            self._csf, dt=self._dt, vertex_to_body=self.mapping.vertex_to_body_np, mapping=self.mapping
+        )
         if gpu_data is None:
             return
 
@@ -2244,6 +2237,18 @@ class SolverUIPC(SolverBase):
         ff_wp = wp.from_numpy(gpu_data.forces_f, dtype=wp.vec3f, device=device)
         va_wp = wp.from_numpy(gpu_data.vert_a, dtype=wp.int32, device=device)
         vb_wp = wp.from_numpy(gpu_data.vert_b, dtype=wp.int32, device=device)
+        rod_body_a = (
+            wp.from_numpy(gpu_data.body_a, dtype=wp.int32, device=device) if gpu_data.body_a is not None else None
+        )
+        rod_body_b = (
+            wp.from_numpy(gpu_data.body_b, dtype=wp.int32, device=device) if gpu_data.body_b is not None else None
+        )
+        rod_point_a = (
+            wp.from_numpy(gpu_data.point_a, dtype=wp.vec3, device=device) if gpu_data.point_a is not None else None
+        )
+        rod_point_b = (
+            wp.from_numpy(gpu_data.point_b, dtype=wp.vec3, device=device) if gpu_data.point_b is not None else None
+        )
 
         wp.launch(
             kernel=_populate_contact_pairs_kernel,
@@ -2259,6 +2264,10 @@ class SolverUIPC(SolverBase):
                 state_out.body_q,
                 state_out.particle_q,
                 mapping.body_to_first_shape_wp,
+                rod_body_a,
+                rod_body_b,
+                rod_point_a,
+                rod_point_b,
                 self.model.body_count,
                 mapping.max_global_vertex,
                 self._ground_shape_index(),
