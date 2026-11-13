@@ -8,6 +8,8 @@ from __future__ import annotations
 import importlib.util
 import tempfile
 import unittest
+from contextlib import contextmanager
+from unittest.mock import patch
 
 import numpy as np
 import warp as wp
@@ -19,7 +21,22 @@ _HAS_UIPC = importlib.util.find_spec("uipc") is not None
 _CUDA_TEST_DEVICES = get_selected_cuda_test_devices(mode="basic")
 if _HAS_UIPC:
     from uipc import view
-    from uipc.core import FiniteElementStateAccessorFeature
+    from uipc.core import AffineBodyStateAccessorFeature, FiniteElementStateAccessorFeature
+
+
+@contextmanager
+def _readback_elements(dtypes):
+    """Count actual Newton vector or matrix elements copied to the host."""
+    copied = []
+    numpy_readback = wp.array.numpy
+
+    def track_readback(array, *args, **kwargs):
+        if array.dtype in dtypes:
+            copied.append(array.size)
+        return numpy_readback(array, *args, **kwargs)
+
+    with patch.object(wp.array, "numpy", track_readback):
+        yield copied
 
 
 def _build_two_world_cubes(device):
@@ -32,7 +49,7 @@ def _build_two_world_cubes(device):
 
     builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
     newton.solvers.SolverUIPC.register_custom_attributes(builder)
-    builder.replicate(world, world_count=2, spacing=(1.0, 0.0, 0.0))
+    builder.replicate(world, copy_count=2, spacing=(1.0, 0.0, 0.0))
     builder.add_ground_plane()
     return builder.finalize(device=device)
 
@@ -40,6 +57,7 @@ def _build_two_world_cubes(device):
 @unittest.skipUnless(_HAS_UIPC and _CUDA_TEST_DEVICES, "uipc and a selected CUDA device are required")
 class TestUIPCReset(unittest.TestCase):
     def test_masked_reset_updates_only_selected_world(self):
+        """Publish selected body channels while preserving the other world and channel."""
         for device in _CUDA_TEST_DEVICES:
             with self.subTest(device=str(device)):
                 with wp.ScopedDevice(device):
@@ -83,6 +101,60 @@ class TestUIPCReset(unittest.TestCase):
                     self.assertAlmostEqual(post[world1_body, 1], pre[world1_body, 1], places=3)
                     self.assertTrue(np.all(np.isfinite(post)))
 
+                    accessor = solver.world.features().find(AffineBodyStateAccessorFeature)
+                    geometry = accessor.create_geometry()
+                    geometry.instances().create("transform", np.eye(4, dtype=np.float64))
+                    geometry.instances().create("velocity", np.zeros((4, 4), dtype=np.float64))
+
+                    def native_body_state(accessor=accessor, geometry=geometry):
+                        """Read actual native body poses and affine velocities."""
+                        accessor.copy_to(geometry)
+                        return (
+                            np.asarray(view(geometry.instances().find("transform"))).reshape(-1, 4, 4).copy(),
+                            np.asarray(view(geometry.instances().find("velocity"))).reshape(-1, 4, 4).copy(),
+                        )
+
+                    before_transform, before_velocity = native_body_state()
+                    target = model.state()
+                    target.body_q.assign(state_0.body_q.numpy() + np.array([0.1, 0.2, 0.3, 0, 0, 0, 0]))
+                    target.body_qd.fill_(wp.spatial_vector(0.2, -0.1, 0.05, 0.0, 0.0, 0.0))
+                    with _readback_elements((wp.mat44d,)) as copied:
+                        solver.reset(target, world_mask=mask, flags=newton.StateFlags.BODY_Q)
+                    self.assertLessEqual(sum(copied), len(before_transform))
+                    after_transform, after_velocity = native_body_state()
+                    np.testing.assert_allclose(after_velocity, before_velocity, atol=1.0e-12)
+                    body_offset = dict(
+                        zip(
+                            solver.mapping.body_indices_wp.numpy(),
+                            solver.mapping.backend_offsets_wp.numpy(),
+                            strict=True,
+                        )
+                    )
+                    np.testing.assert_allclose(
+                        after_transform[body_offset[world1_body]],
+                        before_transform[body_offset[world1_body]],
+                        atol=1.0e-12,
+                    )
+                    self.assertFalse(
+                        np.array_equal(
+                            after_transform[body_offset[world0_body]], before_transform[body_offset[world0_body]]
+                        )
+                    )
+
+                    with _readback_elements((wp.mat44d,)) as copied:
+                        solver.reset(target, world_mask=mask, flags=newton.StateFlags.BODY_QD)
+                    self.assertLessEqual(sum(copied), len(before_transform))
+                    final_transform, final_velocity = native_body_state()
+                    np.testing.assert_allclose(final_transform, after_transform, atol=1.0e-12)
+                    np.testing.assert_allclose(
+                        final_velocity[body_offset[world1_body]], after_velocity[body_offset[world1_body]], atol=1.0e-12
+                    )
+                    self.assertFalse(
+                        np.array_equal(
+                            final_velocity[body_offset[world0_body]], after_velocity[body_offset[world0_body]]
+                        )
+                    )
+
     def test_masked_reset_updates_only_selected_world_particles(self):
         """Reset worlds and particle subsets without changing other assets or channels."""
         for device in _CUDA_TEST_DEVICES:
@@ -120,7 +192,7 @@ class TestUIPCReset(unittest.TestCase):
                         )
                     builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, -9.8))
                     newton.solvers.SolverUIPC.register_custom_attributes(builder)
-                    builder.replicate(world, world_count=2, spacing=(1.0, 0.0, 0.0))
+                    builder.replicate(world, copy_count=2, spacing=(1.0, 0.0, 0.0))
                     model = builder.finalize(device=device)
 
                     state_0 = model.state()
@@ -218,7 +290,10 @@ class TestUIPCReset(unittest.TestCase):
                     np.testing.assert_allclose(q, expected_q, atol=1.0e-6)
                     np.testing.assert_allclose(qd, before_qd, atol=1.0e-6)
 
-                    solver.reset(target, flags=newton.StateFlags.PARTICLE_QD, particle_indices=w1[10:])
+                    with _readback_elements((wp.vec3, wp.vec3d)) as copied:
+                        solver.reset(target, flags=newton.StateFlags.PARTICLE_QD, particle_indices=w1[10:])
+                    # One selected vector channel fits in one native vertex array.
+                    self.assertLessEqual(sum(copied), len(before_q))
                     expected_qd = before_qd.copy()
                     expected_qd[backend_rows[27:36]] = [0.2, -0.1, 0.05]
                     q, qd = native_state()

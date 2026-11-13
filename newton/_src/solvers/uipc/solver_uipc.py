@@ -64,7 +64,7 @@ if TYPE_CHECKING:
         _read_from_backend_kernel,
         _spatial_to_vel_mat44_kernel,
         _transform_to_mat44_kernel,
-        _write_fem_particle_positions_to_backend_kernel,
+        _write_fem_particle_vectors_to_backend_kernel,
         _write_fem_particles_to_backend_kernel,
         populate_backend_offsets,
     )
@@ -335,7 +335,7 @@ class SolverUIPC(SolverBase):
         global _read_fem_particle_positions_from_backend_kernel, _read_fem_particles_from_backend_kernel
         global _read_from_backend_kernel, _spatial_to_vel_mat44_kernel, _transform_to_mat44_kernel
         global _gather_body_affine_kernel, _read_body_and_free_joint_state_kernel
-        global _write_fem_particle_positions_to_backend_kernel, _write_fem_particles_to_backend_kernel
+        global _write_fem_particle_vectors_to_backend_kernel, _write_fem_particles_to_backend_kernel
         global populate_backend_offsets
         try:
             import uipc
@@ -369,7 +369,7 @@ class SolverUIPC(SolverBase):
                 _read_from_backend_kernel,
                 _spatial_to_vel_mat44_kernel,
                 _transform_to_mat44_kernel,
-                _write_fem_particle_positions_to_backend_kernel,
+                _write_fem_particle_vectors_to_backend_kernel,
                 _write_fem_particles_to_backend_kernel,
                 populate_backend_offsets,
             )
@@ -537,6 +537,7 @@ class SolverUIPC(SolverBase):
         self._step_count = 0
         self._step_time_ms = 0.0
         self._initialized = False
+        self._before_world_init_callbacks: list[Callable[[SolverUIPC], None]] = []
 
         # Lazily filled per-mapped-world host caches used by reset().
         self._mapped_body_world = None
@@ -607,6 +608,7 @@ class SolverUIPC(SolverBase):
         # User-registered callbacks (set via configure_* methods)
         self._contact_tabular_fn: Callable | None = None
         self._contact_tabular_include_fem = False
+        self._static_shape_contact_elements: dict[int, ContactElement] = {}
         self._subscene_tabular_fn: Callable | None = None
 
         # Track bodies with Newton-authored inertia overrides.
@@ -629,6 +631,70 @@ class SolverUIPC(SolverBase):
         self._contact_tabular_ref: ContactTabular | None = None
 
     # Pre-initialization configuration
+
+    class _SoftPositionConstraintBindings:
+        """Cache fixed native particle ownership and the last requested selection."""
+
+        def __init__(self, geo_slots: list[Any], particle_index_sets: list[Any]) -> None:
+            self.mapping_lengths = (len(geo_slots), len(particle_index_sets))
+            self.sources = tuple(zip(geo_slots, particle_index_sets, strict=False))
+            self.particle_sizes = tuple(len(particles) for _, particles in self.sources)
+            records = [np.empty((0, 3), dtype=np.int64)]
+            for mesh_index, (_, particles) in enumerate(self.sources):
+                values = np.asarray(particles, dtype=np.int64)
+                unique, reversed_rows = np.unique(values[::-1], return_index=True)
+                # Match the existing per-mesh dictionary's last-occurrence rule.
+                local = len(values) - 1 - reversed_rows
+                records.append(np.column_stack((unique, np.full(len(unique), mesh_index), local)))
+            locations = np.concatenate(records)
+            self.locations = locations[np.argsort(locations[:, 0], kind="stable")]
+            self.indices: np.ndarray | None = None
+            self.bindings: list[tuple[Any, np.ndarray, np.ndarray]] = []
+
+        def is_current(self, geo_slots: list[Any], particle_index_sets: list[Any]) -> bool:
+            # Native ownership is fixed after initialization. Reallocated mapping
+            # lists, geometry slots and particle arrays can replace these sources.
+            return self.mapping_lengths == (len(geo_slots), len(particle_index_sets)) and all(
+                old_slot is slot and old_particles is particles and size == len(particles)
+                for (old_slot, old_particles), size, slot, particles in zip(
+                    self.sources, self.particle_sizes, geo_slots, particle_index_sets, strict=False
+                )
+            )
+
+        def resolve(self, indices: np.ndarray) -> list[tuple[Any, np.ndarray, np.ndarray]]:
+            if self.indices is None or not np.array_equal(self.indices, indices):
+                particles = self.locations[:, 0]
+                starts = np.searchsorted(particles, indices, side="left")
+                stops = np.searchsorted(particles, indices, side="right")
+                groups: dict[int, tuple[list[int], list[int]]] = {}
+                for source_row, (start, stop) in enumerate(zip(starts, stops, strict=True)):
+                    for _, mesh_index, local in self.locations[start:stop]:
+                        local_rows, source_rows = groups.setdefault(int(mesh_index), ([], []))
+                        local_rows.append(int(local))
+                        source_rows.append(source_row)
+                self.bindings = [
+                    (
+                        self.sources[mesh_index][0],
+                        np.asarray(groups[mesh_index][0], dtype=np.int64),
+                        np.asarray(groups[mesh_index][1], dtype=np.int64),
+                    )
+                    for mesh_index in sorted(groups)
+                ]
+                self.indices = indices.copy()
+            return self.bindings
+
+    def add_before_world_init_callback(self, callback: Callable[[SolverUIPC], None]) -> None:
+        """Register an experimental runtime-only SF geometry authoring callback.
+
+        The callback runs after native builders and before ``world.init``. It
+        may assign contact elements or initial constraints, but must not change
+        topology or advance physics. Called once per initialization.
+        """
+        if self._initialized:
+            raise RuntimeError("Register geometry callbacks before initialize")
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        self._before_world_init_callbacks.append(callback)
 
     def configure_scene(self, config: dict[str, Any]) -> None:
         """Update UIPC scene configuration before initialization.
@@ -800,6 +866,36 @@ class SolverUIPC(SolverBase):
             raise RuntimeError("Cannot configure contact tabular after initialization.")
         self._contact_tabular_fn = fn
         self._contact_tabular_include_fem = include_fem
+
+    def configure_static_contact_elements(self, elements: dict[int, ContactElement]) -> None:
+        """Configure experimental runtime-only contact overrides for finite static shapes.
+
+        Call before initialization, or from the contact-tabular callback once its
+        elements exist. Shapes with different elements are not merged. Omitted
+        shapes retain the environment element; planes retain the ground element.
+        This runtime configuration does not add a USD authoring schema.
+
+        Args:
+            elements: Newton shape indices mapped to elements of this scene's
+                contact tabular. Only world-attached, non-plane shapes are valid.
+
+        Raises:
+            RuntimeError: If the solver is initialized.
+            ValueError: If a shape is out of range, body-attached, or a plane.
+        """
+        if self._initialized:
+            raise RuntimeError("Cannot configure static contact elements after initialization.")
+        bodies = self.model.shape_body.numpy()
+        types = self.model.shape_type.numpy()
+        for shape in elements:
+            if (
+                not isinstance(shape, int)
+                or not 0 <= shape < self.model.shape_count
+                or bodies[shape] != -1
+                or newton.GeoType(types[shape]) == newton.GeoType.PLANE
+            ):
+                raise ValueError(f"Expected a finite world-attached shape, got {shape}.")
+        self._static_shape_contact_elements = dict(elements)
 
     def is_contact_enabled(self, body_a: int, body_b: int) -> bool:
         """Query whether contact is enabled between two bodies.
@@ -1320,7 +1416,9 @@ class SolverUIPC(SolverBase):
                     free_joint_bodies,
                     body_element_overrides,
                 )
-            self._rigid_body_builder.build_static_colliders(env_elems[world_index], se)
+            self._rigid_body_builder.build_static_colliders(
+                env_elems[world_index], se, shape_element_overrides=self._static_shape_contact_elements
+            )
             self._articulation_builder.build_joints(robo_elems[world_index], joint_range, se)
             self._rod_builder.build(actor_elems[world_index], body_range, se)
             for body in self.mapping.fem_rod_bodies.intersection(range(*body_range)):
@@ -1338,6 +1436,8 @@ class SolverUIPC(SolverBase):
         self._external_forces = ExternalForces(model, self.mapping)
 
         # Initialize UIPC world and set up state accessors
+        for callback in self._before_world_init_callbacks:
+            callback(self)
         self.world.init(scene)
         if not self.world.is_valid():
             raise RuntimeError(
@@ -1624,13 +1724,16 @@ class SolverUIPC(SolverBase):
 
         Returns:
             A new dictionary containing UIPC's backend-dependent frame counters
-            and ``step_time_ms``. Time and iteration counts are zero before the
-            first step. Unsupported backend counters are absent; in particular,
-            older UIPC builds may omit ``linear_solver_max_iterations``.
+            and ``step_time_ms``. ``frame`` is the native world's frame number,
+            or zero before world creation. Time and iteration counts are zero
+            before the first step. Unsupported backend counters are absent; in
+            particular, older UIPC builds may omit ``linear_solver_max_iterations``.
         """
+        world = getattr(self, "world", None)
+        frame = int(world.frame()) if world is not None else 0
         if self._step_count == 0:
-            return {"step_time_ms": 0.0, "newton_iterations": 0, "linear_solver_max_iterations": 0}
-        return {**self.engine.frame_stats(), "step_time_ms": self._step_time_ms}
+            return {"frame": frame, "step_time_ms": 0.0, "newton_iterations": 0, "linear_solver_max_iterations": 0}
+        return {**self.engine.frame_stats(), "frame": frame, "step_time_ms": self._step_time_ms}
 
     def _get_contact_forces(self) -> ContactForceReadback:
         """Retrieve per-body, per-primitive contact forces from UIPC (diagnostic).
@@ -1924,8 +2027,10 @@ class SolverUIPC(SolverBase):
         Args:
             state: Source Newton state.
             world_mask: Optional world selection, as in :meth:`~newton.solvers.SolverBase.reset`.
-            flags: State channels to publish. ``PARTICLE_Q`` and ``PARTICLE_QD``
-                independently select particle position [m] and velocity [m/s].
+            flags: State channels to publish, defaulting to ``StateFlags.ALL``.
+                ``BODY_Q`` and ``BODY_QD`` independently select body pose and spatial
+                velocity. ``PARTICLE_Q`` and ``PARTICLE_QD`` independently select
+                particle position [m] and velocity [m/s].
             particle_indices: Optional one-dimensional integer array of Newton
                 particle indices. Restricts particle writes to this subset,
                 intersected with ``world_mask`` when supplied. Unmapped particles
@@ -2089,24 +2194,26 @@ class SolverUIPC(SolverBase):
         n = mapping.num_mapped_bodies
         device = model.device
 
-        wp.launch(
-            _transform_to_mat44_kernel,
-            dim=n,
-            inputs=[src_q, mapping.body_indices_wp, self._abd_transform_buf.warp()],
-            device=device,
-        )
-        if write_velocity and src_qd is not None:
+        if write_transform:
             wp.launch(
-                _spatial_to_vel_mat44_kernel,
+                _transform_to_mat44_kernel,
                 dim=n,
-                inputs=[src_qd, src_q, model.body_com, mapping.body_indices_wp, self._abd_velocity_buf.warp()],
+                inputs=[src_q, mapping.body_indices_wp, self._abd_transform_buf.warp()],
                 device=device,
             )
-        else:
-            self._abd_velocity_buf.warp().zero_()
+        if write_velocity:
+            if src_qd is not None:
+                wp.launch(
+                    _spatial_to_vel_mat44_kernel,
+                    dim=n,
+                    inputs=[src_qd, src_q, model.body_com, mapping.body_indices_wp, self._abd_velocity_buf.warp()],
+                    device=device,
+                )
+            else:
+                self._abd_velocity_buf.warp().zero_()
 
-        transforms_host = self._abd_transform_buf.warp().numpy()[:n]
-        velocities_host = self._abd_velocity_buf.warp().numpy()[:n]
+        transforms_host = self._abd_transform_buf.warp().numpy()[:n] if write_transform else None
+        velocities_host = self._abd_velocity_buf.warp().numpy()[:n] if write_velocity else None
 
         # Allocate one master state geometry for all ABD bodies.
         state_geo = getattr(self, "_master_state_geo", None)
@@ -2131,9 +2238,9 @@ class SolverUIPC(SolverBase):
         velocity_view = velocity_attr.view() if velocity_attr is not None else None
 
         rows = slice(None) if selected_rows is None else selected_rows
-        if write_transform:
+        if transforms_host is not None:
             transform_view[offsets_np[rows]] = transforms_host[rows]
-        if velocity_view is not None and write_velocity:
+        if velocity_view is not None and velocities_host is not None:
             velocity_view[offsets_np[rows]] = velocities_host[rows]
 
         # Single push into UIPC — triggers one `update_dof_attributes`.
@@ -2195,10 +2302,8 @@ class SolverUIPC(SolverBase):
             self._fem_backend_offsets_host if selected_rows is None else self._fem_backend_offsets_host[selected_rows]
         )
 
-        if write_velocity and src_qd is not None and self._fem_velocity_buf is not None:
-            velocity_attr = state_geo.vertices().find("velocity")
-            assert velocity_attr is not None
-            velocity_view = _view_attr(velocity_attr)
+        write_velocity = write_velocity and src_qd is not None and self._fem_velocity_buf is not None
+        if write_position and write_velocity:
             wp.launch(
                 _write_fem_particles_to_backend_kernel,
                 dim=self._fem_mapped_vertex_count,
@@ -2212,26 +2317,28 @@ class SolverUIPC(SolverBase):
                 ],
                 device=model.device,
             )
-            positions_host = self._fem_position_buf.warp().numpy()
-            velocities_host = self._fem_velocity_buf.warp().numpy()
-            if write_position:
-                position_view[rows, :, 0] = positions_host[rows]
-            velocity_view[rows, :, 0] = velocities_host[rows]
-        else:
+        elif write_position or write_velocity:
+            source = src_q if write_position else src_qd
+            buffer = self._fem_position_buf if write_position else self._fem_velocity_buf
             wp.launch(
-                _write_fem_particle_positions_to_backend_kernel,
+                _write_fem_particle_vectors_to_backend_kernel,
                 dim=self._fem_mapped_vertex_count,
                 inputs=[
                     self._fem_backend_offsets_wp,
                     self._fem_particle_indices_wp,
-                    src_q,
-                    self._fem_position_buf.warp(),
+                    source,
+                    buffer.warp(),
                 ],
                 device=model.device,
             )
-            positions_host = self._fem_position_buf.warp().numpy()
-            if write_position:
-                position_view[rows, :, 0] = positions_host[rows]
+
+        if write_position:
+            position_view[rows, :, 0] = self._fem_position_buf.warp().numpy()[rows]
+        if write_velocity:
+            velocity_attr = state_geo.vertices().find("velocity")
+            assert velocity_attr is not None
+            velocity_view = _view_attr(velocity_attr)
+            velocity_view[rows, :, 0] = self._fem_velocity_buf.warp().numpy()[rows]
 
         self._fem_accessor.copy_from(state_geo)
         if check_sanity:
@@ -2552,21 +2659,19 @@ class SolverUIPC(SolverBase):
         if targets.shape != (indices.size, 3):
             raise ValueError(f"aim_positions must have shape ({indices.size}, 3), got {targets.shape}")
 
-        found_any = False
-        for geo_slot, mesh_particle_indices in zip(geo_slots, particle_index_sets, strict=False):
-            local_by_global = {int(global_idx): local for local, global_idx in enumerate(mesh_particle_indices)}
-            local_indices: list[int] = []
-            local_targets: list[np.ndarray] = []
-            for particle_index, target in zip(indices, targets, strict=True):
-                local = local_by_global.get(int(particle_index))
-                if local is None:
-                    continue
-                local_indices.append(local)
-                local_targets.append(target)
+        caches = getattr(self, "_soft_position_constraint_bindings", None)
+        if caches is None:
+            caches = self._soft_position_constraint_bindings = {}
+        bindings = caches.get(geometry_name)
+        if bindings is None or not bindings.is_current(geo_slots, particle_index_sets):
+            bindings = self._SoftPositionConstraintBindings(geo_slots, particle_index_sets)
+            caches[geometry_name] = bindings
 
-            if not local_indices:
-                continue
+        selected = bindings.resolve(indices)
+        if not selected:
+            raise ValueError(f"None of the requested particle_indices belong to UIPC {geometry_name} geometry.")
 
+        for geo_slot, local_indices_np, source_rows in selected:
             geo = geo_slot.geometry()
             constrained_attr = geo.vertices().find("is_constrained")
             aim_attr = geo.vertices().find("aim_position")
@@ -2576,20 +2681,14 @@ class SolverUIPC(SolverBase):
                     "Recreate SolverUIPC with soft-position constraints enabled."
                 )
 
-            local_indices_np = np.asarray(local_indices, dtype=np.int64)
             _view_attr(constrained_attr)[local_indices_np] = int(enabled)
-            _view_attr(aim_attr)[local_indices_np] = np.asarray(local_targets, dtype=np.float64).reshape(-1, 3, 1)
+            _view_attr(aim_attr)[local_indices_np] = targets[source_rows].reshape(-1, 3, 1)
 
             if strength_ratio is not None:
                 strength_attr = geo.vertices().find("strength_ratio")
                 if strength_attr is None:
                     raise RuntimeError(f"UIPC {geometry_name} soft-position strength_ratio attribute is missing.")
                 _view_attr(strength_attr)[local_indices_np] = float(strength_ratio)
-
-            found_any = True
-
-        if not found_any:
-            raise ValueError(f"None of the requested particle_indices belong to UIPC {geometry_name} geometry.")
 
     def clear_cloth_soft_position_constraints(
         self,

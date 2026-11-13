@@ -334,19 +334,19 @@ def _write_fem_particles_to_backend_kernel(
 
 
 @wp.kernel(enable_backward=False)
-def _write_fem_particle_positions_to_backend_kernel(
+def _write_fem_particle_vectors_to_backend_kernel(
     backend_offsets: wp.array[wp.uint32],
     particle_indices: wp.array[wp.int32],
-    src_particle_q: wp.array[wp.vec3],
-    dst_positions: wp.array[wp.vec3d],
+    src_values: wp.array[wp.vec3],
+    dst_values: wp.array[wp.vec3d],
 ):
-    """Scatter Newton particle positions into UIPC FEM buffers."""
+    """Scatter one Newton particle vector channel into a UIPC FEM buffer."""
     tid = wp.tid()
     backend_idx = backend_offsets[tid]
     particle_idx = particle_indices[tid]
 
-    q = src_particle_q[particle_idx]
-    dst_positions[backend_idx] = wp.vec3d(wp.float64(q[0]), wp.float64(q[1]), wp.float64(q[2]))
+    value = src_values[particle_idx]
+    dst_values[backend_idx] = wp.vec3d(wp.float64(value[0]), wp.float64(value[1]), wp.float64(value[2]))
 
 
 @wp.kernel(enable_backward=False)
@@ -424,6 +424,10 @@ class UIpcMappingInfo:
     body_objects: dict[int, Any] = field(default_factory=dict)
     # body_idx -> list of shape indices
     body_shapes: dict[int, list[int]] = field(default_factory=lambda: defaultdict(list))
+
+    # World-space static geometry and its original Newton shape indices.
+    static_geo_slots: list[Any] = field(default_factory=list)
+    static_shape_indices: list[list[int]] = field(default_factory=list)
 
     # Pre-computed warp arrays for batch GPU sync (populated after world.init)
     body_indices_wp: wp.array | None = None  # sorted body indices, int32
