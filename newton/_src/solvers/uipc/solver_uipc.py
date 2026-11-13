@@ -1461,7 +1461,18 @@ class SolverUIPC(SolverBase):
 
         self._body_affine = wp.full(model.body_count, wp.mat44d(np.eye(4)), device=model.device)
         self._body_affine_valid = wp.zeros(model.body_count, dtype=wp.bool, device=model.device)
+        self._body_affine_velocities = wp.zeros(model.body_count, dtype=wp.mat44d, device=model.device)
+        self._abd_body_offsets_host = np.full(model.body_count, -1, dtype=np.int64)
+        self._backend_offsets_host = np.empty(0, dtype=np.int64)
+        if n > 0:
+            self._backend_offsets_host = self.mapping.backend_offsets_wp.numpy().astype(np.int64, copy=False)
+            self._abd_body_offsets_host[self.mapping.body_indices_wp.numpy()] = self._backend_offsets_host
+        self._body_affine_velocity_valid = wp.array(
+            self._abd_body_offsets_host >= 0, dtype=wp.bool, device=model.device
+        )
+        self._abd_affine_write_geometries = {}
         self._update_body_affine_transforms()
+        self._update_body_affine_velocities()
 
         self._fem_accessor: FiniteElementStateAccessorFeature = self.world.features().find(
             FiniteElementStateAccessorFeature
@@ -1586,6 +1597,177 @@ class SolverUIPC(SolverBase):
         if not self._initialized:
             raise RuntimeError("get_body_affine_transforms() requires initialize() first.")
         return self._body_affine, self._body_affine_valid
+
+    def get_body_affine_velocities(self) -> tuple[wp.array[wp.mat44d], wp.array[wp.bool]]:
+        """Return full affine time derivatives and ABD validity in Newton body order.
+
+        This experimental API may change without a deprecation period.
+        The solver-owned arrays have shape ``[model.body_count]`` on
+        ``model.device`` and update in place after initialization, stepping,
+        and body resets. Treat them as read-only and clone to retain a snapshot.
+
+        For collision-rest coordinates ``X``, point velocity is
+        ``v_world = A_dot * X + t_dot``. The upper 3x3 stores ``A_dot``
+        [1/s], the last column stores ``t_dot`` [m/s], and the last row
+        is zero. All twelve affine velocity components are retained.
+
+        Bodies outside the ABD mapping, including centerline rods, have a
+        zero matrix and false validity. Rod node velocities are available
+        through :meth:`get_rod_state`.
+
+        Raises:
+            RuntimeError: If :meth:`initialize` has not completed.
+        """
+        if not self._initialized:
+            raise RuntimeError("get_body_affine_velocities() requires initialize() first.")
+        return self._body_affine_velocities, self._body_affine_velocity_valid
+
+    def set_body_affine_transforms(
+        self,
+        transforms: wp.array[wp.mat44d] | np.ndarray,
+        *,
+        body_indices: wp.array[wp.int32] | np.ndarray | None = None,
+    ) -> None:
+        """Write selected live ABD transforms, preserving full stretch and shear.
+
+        This experimental API may change without a deprecation period.
+        Matrices map collision-rest coordinates to world coordinates as
+        ``x_world = A * X + t``. The upper 3x3 is dimensionless, translation
+        [m] is in the last column, and the last row is ``[0, 0, 0, 1]``.
+        Only the selected transform channel is transferred to UIPC.
+
+        This updates the solver's native state and affine export. Callers
+        synchronize their own :class:`~newton.State` buffers separately.
+        Subsequent :meth:`step` calls export the native state to ``state_out``.
+        This is a runtime state interface.
+
+        Args:
+            transforms: Finite matrices, shape ``[model.body_count, 4, 4]``
+                when ``body_indices=None``, or ``[len(body_indices), 4, 4]``
+                in selection order. NumPy values are converted to float64.
+            body_indices: Unique Newton body indices, shape ``[count]``.
+                Explicit selections must contain mapped ABD bodies. With
+                ``None``, update every mapped ABD entry from full-body input.
+
+        Raises:
+            RuntimeError: If :meth:`initialize` has not completed.
+            ValueError: If matrices or body indices are invalid.
+        """
+        self._set_body_affine_channel(transforms, body_indices, attribute="transform")
+
+    def set_body_affine_velocities(
+        self,
+        velocities: wp.array[wp.mat44d] | np.ndarray,
+        *,
+        body_indices: wp.array[wp.int32] | np.ndarray | None = None,
+    ) -> None:
+        """Write selected live ABD affine time derivatives.
+
+        This experimental API may change without a deprecation period.
+        For collision-rest coordinates ``X``, point velocity is
+        ``A_dot * X + t_dot``. The upper 3x3 stores ``A_dot`` [1/s],
+        the last column stores ``t_dot`` [m/s], and the last row is zero.
+        Only the selected velocity channel is transferred to UIPC.
+
+        This updates the solver's native state and affine velocity export.
+        Callers synchronize their own :class:`~newton.State` buffers separately.
+        This is a runtime state interface.
+
+        Args:
+            velocities: Finite matrices, shape ``[model.body_count, 4, 4]``
+                when ``body_indices=None``, or ``[len(body_indices), 4, 4]``
+                in selection order. NumPy values are converted to float64.
+            body_indices: Unique Newton body indices, shape ``[count]``.
+                Explicit selections must contain mapped ABD bodies. With
+                ``None``, update every mapped ABD entry from full-body input.
+
+        Raises:
+            RuntimeError: If :meth:`initialize` has not completed.
+            ValueError: If matrices or body indices are invalid.
+        """
+        self._set_body_affine_channel(velocities, body_indices, attribute="velocity")
+
+    def _set_body_affine_channel(
+        self,
+        values: wp.array[wp.mat44d] | np.ndarray,
+        body_indices: wp.array[wp.int32] | np.ndarray | None,
+        *,
+        attribute: str,
+    ) -> None:
+        """Validate a complete request before changing live ABD state."""
+        if not self._initialized:
+            raise RuntimeError("Writing body affine state requires initialize() first.")
+        matrices = values.numpy() if isinstance(values, wp.array) else np.asarray(values)
+        if matrices.dtype.kind not in "fiu":
+            raise ValueError("Affine values must be real numeric matrices.")
+        if body_indices is None:
+            if matrices.shape != (self.model.body_count, 4, 4):
+                raise ValueError("Full-body affine values must have shape (model.body_count, 4, 4).")
+            indices = np.flatnonzero(self._abd_body_offsets_host >= 0)
+            matrices = matrices[indices]
+        else:
+            indices = body_indices.numpy() if isinstance(body_indices, wp.array) else np.asarray(body_indices)
+            if indices.ndim != 1 or indices.dtype.kind not in "iu":
+                raise ValueError("body_indices must be a one-dimensional integer array.")
+            if np.any(indices < 0) or np.any(indices >= self.model.body_count):
+                raise ValueError("body_indices contains an out-of-range body.")
+            if np.unique(indices).size != indices.size:
+                raise ValueError("body_indices must contain unique bodies.")
+            if matrices.shape != (indices.size, 4, 4):
+                raise ValueError("Selected affine values must have shape (len(body_indices), 4, 4).")
+        offsets = self._abd_body_offsets_host[indices]
+        if np.any(offsets < 0):
+            raise ValueError("Explicit affine state selections must contain mapped ABD bodies.")
+        with np.errstate(over="ignore"):
+            matrices = matrices.astype(np.float64, copy=False)
+        last_row = np.array([0, 0, 0, 1 if attribute == "transform" else 0])
+        if not np.isfinite(matrices).all() or not np.all(matrices[:, 3, :] == last_row):
+            raise ValueError(f"Invalid affine {attribute} matrices or homogeneous last row.")
+        self._write_body_affine_channel(matrices, offsets, attribute=attribute)
+
+    def _write_body_affine_channel(self, values: np.ndarray, offsets: np.ndarray, *, attribute: str) -> None:
+        """Write contiguous selected native ranges through one channel geometry."""
+        if offsets.size == 0:
+            return
+        order = np.argsort(offsets)
+        boundaries = np.flatnonzero(np.diff(offsets[order]) != 1) + 1
+        try:
+            for rows in np.split(order, boundaries):
+                offset, count = int(offsets[rows[0]]), int(rows.size)
+                cached = self._abd_affine_write_geometries.get(attribute)
+                if cached is None or cached[:2] != (offset, count):
+                    geometry = self._abd_accessor.create_geometry(offset, count)
+                    default = np.eye(4) if attribute == "transform" else np.zeros((4, 4))
+                    geometry.instances().create(attribute, default)
+                    self._abd_affine_write_geometries[attribute] = (offset, count, geometry)
+                else:
+                    geometry = cached[2]
+                geometry.instances().find(attribute).view()[:] = values[rows]
+                self._abd_accessor.copy_from(geometry)
+        finally:
+            # Keep exports consistent with native state even if a later range fails.
+            if attribute == "transform":
+                self._update_body_affine_transforms()
+            else:
+                self._update_body_affine_velocities()
+
+    def _update_body_affine_velocities(self) -> None:
+        """Refresh full affine derivatives through the dedicated GPU channel."""
+        if self._abd_accessor is None or self.mapping.num_mapped_bodies == 0:
+            return
+        self._abd_accessor.copy_velocity_to(self._abd_velocity_buf.buffer_view(), 0, self.mapping.max_backend_count)
+        wp.launch(
+            _gather_body_affine_kernel,
+            dim=self.mapping.num_mapped_bodies,
+            inputs=[
+                self.mapping.backend_offsets_wp,
+                self.mapping.body_indices_wp,
+                self._abd_velocity_buf.warp(),
+                self._body_affine_velocities,
+                self._body_affine_velocity_valid,
+            ],
+            device=self.model.device,
+        )
 
     def _update_body_affine_transforms(self, *, copy_from_backend: bool = True) -> None:
         """Refresh the rendering view without converting the linear part to a quaternion."""
@@ -2171,11 +2353,9 @@ class SolverUIPC(SolverBase):
         """Push body transforms / velocities into the UIPC backend.
 
         Args default to ``model.body_q`` / ``model.body_qd`` and all mapped
-        rows, preserving the original notify behavior.  ``selected_rows`` is an
-        array of row indices into the mapped-body arrays (``[0, n)``); only
-        those rows are scattered, so non-selected bodies keep their current
-        live UIPC pose (the ``copy_to`` seed).  ``write_transform`` /
-        ``write_velocity`` gate which attribute is overwritten.
+        rows, preserving the original notify behavior. ``selected_rows`` selects
+        rows of the mapped-body arrays (``[0, n)``). Each enabled attribute is
+        written through its own selected native ranges.
         """
         mapping = self.mapping
         if mapping.num_mapped_bodies == 0 or not mapping.body_geo_slots:
@@ -2215,37 +2395,12 @@ class SolverUIPC(SolverBase):
         transforms_host = self._abd_transform_buf.warp().numpy()[:n] if write_transform else None
         velocities_host = self._abd_velocity_buf.warp().numpy()[:n] if write_velocity else None
 
-        # Allocate one master state geometry for all ABD bodies.
-        state_geo = getattr(self, "_master_state_geo", None)
-        if state_geo is None:
-            state_geo = self._abd_accessor.create_geometry()
-            state_geo.instances().create("transform", np.eye(4, dtype=np.float64))
-            state_geo.instances().create("velocity", np.zeros((4, 4), dtype=np.float64))
-            self._master_state_geo = state_geo
-
-        # Cache the stable UIPC q offset for each mapped body.
-        if getattr(self, "_backend_offsets_host", None) is None:
-            self._backend_offsets_host = mapping.backend_offsets_wp.numpy().astype(np.int64, copy=False)
-        offsets_np = self._backend_offsets_host
-
-        # Seed master geometry from the current UIPC state.
-        self._abd_accessor.copy_to(state_geo)
-
-        transform_attr = state_geo.instances().find("transform")
-        velocity_attr = state_geo.instances().find("velocity")
-        assert transform_attr is not None
-        transform_view = transform_attr.view()
-        velocity_view = velocity_attr.view() if velocity_attr is not None else None
-
         rows = slice(None) if selected_rows is None else selected_rows
+        offsets = self._backend_offsets_host[rows]
         if transforms_host is not None:
-            transform_view[offsets_np[rows]] = transforms_host[rows]
-        if velocity_view is not None and velocities_host is not None:
-            velocity_view[offsets_np[rows]] = velocities_host[rows]
-
-        # Single push into UIPC — triggers one `update_dof_attributes`.
-        self._abd_accessor.copy_from(state_geo)
-        self._update_body_affine_transforms()
+            self._write_body_affine_channel(transforms_host[rows], offsets, attribute="transform")
+        if velocities_host is not None:
+            self._write_body_affine_channel(velocities_host[rows], offsets, attribute="velocity")
         if check_sanity:
             self.world.retrieve()
             self._raise_if_sanity_check_failed()
@@ -2493,6 +2648,7 @@ class SolverUIPC(SolverBase):
                         state_out.body_qd,
                         self._body_affine,
                         self._body_affine_valid,
+                        self._body_affine_velocities,
                         world_free,
                         model.joint_X_p,
                         model.joint_X_c,
@@ -2504,8 +2660,6 @@ class SolverUIPC(SolverBase):
                     device=model.device,
                 )
                 return True
-            self._update_body_affine_transforms(copy_from_backend=False)
-
             wp.launch(
                 _read_from_backend_kernel,
                 dim=n,
@@ -2517,6 +2671,9 @@ class SolverUIPC(SolverBase):
                     model.body_com,
                     state_out.body_q,
                     state_out.body_qd,
+                    self._body_affine,
+                    self._body_affine_valid,
+                    self._body_affine_velocities,
                 ],
                 device=model.device,
             )

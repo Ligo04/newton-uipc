@@ -257,14 +257,20 @@ def _read_from_backend_kernel(
     body_com: wp.array[wp.vec3],
     out_body_q: wp.array[wp.transform],
     out_body_qd: wp.array[wp.spatial_vector],
+    body_affine: wp.array[wp.mat44d],
+    body_valid: wp.array[wp.bool],
+    body_affine_velocities: wp.array[wp.mat44d],
 ):
-    """Gather UIPC affine state into Newton body poses and COM twists."""
+    """Gather UIPC affine state into Newton body poses, COM twists, and affine exports."""
     i = wp.tid()
     backend = backend_offsets[i]
     body = body_indices[i]
     position, velocity = _decode_backend_body(src_transforms[backend], src_velocities[backend], body_com[body])
     out_body_q[body] = position
     out_body_qd[body] = velocity
+    body_affine[body] = wp.transpose(src_transforms[backend])
+    body_valid[body] = True
+    body_affine_velocities[body] = wp.transpose(src_velocities[backend])
 
 
 @wp.kernel(enable_backward=False)
@@ -278,6 +284,7 @@ def _read_body_and_free_joint_state_kernel(
     out_body_qd: wp.array[wp.spatial_vector],
     body_affine: wp.array[wp.mat44d],
     body_valid: wp.array[wp.bool],
+    body_affine_velocities: wp.array[wp.mat44d],
     world_free_joint_for_body: wp.array[wp.int32],
     joint_X_p: wp.array[wp.transform],
     joint_X_c: wp.array[wp.transform],
@@ -296,6 +303,7 @@ def _read_body_and_free_joint_state_kernel(
     out_body_qd[body] = velocity
     body_affine[body] = wp.transpose(matrix)
     body_valid[body] = True
+    body_affine_velocities[body] = wp.transpose(src_velocities[backend])
     joint = world_free_joint_for_body[body]
     if joint >= 0:
         # Use register values; other threads need not have written their bodies yet.
