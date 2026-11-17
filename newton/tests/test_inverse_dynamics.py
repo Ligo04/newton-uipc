@@ -3075,6 +3075,45 @@ class TestInverseDynamicsAPI(TestInverseDynamicsBase):
     """API-surface tests: output dispatch, error paths, and degenerate-model
     edge cases not exercised by the analytical-correctness suites."""
 
+    def test_masked_force_conversion_preserves_unassigned_joint(self):
+        """Skip loop joints before indexing a sliced articulation mask or changing forces."""
+        from newton._src.solvers.featherstone.kernels import (  # noqa: PLC0415
+            convert_free_distance_joint_f_internal_to_public,
+        )
+
+        builder = newton.ModelBuilder(gravity=wp.vec3(0.0))
+        first = builder.add_link(mass=1.0, inertia=self.I_UNIT)
+        second = builder.add_link(mass=1.0, inertia=self.I_UNIT)
+        builder.add_articulation([builder.add_joint_free(first)])
+        builder.add_articulation([builder.add_joint_free(second)])
+        loop = builder.add_joint_distance(first, second)
+        model = builder.finalize(device=self.device)
+        self.assertEqual(int(model.joint_articulation.numpy()[loop]), -1)
+        state = model.state()
+        mask_storage = wp.array([True, True, True], dtype=wp.bool, device=self.device)
+        forces = wp.full(model.joint_dof_count, 7.5, dtype=wp.float32, device=self.device)
+        wp.launch(
+            convert_free_distance_joint_f_internal_to_public,
+            dim=model.joint_count,
+            inputs=[
+                model.joint_type,
+                model.joint_parent,
+                model.joint_child,
+                model.joint_qd_start,
+                model.joint_articulation,
+                mask_storage[1:],
+                model.joint_X_p,
+                state.body_q,
+                state.body_q,
+            ],
+            outputs=[forces],
+            device=self.device,
+        )
+        expected = np.full(model.joint_dof_count, -7.5, dtype=np.float32)
+        start, stop = model.joint_qd_start.numpy()[loop : loop + 2]
+        expected[start:stop] = 7.5
+        np.testing.assert_array_equal(forces.numpy(), expected)
+
     def test_omitted_mass_matrix_is_not_written(self):
         """Requesting both bias forces leaves the omitted mass matrix untouched.
 

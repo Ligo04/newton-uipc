@@ -78,6 +78,7 @@ class RigidBodyBuilder:
         self._shape_type_np: np.ndarray | None = None
         self._shape_transform_np: np.ndarray | None = None
         self._shape_scale_np: np.ndarray | None = None
+        self._shape_flags_np: np.ndarray | None = None
         self._shape_constitutions = self._constitution_values("shape_constitution", model.shape_count, "")
         self._validate_constitutions()
 
@@ -140,6 +141,7 @@ class RigidBodyBuilder:
         self._shape_body_np = model.shape_body.numpy()
         self._shape_type_np = model.shape_type.numpy()
         self._shape_transform_np = model.shape_transform.numpy()
+        self._shape_flags_np = model.shape_flags.numpy() if model.shape_flags is not None else None
         return True
 
     def init_body_transforms(self) -> np.ndarray | None:
@@ -207,7 +209,8 @@ class RigidBodyBuilder:
                 g = halfplane(center, normal)
                 contact_elem.apply_to(g)
                 ground_obj = self._scene.objects().create(f"ground_plane_{s}")
-                ground_obj.geometries().create(g)
+                slot, _ = ground_obj.geometries().create(g)
+                self._mapping.ground_geo_slots[s] = slot
 
     def build_static_colliders(
         self,
@@ -333,16 +336,21 @@ class RigidBodyBuilder:
         assert self._shape_transform_np is not None
 
         parts: list[tuple[Any, ...]] = []
-        for shape in self._mapping.body_shapes.get(body_idx, ()):
+        # Preserve all-shape ordinals when sharing per-vertex shape provenance.
+        for shape_slot, shape in enumerate(self._mapping.body_shapes.get(body_idx, ())):
+            if self._shape_flags_np is not None and not int(self._shape_flags_np[shape]) & int(
+                ShapeFlags.COLLIDE_SHAPES
+            ):
+                continue
             geo_type = int(self._shape_type_np[shape])
             if geo_type == int(GeoType.PLANE):
                 continue
             scale = tuple(float(x) for x in self._shape_scale_np[shape])
             transform = self._shape_transform_np[shape].tobytes()
             if geo_type in (int(GeoType.MESH), int(GeoType.CONVEX_MESH)):
-                parts.append((geo_type, scale, transform, id(self._model.shape_source[shape])))
+                parts.append((shape_slot, geo_type, scale, transform, id(self._model.shape_source[shape])))
             else:
-                parts.append((geo_type, scale, transform))
+                parts.append((shape_slot, geo_type, scale, transform))
         return tuple(parts) if parts else None
 
     def build_affine_bodies(

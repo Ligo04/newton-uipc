@@ -91,11 +91,27 @@ class TestUIPCRod(unittest.TestCase):
                 np.testing.assert_allclose(after[bounds], before[bounds] + [0, 0, 0.5], atol=1e-6)
 
     def test_rod_uses_fem_constitutions_and_preserves_mass(self):
+        """Bind a uniform custom rod contact element while preserving FEM mass and stiffness."""
         model, bodies, _ = self._model()
-        solver = self._initialize(model)
+        elements = {}
+
+        def configure(tabular, world, ground, env, robot, actor):
+            element = tabular.create("cable")
+            tabular.insert(element, ground, 0.8, -1.0, True)
+            elements[world] = element
+            return {int(body): element for body in bodies}
+
+        solver = newton.solvers.SolverUIPC(model, backend="none", dt=0.002)
+        solver.configure_contact_tabular(configure)
+        with self.assertWarnsRegex(NewtonWarning, "ROD.*centerline"):
+            solver.initialize(model.state())
         self.assertFalse(set(bodies).intersection(solver.mapping.body_geo_slots))
         self.assertEqual(len(solver.mapping.rod_geo_slots), 1)
         geo = solver.mapping.rod_geo_slots[0].geometry()
+        self.assertEqual(int(np.asarray(view(geo.meta().find("contact_element_id")))[0]), elements[0].id())
+        for body in bodies:
+            self.assertEqual(solver._body_contact_elem[int(body)].id(), elements[0].id())
+            self.assertTrue(solver.is_contact_enabled(int(body), -1))
         self.assertEqual(int(np.asarray(view(geo.meta().find("constitution_uid"))).reshape(-1)[0]), 12)
         extra_uids = geo.meta().to_json()["extra_constitution_uids"]["attribute"]["values"]
         self.assertIn(15, np.asarray(extra_uids).reshape(-1))
@@ -109,6 +125,14 @@ class TestUIPCRod(unittest.TestCase):
             [(0.0, 0.0, 1.0), (0.2, 0.0, 1.0), (0.4, 0.0, 1.0), (0.6, 0.0, 1.0)],
             atol=1.0e-7,
         )
+
+        def partial_override(tabular, world, ground, env, robot, actor):
+            return {int(bodies[0]): tabular.create("partial_cable")}
+
+        invalid = newton.solvers.SolverUIPC(model, backend="none", dt=0.002)
+        invalid.configure_contact_tabular(partial_override)
+        with self.assertWarnsRegex(NewtonWarning, "ROD.*centerline"), self.assertRaisesRegex(ValueError, "uniform"):
+            invalid.initialize(model.state())
 
     def test_fixed_segment_fixes_its_two_nodes(self):
         model, _, _ = self._model(fixed=True)

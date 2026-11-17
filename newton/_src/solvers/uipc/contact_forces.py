@@ -3,11 +3,10 @@
 
 """Per-body contact force extraction from UIPC.
 
-Two paths:
-  - GPU (hot path): ``prepare_contact_gpu_data`` → warp kernels export contact
-    records and forces into solver observables.
-  - CPU (diagnostic): ``retrieve_contact_forces`` → ``ContactForceReadback``
-    for ``get_contact_forces()`` readback API.
+Solver observables use ``contact_export.ContactExporter`` for device-side
+packing. ``retrieve_contact_forces`` provides CPU ``ContactForceReadback``
+diagnostics. ``prepare_contact_gpu_data`` retains the earlier host packing
+representation for existing callers.
 """
 
 from __future__ import annotations

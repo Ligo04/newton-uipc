@@ -1889,6 +1889,9 @@ def parse_usd(
                     child_world_xform_o = usd.get_transform(child_prim_o, local=False, xform_cache=xform_cache)
                     world_body_xform_o = child_world_xform_o * child_tf_o * wp.transform_inverse(parent_tf_o)
                     orphan_incoming_xform = incoming_world_xform * world_body_xform_o
+            if len(joint_group) == 1 and joint_desc.excludeFromArticulation:
+                excluded_articulation_joints[joint_path] = orphan_incoming_xform
+                continue
             if len(joint_group) > 1:
                 parse_merged_joints(joint_group, incoming_xform=orphan_incoming_xform)
             else:

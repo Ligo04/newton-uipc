@@ -429,8 +429,10 @@ radius, coincident initial joint endpoints, and isotropic bending. World
 `FREE`, `FIXED`, and endpoint `BALL` roots are supported. Kinematic or
 zero-mass segments fix both endpoints; kinematic targets follow the input
 body state each step. `reset()` supports body position/velocity flags and
-world masks. Branching, backtracking bending hinges, disabled ROD joints, attachments to other bodies,
-per-body contact-element overrides, and coupling proxy rods raise errors.
+world masks. `configure_contact_tabular` accepts per-body overrides for rods
+when every segment of a connected rod uses the same contact element.
+Branching, backtracking bending hinges, disabled ROD joints, attachments to
+other bodies, and coupling proxy rods raise errors.
 
 This approximation omits shear, twist, material damping, and intrinsic rest
 curvature and emits a warning at initialization. A curved rod will tend
@@ -439,7 +441,7 @@ geometry is available. `CONTACT_F` observables report reactions on the Newton
 capsule segment shapes. Edge contacts belong to the segment represented by that
 edge. A contact at a shared centerline vertex is distributed to its incident
 segments using the same weights as node reconstruction, preserving the total
-contact force. Reported contact positions use the centerline contact location
+contact force and its world moment. Reported contact positions use the centerline contact location
 offset by the rod radius along the contact normal.
 
 The experimental `NewtonUIPCRodAPI` declares the USD selector:
@@ -699,16 +701,21 @@ on the final substep when only frame-end
 readings are needed. Omitted requests leave the previous report unchanged;
 a requested readback with no contacts clears the report.
 
-Each UIPC contact stencil (PT/EE/PE/PP/PH) anchored on a rigid body becomes
-one rigid-contact entry. `observables.contact_f` contains the world-space
-force [N] on the first shape, with zero torque components [N·m]. Pair arrays
-contain the touching shapes and representative points
-(`rigid_contact_point0/1`), so `SensorContact` reports per-counterpart forces
-and `position_matrix` contact positions. FEM counterparts and the ground
-are attributed to the ground-plane shape. Contact positions are vertex-level
-representatives, so a face-face interface localizes to within the contact
-face rather than its exact centroid. The soft-contact segment is unused and
-zeroed; FEM-only contact stencils are not exported by `CONTACT_F`.
+UIPC contact stencils (PT/EE/PE/PP/PH) retain per-vertex Newton shape
+provenance, including instanced bodies, finite static meshes and individual
+halfplanes. Shared rod nodes can produce multiple weighted segment pairs.
+`observables.contact_f` contains the world-space force [N] on the first
+shape and its torque [N·m] about that body's center of mass. Native nodal
+forces determine the world moment independently of the reported surface
+points. `SensorContact` reports per-counterpart forces and `position_matrix`
+positions. Rigid-particle stencils use the allocated soft-contact segment,
+including particle indices and barycentric weights. Particle-only stencils
+have no shape-side report.
+
+Native Geometry queries provide host gradient snapshots. Warp kernels match
+normal and friction topology, combine duplicate records and pack ownership,
+points and moments on the solver device. Device buffers grow by capacity and
+are reused; rod positions come directly from the existing native-node buffer.
 
 Contact diagnostics are available only through observables. Migrate
 `update_contacts(contacts, state)` calls to the `step(..., observables=...)`

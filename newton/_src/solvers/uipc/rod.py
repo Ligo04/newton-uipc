@@ -459,10 +459,20 @@ class RodBuilder:
         )
         self._bodies.update(bodies)
 
-    def build(self, contact_elem: Any, body_range: tuple[int, int], subscene_elem: Any) -> None:
+    def build(
+        self,
+        contact_elem: Any,
+        body_range: tuple[int, int],
+        subscene_elem: Any,
+        body_element_overrides: dict[int, Any] | None = None,
+    ) -> None:
+        overrides = body_element_overrides or {}
         for group in self._groups:
             if not np.all((group.bodies >= body_range[0]) & (group.bodies < body_range[1])):
                 continue
+            group_elem = overrides.get(int(group.bodies[0]), contact_elem)
+            if any(overrides.get(int(body), contact_elem).id() != group_elem.id() for body in group.bodies):
+                raise ValueError(f"UIPC rod {group.label!r} requires a uniform contact element for all segments")
             sc = linemesh(
                 np.ascontiguousarray(group.points, dtype=np.float64), np.ascontiguousarray(group.edges, dtype=np.int32)
             )
@@ -479,7 +489,7 @@ class RodBuilder:
             velocity = self._initial_velocities(group)
             _view_attr(sc.vertices().find("velocity")).reshape(-1, 3)[:] = velocity
             FiniteElementExternalForce().apply_to(sc, np.zeros(3), enable=False)
-            contact_elem.apply_to(sc)
+            group_elem.apply_to(sc)
             subscene_elem.apply_to(sc)
             label_surface(sc)
             if not group.collision_enabled:

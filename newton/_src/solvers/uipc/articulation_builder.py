@@ -429,6 +429,8 @@ class ArticulationBuilder:
             proxy_volume = float(volume)
         applied_kappa = self._kappa if kappa is None else kappa
         sc = self._abd.create_proxy(applied_kappa, proxy_mass, proxy_center, proxy_inertia, proxy_volume)
+        sc.vertices().create("newton_shape_index", -1)
+        sc.vertices().create("newton_shape_slot", -1)
 
         _view_attr(sc.transforms())[:] = transform
 

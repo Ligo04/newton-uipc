@@ -148,6 +148,15 @@ class TestUIPCRigidBodyBuilder(unittest.TestCase):
                 hz=0.05,
             )
             bodies.append(body)
+        for x, visual_first in ((0.9, True), (1.2, False)):
+            body = builder.add_body(xform=wp.transform(wp.vec3(x, 0.0, 0.2)))
+            for index, offset in enumerate((-0.2, 0.2)):
+                shape = builder.add_shape_box(
+                    body, xform=wp.transform(wp.vec3(offset, 0.0, 0.0)), hx=0.025, hy=0.05, hz=0.05
+                )
+                if (index == 0) == visual_first:
+                    builder.shape_flags[shape] = int(newton.ShapeFlags.VISIBLE)
+            bodies.append(body)
         model = builder.finalize()
         solver = newton.solvers.SolverUIPC(
             model, backend="none", logger_level=uipc.Logger.Error, auto_sync_inertia=False
@@ -157,6 +166,10 @@ class TestUIPCRigidBodyBuilder(unittest.TestCase):
         slots = [solver.mapping.body_geo_slots[body] for body in bodies]
         self.assertIs(slots[0], slots[1])
         self.assertIsNot(slots[0], slots[2])
+        self.assertIsNot(slots[3], slots[4])
+        for slot, expected in ((slots[3], [1]), (slots[4], [0])):
+            provenance = np.asarray(uipc.view(slot.geometry().vertices().find("newton_shape_slot"))).reshape(-1)
+            np.testing.assert_array_equal(np.unique(provenance), expected)
 
     @requires("pxr.Usd")
     def test_usd_rigid_constitutions_preserve_static_and_dynamic_roles(self):

@@ -21,6 +21,7 @@ from newton import Axis, GeoType, Mesh, Model, ShapeFlags
 
 from ...exceptions import NewtonWarning
 from .articulation import _free_joint_state, _store_free_joint_state
+from .utils import _view_attr
 
 # Warp kernels for batch transform conversion
 
@@ -436,6 +437,8 @@ class UIpcMappingInfo:
     # World-space static geometry and its original Newton shape indices.
     static_geo_slots: list[Any] = field(default_factory=list)
     static_shape_indices: list[list[int]] = field(default_factory=list)
+    # Newton plane shape index -> UIPC halfplane geometry slot.
+    ground_geo_slots: dict[int, Any] = field(default_factory=dict)
 
     # Pre-computed warp arrays for batch GPU sync (populated after world.init)
     body_indices_wp: wp.array | None = None  # sorted body indices, int32
@@ -646,6 +649,10 @@ def build_body_mesh(
 
     all_verts: list[np.ndarray] = []
     all_faces: list[np.ndarray] = []
+    all_shape_indices: list[np.ndarray] = []
+    all_shape_slots: list[np.ndarray] = []
+    # Include visual shapes so instance-local ordinals match mapping.body_shapes.
+    shape_slots = {shape: slot for slot, shape in enumerate(np.flatnonzero(shape_body == body_idx))}
     # Track shapes that contributed mesh data.
     contributed_shapes: list[tuple[int, GeoType]] = []
     vert_offset = 0
@@ -718,6 +725,9 @@ def build_body_mesh(
             verts = _transform_points(verts, tf_wp, effective_scale)
         all_faces.append(faces + vert_offset)
         all_verts.append(verts)
+        all_shape_indices.append(np.full(len(verts), s, dtype=np.int32))
+        shape_slot = s if body_idx < 0 else shape_slots[s]
+        all_shape_slots.append(np.full(len(verts), shape_slot, dtype=np.int32))
         contributed_shapes.append((s, geo_type))
         vert_offset += len(verts)
 
@@ -726,6 +736,8 @@ def build_body_mesh(
 
     verts = np.vstack(all_verts).astype(np.float64)
     faces = np.vstack(all_faces).astype(np.int32)
+    vertex_shape_indices = np.concatenate(all_shape_indices)
+    vertex_shape_slots = np.concatenate(all_shape_slots)
 
     # UIPC ABD's ``AffineBodyConstitution`` asserts ``volume > 0`` per body.
     _vol_eps = 1e-12
@@ -741,6 +753,8 @@ def build_body_mesh(
         buffers as column-major, which transposes the mesh and produces
         a (usually negative-volume) garbage geometry.  Force contiguity.
         """
+        shape_indices = vertex_shape_indices
+        shape_slots = vertex_shape_slots
         f = _orient_outward(v, f)
         vol = abs(_signed_volume(v, f))
         if vol < _vol_eps:
@@ -754,10 +768,20 @@ def build_body_mesh(
             bf = _orient_outward(bv, bf)
             vol = abs(_signed_volume(bv, bf))
             v, f = bv, bf
+            fallback_shape = -1
+            fallback_slot = -1
+            if len(contributed_shapes) == 1:
+                fallback_shape = int(vertex_shape_indices[0])
+                fallback_slot = int(vertex_shape_slots[0])
+            shape_indices = np.full(len(v), fallback_shape, dtype=np.int32)
+            shape_slots = np.full(len(v), fallback_slot, dtype=np.int32)
         sc = uipc_trimesh(
             np.ascontiguousarray(v, dtype=np.float64),
             np.ascontiguousarray(f, dtype=np.int32),
         )
+        for name, values in (("newton_shape_index", shape_indices), ("newton_shape_slot", shape_slots)):
+            attribute = sc.vertices().create(name, -1)
+            _view_attr(attribute).reshape(-1)[:] = values
         return sc, vol
 
     # Build SC from the welded mesh and use UIPC's native watertight check.

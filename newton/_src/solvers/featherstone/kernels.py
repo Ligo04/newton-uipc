@@ -1279,7 +1279,8 @@ def convert_free_distance_joint_f_internal_to_public(
     joint_id = wp.tid()
 
     if articulation_mask:
-        if not articulation_mask[joint_articulation[joint_id]]:
+        art_idx = joint_articulation[joint_id]
+        if art_idx < 0 or not articulation_mask[art_idx]:
             return
 
     jtype = joint_type[joint_id]

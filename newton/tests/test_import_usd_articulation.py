@@ -19,6 +19,62 @@ from newton.tests.unittest_utils import assert_np_equal, requires
 
 class TestImportUsdArticulation(unittest.TestCase):
     @requires("pxr.Usd")
+    def test_excluded_fixed_joint_preserves_floating_child(self):
+        """Keep an excluded retention joint outside FK and give its child a free root."""
+        from pxr import Gf, Usd, UsdGeom, UsdPhysics
+
+        stage = Usd.Stage.CreateInMemory()
+        UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+        UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+        UsdPhysics.Scene.Define(stage, "/physicsScene")
+        arm = UsdGeom.Xform.Define(stage, "/World/Arm")
+        UsdPhysics.ArticulationRootAPI.Apply(arm.GetPrim())
+        for path, x in (
+            ("/World/Arm/A", 0.0),
+            ("/World/Arm/B", 1.0),
+            ("/World/Connector", 2.0),
+            ("/World/Socket", 3.0),
+        ):
+            body = UsdGeom.Xform.Define(stage, path)
+            body.AddTranslateOp().Set(Gf.Vec3d(x, 0, 0))
+            UsdPhysics.RigidBodyAPI.Apply(body.GetPrim())
+            shape = UsdGeom.Cube.Define(stage, path + "/Collision")
+            shape.CreateSizeAttr(0.1)
+            UsdPhysics.CollisionAPI.Apply(shape.GetPrim())
+        hinge = UsdPhysics.RevoluteJoint.Define(stage, "/World/Arm/Hinge")
+        hinge.CreateBody0Rel().SetTargets(["/World/Arm/A"])
+        hinge.CreateBody1Rel().SetTargets(["/World/Arm/B"])
+        hinge.CreateLocalPos0Attr(Gf.Vec3f(0.5, 0, 0))
+        hinge.CreateLocalPos1Attr(Gf.Vec3f(-0.5, 0, 0))
+        retention = UsdPhysics.FixedJoint.Define(stage, "/World/Retention")
+        retention.CreateBody0Rel().SetTargets(["/World/Socket"])
+        retention.CreateBody1Rel().SetTargets(["/World/Connector"])
+        retention.CreateLocalPos0Attr(Gf.Vec3f(-0.5, 0, 0))
+        retention.CreateLocalPos1Attr(Gf.Vec3f(0.5, 0, 0))
+        retention.CreateExcludeFromArticulationAttr(True)
+
+        builder = newton.ModelBuilder()
+        builder.add_usd(stage)
+        model = builder.finalize("cpu")
+        connector = model.body_label.index("/World/Connector")
+        fixed = model.joint_label.index("/World/Retention")
+        self.assertEqual(int(model.joint_articulation.numpy()[fixed]), -1)
+        free = np.flatnonzero(
+            (model.joint_child.numpy() == connector) & (model.joint_type.numpy() == int(JointType.FREE))
+        )
+        self.assertEqual(len(free), 1)
+        initial = model.body_q.numpy().copy()
+        state = model.state()
+        newton.eval_fk(model, model.joint_q, model.joint_qd, state)
+        np.testing.assert_allclose(state.body_q.numpy(), initial, atol=1.0e-6)
+        coordinates = model.joint_q.numpy()
+        coordinates[int(model.joint_q_start.numpy()[free[0]])] += 0.125
+        newton.eval_fk(model, wp.array(coordinates, dtype=wp.float32, device=model.device), model.joint_qd, state)
+        expected = initial.copy()
+        expected[connector, 0] += 0.125
+        np.testing.assert_allclose(state.body_q.numpy(), expected, atol=1.0e-6)
+
+    @requires("pxr.Usd")
     def test_import_usd_raises_on_stage_errors(self):
         """Reject a USD stage with composition errors."""
         from pxr import Usd

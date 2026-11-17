@@ -49,11 +49,10 @@ if TYPE_CHECKING:
 
     from .articulation_builder import ArticulationBuilder
     from .cloth import ClothBuilder
+    from .contact_export import ContactExporter
     from .contact_forces import (
         ContactForceReadback,
-        _populate_contact_pairs_kernel,
         build_gpu_vertex_maps,
-        prepare_contact_gpu_data,
         retrieve_contact_forces,
     )
     from .converter import (
@@ -330,8 +329,8 @@ class SolverUIPC(SolverBase):
         global ArticulationBuilder, ClothBuilder, DeformableBodyBuilder, RigidBodyBuilder, RodBuilder
         global ExternalForces
         global ContactForceReadback, UIpcMappingInfo, _view_attr
-        global _populate_contact_pairs_kernel
-        global build_gpu_vertex_maps, prepare_contact_gpu_data, retrieve_contact_forces
+        global ContactExporter
+        global build_gpu_vertex_maps, retrieve_contact_forces
         global _read_fem_particle_positions_from_backend_kernel, _read_fem_particles_from_backend_kernel
         global _read_from_backend_kernel, _spatial_to_vel_mat44_kernel, _transform_to_mat44_kernel
         global _gather_body_affine_kernel, _read_body_and_free_joint_state_kernel
@@ -353,11 +352,10 @@ class SolverUIPC(SolverBase):
 
             from .articulation_builder import ArticulationBuilder
             from .cloth import ClothBuilder
+            from .contact_export import ContactExporter
             from .contact_forces import (
                 ContactForceReadback,
-                _populate_contact_pairs_kernel,
                 build_gpu_vertex_maps,
-                prepare_contact_gpu_data,
                 retrieve_contact_forces,
             )
             from .converter import (
@@ -838,7 +836,8 @@ class SolverUIPC(SolverBase):
                 and ``actor_elem`` are the pre-created contact elements for
                 that world. The callback may return a dictionary mapping Newton
                 body indices to contact elements, or ``None`` to retain their
-                default elements.
+                default elements. Centerline rods accept these overrides when
+                every segment in a connected rod uses the same contact element.
             include_fem: Create independent cloth and deformable elements and
                 append ``cloth_elem, deformable_elem`` to the callback's positional
                 arguments. The default preserves the six-argument callback and
@@ -1375,8 +1374,6 @@ class SolverUIPC(SolverBase):
         rod_bodies = sorted(self.mapping.fem_rod_bodies)
         if rod_bodies and np.any(model.body_flags.numpy()[rod_bodies] & int(BodyFlags.PROXY)):
             raise ValueError("SolverUIPC does not support ROD bodies as coupling proxies")
-        if self.mapping.fem_rod_bodies.intersection(body_element_overrides):
-            raise ValueError("SolverUIPC centerline rods do not support per-body contact element overrides")
 
         for world_index in range(model.world_count):
             if body_ws is not None:
@@ -1420,9 +1417,9 @@ class SolverUIPC(SolverBase):
                 env_elems[world_index], se, shape_element_overrides=self._static_shape_contact_elements
             )
             self._articulation_builder.build_joints(robo_elems[world_index], joint_range, se)
-            self._rod_builder.build(actor_elems[world_index], body_range, se)
+            self._rod_builder.build(actor_elems[world_index], body_range, se, body_element_overrides)
             for body in self.mapping.fem_rod_bodies.intersection(range(*body_range)):
-                self._body_contact_elem[body] = actor_elems[world_index]
+                self._body_contact_elem[body] = body_element_overrides.get(body, actor_elems[world_index])
             if self._cloth_builder.has_cloth:
                 self._cloth_builder.build(cloth_elems[world_index], particle_range, se)
             if self._deformable_builder.has_deformable:
@@ -1541,6 +1538,7 @@ class SolverUIPC(SolverBase):
         if self._csf is not None:
             build_gpu_vertex_maps(self.mapping, model.body_count, model.device)
 
+        self._contact_exporter = None
         self._initialized = True
 
         # Sync UIPC ABD inertia into Newton's host-side dynamics.
@@ -2538,73 +2536,13 @@ class SolverUIPC(SolverBase):
         contacts.rigid_contact_count.zero_()
         contacts.soft_contact_count.zero_()
         contact_f.zero_()
-
-        if self._csf is None or self.mapping.vertex_to_body_wp is None:
+        if self._csf is None:
             return
-
-        gpu_data = prepare_contact_gpu_data(
-            self._csf, dt=self._dt, vertex_to_body=self.mapping.vertex_to_body_np, mapping=self.mapping
-        )
-        if gpu_data is None:
-            return
-
-        n_inst = gpu_data.vert_a.shape[0]
-        if n_inst == 0:
-            return
-
-        device = self.model.device
-        mapping = self.mapping
-        fn_wp = wp.from_numpy(gpu_data.forces_n, dtype=wp.vec3f, device=device)
-        ff_wp = wp.from_numpy(gpu_data.forces_f, dtype=wp.vec3f, device=device)
-        va_wp = wp.from_numpy(gpu_data.vert_a, dtype=wp.int32, device=device)
-        vb_wp = wp.from_numpy(gpu_data.vert_b, dtype=wp.int32, device=device)
-        rod_body_a = (
-            wp.from_numpy(gpu_data.body_a, dtype=wp.int32, device=device) if gpu_data.body_a is not None else None
-        )
-        rod_body_b = (
-            wp.from_numpy(gpu_data.body_b, dtype=wp.int32, device=device) if gpu_data.body_b is not None else None
-        )
-        rod_point_a = (
-            wp.from_numpy(gpu_data.point_a, dtype=wp.vec3, device=device) if gpu_data.point_a is not None else None
-        )
-        rod_point_b = (
-            wp.from_numpy(gpu_data.point_b, dtype=wp.vec3, device=device) if gpu_data.point_b is not None else None
-        )
-
-        wp.launch(
-            kernel=_populate_contact_pairs_kernel,
-            dim=n_inst,
-            inputs=[
-                va_wp,
-                vb_wp,
-                fn_wp,
-                ff_wp,
-                mapping.vertex_to_body_wp,
-                mapping.vertex_to_particle_wp,
-                mapping.vertex_local_pos_wp,
-                state_out.body_q,
-                state_out.particle_q,
-                mapping.body_to_first_shape_wp,
-                rod_body_a,
-                rod_body_b,
-                rod_point_a,
-                rod_point_b,
-                self.model.body_count,
-                mapping.max_global_vertex,
-                self._ground_shape_index(),
-            ],
-            outputs=[
-                contacts.rigid_contact_shape0,
-                contacts.rigid_contact_shape1,
-                contacts.rigid_contact_point0,
-                contacts.rigid_contact_point1,
-                contacts.rigid_contact_normal,
-                contact_f,
-                contacts.rigid_contact_count,
-                contacts.rigid_contact_max,
-            ],
-            device=device,
-        )
+        if self._contact_exporter is None:
+            self._contact_exporter = ContactExporter(
+                self.model, self.mapping, self._rod_builder, self._body_affine, self._body_affine_valid
+            )
+        self._contact_exporter.export(self._csf, contacts, state_out, contact_f, self._dt)
 
     # GPU batch sync methods
 
