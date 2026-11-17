@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import inspect
 import unittest
 
@@ -14,20 +13,20 @@ import warp as wp
 
 import newton
 from newton.tests._usd_deformable_test_utils import _deformable_stage
-from newton.tests.unittest_utils import USD_AVAILABLE
+from newton.tests.unittest_utils import has_module, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
+_HAS_UIPC = has_module("uipc")
 if _HAS_UIPC:
     import uipc
     import uipc.builtin as uipc_builtin
     from uipc import view
 
-if USD_AVAILABLE and _HAS_UIPC:
+if has_module("pxr.Usd") and _HAS_UIPC:
     import newton_usd_schemas  # noqa: F401
     from pxr import Sdf, UsdGeom
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCDeformableBuilder(unittest.TestCase):
     @staticmethod
     def _register_rest_position_attributes(builder: newton.ModelBuilder) -> None:
@@ -357,7 +356,7 @@ class TestUIPCDeformableBuilder(unittest.TestCase):
         self.assertIsNotNone(empty_geometry.vertices().find("is_constrained"))
         self.assertIsNotNone(empty_geometry.vertices().find("aim_position"))
 
-    @unittest.skipUnless(USD_AVAILABLE, "Requires usd-core")
+    @requires("pxr.Usd")
     def test_usd_constitution_selects_imported_soft_body_models(self):
         """Import schema and custom constitutions into the correct soft-body rows."""
         builder = newton.ModelBuilder(up_axis=newton.Axis.Z)

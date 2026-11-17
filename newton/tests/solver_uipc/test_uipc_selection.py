@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import tempfile
 import unittest
 
@@ -14,9 +13,8 @@ import warp as wp
 
 import newton
 from newton.selection import ArticulationView
-from newton.tests.unittest_utils import get_selected_cuda_test_devices
+from newton.tests.unittest_utils import get_selected_cuda_test_devices, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
 _CUDA_TEST_DEVICES = get_selected_cuda_test_devices(mode="basic")
 
 
@@ -69,7 +67,8 @@ def _make_sparse_world_model(device):
     return scene.finalize(device=device)
 
 
-@unittest.skipUnless(_HAS_UIPC and _CUDA_TEST_DEVICES, "uipc and a selected CUDA device are required")
+@requires("uipc")
+@unittest.skipUnless(_CUDA_TEST_DEVICES, "a selected CUDA device is required")
 class TestUIPCSelection(unittest.TestCase):
     def test_sparse_world_control_readback_and_reset(self):
         """Drive sparse robots and reset selected roots without changing other worlds."""

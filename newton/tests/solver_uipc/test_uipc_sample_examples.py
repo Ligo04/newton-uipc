@@ -3,7 +3,6 @@
 
 """Check native sample materials and contact-coupled scene startup."""
 
-import importlib.util
 import unittest
 from unittest.mock import patch
 
@@ -11,13 +10,13 @@ import numpy as np
 import warp as wp
 
 import newton.examples
-from newton.tests.unittest_utils import get_selected_cuda_test_devices
+from newton.tests.unittest_utils import get_selected_cuda_test_devices, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
 _CUDA_DEVICES = get_selected_cuda_test_devices(mode="basic")
 
 
-@unittest.skipUnless(_HAS_UIPC and _CUDA_DEVICES, "uipc and a selected CUDA device are required")
+@requires("uipc")
+@unittest.skipUnless(_CUDA_DEVICES, "a selected CUDA device is required")
 class TestUIPCSampleExamples(unittest.TestCase):
     def setUp(self):
         self.enterContext(wp.ScopedDevice(_CUDA_DEVICES[0]))

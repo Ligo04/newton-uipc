@@ -3,15 +3,15 @@
 
 """Validate UIPC observable requests before native simulation begins."""
 
-import importlib.util
 import unittest
 
 import numpy as np
 
 import newton
+from newton.tests.unittest_utils import requires
 
 
-@unittest.skipUnless(importlib.util.find_spec("uipc"), "uipc is not installed")
+@requires("uipc")
 class TestUIPCObservables(unittest.TestCase):
     """Check capability, allocation, and ownership through the public API."""
 

@@ -3,15 +3,15 @@
 
 """Check cloth material transfer against native UIPC geometry without a solver."""
 
-import importlib.util
 import unittest
 
 import numpy as np
 import warp as wp
 
 import newton
+from newton.tests.unittest_utils import has_module, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
+_HAS_UIPC = has_module("uipc")
 if _HAS_UIPC:
     from uipc import view
     from uipc.constitution import ElasticModuli2D, NeoHookeanShell, StrainLimitingBaraffWitkinShell
@@ -22,7 +22,7 @@ if _HAS_UIPC:
     from newton._src.solvers.uipc.converter import UIpcMappingInfo
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCClothMaterialTransfer(unittest.TestCase):
     @staticmethod
     def _build(*, radii=(0.0002,) * 4, cloth_model="strain_limiting_baraff_witkin", registered=True):

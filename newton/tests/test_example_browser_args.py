@@ -12,7 +12,6 @@ classes.
 import argparse
 import gc
 import importlib
-import importlib.util
 import types
 import unittest
 import weakref
@@ -25,6 +24,7 @@ import warp as wp
 import newton
 import newton.examples
 from newton.examples import _ExampleBrowser
+from newton.tests.unittest_utils import has_module, requires
 from newton.viewer import ViewerNull
 
 
@@ -478,7 +478,7 @@ class TestExampleBrowserReset(unittest.TestCase):
 class TestExampleDiscovery(unittest.TestCase):
     def test_uipc_cloth_parser_defaults_are_available_to_browser(self):
         """Use the same cloth options for browser construction and command-line runs."""
-        if importlib.util.find_spec("uipc") is None or importlib.util.find_spec("pxr") is None:
+        if not has_module("uipc") or not has_module("pxr.Usd"):
             self.skipTest("Requires uipc and USD example dependencies")
 
         cases = (
@@ -527,7 +527,7 @@ class TestExampleDiscovery(unittest.TestCase):
             "newton.examples.uipc.multiphysics.example_uipc_stiff_gipc_benchmark",
         )
 
-    @unittest.skipUnless(importlib.util.find_spec("uipc"), "uipc is not installed")
+    @requires("uipc")
     def test_uipc_sample_parsers_preserve_browser_defaults(self):
         for group, name, frames in (
             ("contacts", "uipc_rigid_wrecking_balls", 144),

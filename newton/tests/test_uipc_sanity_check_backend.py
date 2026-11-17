@@ -8,7 +8,7 @@ replicated to ``WORLD_COUNT`` worlds and times only ``SolverUIPC.initialize()``
 with the ``sanity_check`` backend set to ``"cuda"`` and ``"cpu"`` respectively.
 """
 
-import importlib.util
+import importlib
 import time
 import unittest
 
@@ -17,8 +17,9 @@ import warp as wp
 
 import newton
 from newton import JointTargetMode
+from newton.tests.unittest_utils import has_module, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
+_HAS_UIPC = has_module("uipc")
 
 uipc = importlib.import_module("uipc") if _HAS_UIPC else None
 
@@ -103,7 +104,7 @@ def _time_initialize(model: newton.Model, backend: str) -> float:
     return elapsed
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCSanityCheckBackend(unittest.TestCase):
     """Benchmark SolverUIPC.initialize() across sanity_check backends."""
 

@@ -3,20 +3,20 @@
 
 """Tests for UIPC scene configuration defaults."""
 
-import importlib.util
 import tempfile
 import unittest
 
 import warp as wp
 
 import newton
+from newton.tests.unittest_utils import has_module, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
+_HAS_UIPC = has_module("uipc")
 if _HAS_UIPC:
     import uipc
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCSceneConfig(unittest.TestCase):
     def test_default_scene_config_uses_full_gpu_fused_pcg(self):
         """Use full-GPU FusedPCG CUDA Graph defaults."""

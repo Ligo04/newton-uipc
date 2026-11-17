@@ -25,8 +25,8 @@ Minimum Requirements
      - Minimum
      - Notes
    * - Python
-     - 3.10
-     - 3.10 support is deprecated; removal planned for Newton 1.9. Use 3.11+.
+     - 3.11
+     -
    * - OS
      - Linux (x86-64, aarch64), Windows (x86-64, ARM64), or macOS (CPU only)
      - macOS has no GPU acceleration; Windows ARM64 support is experimental
@@ -42,19 +42,19 @@ GPU requirements depend on the installed `Warp
      - NVIDIA GPU
      - NVIDIA driver
      - CUDA support
-   * - 1.18+ (fresh installs)
-     - 1.18: compute capability 7.5+ (Turing)
-     - 1.18: R580 or newer
-     - Standard 1.18 wheel uses CUDA 13.4; check Warp's requirements for later releases
-   * - 1.18.0+cu12 (compatibility)
+   * - 1.19.0 (default)
+     - Compute capability 7.5+ (Turing)
+     - R580 or newer
+     - Standard wheel uses CUDA 13.4
+   * - 1.19.0+cu12 (compatibility)
      - Compute capability 5.2+ (Maxwell) on x86-64; see the ARM64 limitation below
      - 545 or newer (Newton 1.7 requirement)
      - CUDA 12.9 compatibility wheel from Warp's GitHub Releases
 
-Newton requires Warp 1.18.0 or newer. CUDA 12 GPU support was deprecated in
+This fork pins Warp 1.19.0. CUDA 12 GPU support was deprecated in
 Newton 1.7. On an R545–R579 driver or an older supported GPU, choose a
 ``+cu12`` compatibility wheel for the operating system and architecture from
-`Warp's GitHub Releases <https://github.com/NVIDIA/warp/releases/tag/v1.18.0>`__.
+`Warp's GitHub Releases <https://github.com/NVIDIA/warp/releases/tag/v1.19.0>`__.
 Replace ``<wheel-url>`` below with that asset's URL and install both packages
 in one request::
 
@@ -77,13 +77,13 @@ such as ``examples`` and ``dev``) require GLIBC 2.35 or newer, e.g. Ubuntu
 
 Warp's CUDA 12.9 compatibility wheel omits ``sm_52``, ``sm_60``, ``sm_61``,
 and ``sm_70`` targets on Linux ARM64. The installation command above does not
-enable these GPUs. They need Warp 1.18.0 or newer built with CUDA 12.0 through
+enable these GPUs. They need Warp 1.19.0 built with CUDA 12.0 through
 12.8; see `Warp's CUDA 12.9 ARM64 limitation
-<https://nvidia.github.io/warp/v1.18/user_guide/installation.html#cuda-12-9-limitation-on-linux-arm-platforms>`__.
+<https://nvidia.github.io/warp/v1.19/user_guide/installation.html#cuda-12-9-limitation-on-linux-arm-platforms>`__.
 
 **Windows ARM64 (experimental)**
 
-Windows on ARM64 requires Warp 1.19 or newer and Python 3.11 or newer. Several
+Windows on ARM64 requires Warp 1.19 or newer. Several
 optional dependencies do not publish Windows ARM64 packages, so the extras skip
 them on this platform. Most notably, :class:`~newton.solvers.SolverMuJoCo` and
 USD import and export are unavailable because ``mujoco`` and ``usd-core`` cannot
@@ -143,12 +143,6 @@ with other packages:
             python -m venv .venv
             .venv\Scripts\Activate.ps1
             pip install "newton[examples]"
-
-.. note::
-
-    Users on Python 3.10 may experience issues when installing ``imgui_bundle`` (a dependency of the
-    ``examples`` extra). If you encounter installation errors, we recommend upgrading to
-    Python 3.11 or newer, or follow the :doc:`development` guide to install Newton using ``uv``.
 
 .. _running-examples:
 

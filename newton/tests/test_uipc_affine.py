@@ -3,7 +3,6 @@
 
 """Tests for full affine body export from UIPC."""
 
-import importlib.util
 import tempfile
 import unittest
 from unittest.mock import Mock
@@ -12,9 +11,9 @@ import numpy as np
 import warp as wp
 
 import newton
-from newton.tests.unittest_utils import get_selected_cuda_test_devices
+from newton.tests.unittest_utils import get_selected_cuda_test_devices, has_module, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
+_HAS_UIPC = has_module("uipc")
 if _HAS_UIPC:
     from uipc import view
 
@@ -25,7 +24,7 @@ if _HAS_UIPC:
     )
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCAffine(unittest.TestCase):
     def test_cuda_body_visuals_use_native_affine_and_rigid_fallback(self):
         """Skin from native ABD strain without replacing unmapped bodies' rigid poses."""

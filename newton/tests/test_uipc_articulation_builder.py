@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import unittest
 from unittest.mock import patch
 
@@ -12,8 +11,9 @@ import warp as wp
 
 import newton
 from newton import JointTargetMode, JointType
+from newton.tests.unittest_utils import has_module, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
+_HAS_UIPC = has_module("uipc")
 
 if _HAS_UIPC:
     import uipc
@@ -91,7 +91,7 @@ class _NoOpConstitution:
         pass
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCArticulationBuilder(unittest.TestCase):
     def test_extract_limit_strength_per_joint_override(self):
         builder = self._make_builder(limit_strength_ratio={0: 345.0})
@@ -337,7 +337,7 @@ class TestUIPCArticulationBuilder(unittest.TestCase):
         }
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCShapelessProxyInertia(unittest.TestCase):
     def test_shapeless_proxy_uses_authored_mass_com_inertia(self):
         """A shapeless link's ABD proxy must carry the Newton-authored mass
@@ -384,7 +384,7 @@ class TestUIPCShapelessProxyInertia(unittest.TestCase):
         self.assertAlmostEqual(float(volume), 0.005, places=8)
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCRevoluteArmatureInertia(unittest.TestCase):
     """A REVOLUTE joint's ``joint_armature`` must fold into the child ABD
     body's inertia as ``a * axis ⊗ axis`` (see ``_armature_rotational_inertia``
@@ -429,7 +429,7 @@ class TestUIPCRevoluteArmatureInertia(unittest.TestCase):
         np.testing.assert_allclose(inertia, model_inertia, rtol=1e-4, atol=1e-6)
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCArmatureInertiaSyncSymmetry(unittest.TestCase):
     """``sync_model_inertia_from_uipc`` must subtract back exactly the armature
     inertia that ``build_affine_bodies`` folded in.
@@ -484,7 +484,7 @@ class TestUIPCArmatureInertiaSyncSymmetry(unittest.TestCase):
         np.testing.assert_allclose(synced, authored, rtol=1e-4, atol=1e-6)
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCImplicitPD(unittest.TestCase):
     """Physical gain semantics of ``SolverUIPC(implicit_pd=True)``.
 
@@ -701,7 +701,7 @@ class TestUIPCImplicitPD(unittest.TestCase):
         self.assertAlmostEqual(sag_stiff, tau_g / 400.0, delta=0.05 * tau_g / 400.0)
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCPrismaticArmature(unittest.TestCase):
     """A PRISMATIC joint's ``joint_armature`` (reflected slider inertia) is
     applied as an implicit kinetic potential on the joint coordinate via
@@ -830,7 +830,7 @@ class TestUIPCPrismaticArmature(unittest.TestCase):
         self.assertAlmostEqual(accel(with_arm), expected, delta=0.05 * expected)
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCRevoluteArmature(unittest.TestCase):
     """A REVOLUTE joint's ``joint_armature`` (reflected rotational inertia
     about the joint axis) is applied as an implicit kinetic potential on the
@@ -959,7 +959,7 @@ class TestUIPCRevoluteArmature(unittest.TestCase):
         self.assertAlmostEqual(i_axis_1, i_axis_2, delta=0.06 * i_axis_1)
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCArmatureRuntimeRefresh(unittest.TestCase):
     """``SolverUIPC.notify_model_changed(JOINT_DOF_PROPERTIES)`` re-applies
     ``model.joint_armature`` to the live ExternalArticulationConstraint mass
@@ -1089,7 +1089,7 @@ class TestUIPCArmatureRuntimeRefresh(unittest.TestCase):
         self.assertAlmostEqual(self._accel(traj), g, delta=0.02 * g)
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCJointTransferBatches(unittest.TestCase):
     """Joint transfers must preserve state while scaling across articulations."""
 
@@ -1221,7 +1221,7 @@ class TestUIPCJointTransferBatches(unittest.TestCase):
                 )
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCCacheControlGraphCapture(unittest.TestCase):
     """``cache_joint_control`` must stay CUDA-graph capturable.
 

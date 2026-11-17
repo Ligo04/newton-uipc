@@ -5,25 +5,24 @@
 
 from __future__ import annotations
 
-import importlib.util
 import unittest
 
 import numpy as np
 import warp as wp
 
 import newton
-from newton.tests.unittest_utils import USD_AVAILABLE
+from newton.tests.unittest_utils import has_module, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
+_HAS_UIPC = has_module("uipc")
 if _HAS_UIPC:
     import uipc
 
-if USD_AVAILABLE and _HAS_UIPC:
+if has_module("pxr.Usd") and _HAS_UIPC:
     import newton_usd_schemas  # noqa: F401
     from pxr import Usd, UsdGeom, UsdPhysics
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCRigidBodyBuilder(unittest.TestCase):
     @staticmethod
     def _add_box_body(builder: newton.ModelBuilder, x: float, kappa: float | None = None) -> int:
@@ -159,7 +158,7 @@ class TestUIPCRigidBodyBuilder(unittest.TestCase):
         self.assertIs(slots[0], slots[1])
         self.assertIsNot(slots[0], slots[2])
 
-    @unittest.skipUnless(USD_AVAILABLE, "Requires usd-core")
+    @requires("pxr.Usd")
     def test_usd_rigid_constitutions_preserve_static_and_dynamic_roles(self):
         """Import ABD bodies and split static ABD and Empty collision geometry."""
         stage = Usd.Stage.CreateInMemory()

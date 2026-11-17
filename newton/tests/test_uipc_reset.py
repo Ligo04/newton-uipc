@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import tempfile
 import unittest
 
@@ -13,9 +12,9 @@ import numpy as np
 import warp as wp
 
 import newton
-from newton.tests.unittest_utils import get_selected_cuda_test_devices
+from newton.tests.unittest_utils import get_selected_cuda_test_devices, has_module, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
+_HAS_UIPC = has_module("uipc")
 _CUDA_TEST_DEVICES = get_selected_cuda_test_devices(mode="basic")
 if _HAS_UIPC:
     from uipc import view
@@ -37,7 +36,8 @@ def _build_two_world_cubes(device):
     return builder.finalize(device=device)
 
 
-@unittest.skipUnless(_HAS_UIPC and _CUDA_TEST_DEVICES, "uipc and a selected CUDA device are required")
+@requires("uipc")
+@unittest.skipUnless(_CUDA_TEST_DEVICES, "a selected CUDA device is required")
 class TestUIPCReset(unittest.TestCase):
     def test_masked_reset_updates_only_selected_world(self):
         for device in _CUDA_TEST_DEVICES:

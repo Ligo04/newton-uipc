@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import unittest
 
 import numpy as np
@@ -17,9 +16,9 @@ from newton.tests._usd_deformable_test_utils import (
     _author_deformable_element_array,
     _deformable_stage,
 )
-from newton.tests.unittest_utils import USD_AVAILABLE, get_selected_cuda_test_devices
+from newton.tests.unittest_utils import get_selected_cuda_test_devices, has_module, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
+_HAS_UIPC = has_module("uipc")
 _CUDA_TEST_DEVICES = get_selected_cuda_test_devices(mode="basic")
 
 if _HAS_UIPC:
@@ -30,13 +29,13 @@ if _HAS_UIPC:
     import newton._src.solvers.uipc.cloth as cloth_module
     from newton._src.solvers.uipc.cloth import ClothBuilder
 
-if USD_AVAILABLE and _HAS_UIPC:
+if has_module("pxr.Usd") and _HAS_UIPC:
     import newton_usd_schemas  # noqa: F401
     from pxr import Sdf
 
 
 class TestUIPCClothConfiguration(unittest.TestCase):
-    @unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+    @requires("uipc")
     def test_cloth_model_aliases(self):
         self.assertEqual(
             ClothBuilder._normalize_cloth_model("strain_limiting"),
@@ -53,7 +52,7 @@ class TestUIPCClothConfiguration(unittest.TestCase):
         with self.assertRaises(ValueError):
             ClothBuilder._normalize_cloth_model("unknown")
 
-    @unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+    @requires("uipc")
     def test_vertex_thickness_scales_volume_from_applied_default(self):
         class _Vertices:
             def __init__(self):
@@ -85,7 +84,7 @@ class TestUIPCClothConfiguration(unittest.TestCase):
         np.testing.assert_allclose(geo.vertices().find("volume"), np.array([1.0, 2.0, 4.0]))
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCClothSoftPosition(unittest.TestCase):
     @staticmethod
     def _register_rest_position_attributes(builder: newton.ModelBuilder) -> None:
@@ -277,7 +276,7 @@ class TestUIPCClothSoftPosition(unittest.TestCase):
         )
         self.assertEqual(int(view(geo_1.meta().find("constitution_uid"))[0]), NeoHookeanShell().uid())
 
-    @unittest.skipUnless(USD_AVAILABLE, "Requires usd-core")
+    @requires("pxr.Usd")
     def test_usd_constitution_selects_imported_cloth_models(self):
         """Import membrane tokens and triangle coefficients into the correct cloth rows."""
         builder = newton.ModelBuilder(up_axis=newton.Axis.Z)

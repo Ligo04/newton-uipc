@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import unittest
 from unittest.mock import patch
 
@@ -14,10 +13,9 @@ import warp as wp
 
 import newton
 from newton.sensors import SensorContact
-from newton.tests.unittest_utils import get_selected_cuda_test_devices
+from newton.tests.unittest_utils import get_selected_cuda_test_devices, requires
 from newton.viewer import ViewerNull
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
 _CUDA_TEST_DEVICES = get_selected_cuda_test_devices(mode="basic")
 
 BOX_HALF = 0.5
@@ -26,7 +24,7 @@ BOX_X, BOX_Y = 0.25, -0.15
 
 
 class TestUIPCSensorContactPositions(unittest.TestCase):
-    @unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+    @requires("uipc")
     def test_position_matrix_reports_contact_interfaces(self):
         """Report observable contact forces and positions on a native CUDA box stack."""
         import uipc  # noqa: PLC0415

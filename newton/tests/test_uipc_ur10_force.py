@@ -12,7 +12,7 @@ import warp as wp
 
 import newton
 from newton import JointTargetMode
-from newton.tests.unittest_utils import USD_AVAILABLE, add_function_test, get_test_devices
+from newton.tests.unittest_utils import add_function_test, get_test_devices, has_module
 
 
 def _compute_coriolis_from_mass_derivatives(dH_dq: np.ndarray, qd: np.ndarray) -> np.ndarray:
@@ -174,7 +174,7 @@ def _test_ur10_force_mass_and_bias_match_with_without_mujoco_custom_attrs(self, 
     solver. This test still proves that the optional MuJoCo USD custom-attribute registration
     does not change the final rigid-body model used by those evals.
     """
-    if not USD_AVAILABLE:
+    if not has_module("pxr.Usd"):
         self.skipTest("USD / UR10 asset not available in this environment.")
     wp.set_device(device)
     model_a = _build_ur10_force_style_model(register_mujoco_attrs=False, device=device)

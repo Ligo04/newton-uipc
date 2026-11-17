@@ -17,10 +17,10 @@ Newton was initiated by [Disney Research](https://www.disneyresearch.com/), [Goo
 
 ## Requirements
 
-- **Python** 3.10+ (3.10 support is deprecated; removal planned for Newton 1.9; use 3.11+)
+- **Python** 3.11+
 - **OS:** Linux (x86-64, aarch64), Windows (x86-64), or macOS (CPU only)
-- **GPU:** Fresh installs currently select Warp 1.18, which requires an NVIDIA Turing GPU (compute capability 7.5+) and driver R580+ for CUDA acceleration.
-  On an R545–R579 driver or an older supported GPU, use a Warp 1.18+ CUDA 12 compatibility wheel (see the installation guide).
+- **GPU:** Default installs use Warp 1.19.0, whose standard wheels require an NVIDIA Turing GPU (compute capability 7.5+) and driver R580+ for CUDA acceleration.
+  On an R545–R579 driver or an older supported GPU, use the Warp 1.19.0 CUDA 12 compatibility wheel (see the installation guide).
   No local CUDA Toolkit is required; macOS runs on CPU.
 
 For detailed system requirements, see the [installation guide](https://newton-physics.github.io/newton/latest/guide/installation.html). For tested configurations and Newton's versioning and deprecation policies, see the [compatibility guide](https://newton-physics.github.io/newton/latest/guide/compatibility.html).

@@ -3,20 +3,18 @@
 
 """Read live UIPC solver counters without enabling timer profiling."""
 
-import importlib.util
 import tempfile
 import unittest
 
 import warp as wp
 
 import newton
-from newton.tests.unittest_utils import get_selected_cuda_test_devices
+from newton.tests.unittest_utils import get_selected_cuda_test_devices, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
 _CUDA_DEVICES = get_selected_cuda_test_devices(mode="basic")
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCFrameStats(unittest.TestCase):
     def test_uninitialized_counters(self):
         """Read zero counters before stepping without initializing the backend."""

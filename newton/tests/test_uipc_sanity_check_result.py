@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import unittest
 from typing import ClassVar
 from unittest.mock import patch
@@ -14,8 +13,9 @@ import numpy as np
 import warp as wp
 
 import newton
+from newton.tests.unittest_utils import has_module, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
+_HAS_UIPC = has_module("uipc")
 
 if _HAS_UIPC:
     import uipc
@@ -27,7 +27,7 @@ if _HAS_UIPC:
     from newton._src.solvers.uipc.solver_uipc import SolverUIPC
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCSanityCheckResult(unittest.TestCase):
     def test_sanity_check_result_is_truthy_for_all_statuses(self):
         self.assertTrue(bool(SanityCheckResult.Success))
@@ -70,7 +70,7 @@ class TestUIPCSanityCheckResult(unittest.TestCase):
         SolverUIPC._raise_if_sanity_check_failed(solver)
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCFEMSyncToBackend(unittest.TestCase):
     def test_particle_state_sync_to_uipc_round_trips(self):
         builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0, 0.0, 0.0))
@@ -103,7 +103,7 @@ class TestUIPCFEMSyncToBackend(unittest.TestCase):
         np.testing.assert_allclose(roundtrip_state.particle_qd.numpy(), particle_qd, atol=1.0e-6)
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCFreeJointSoftTransformConstraint(unittest.TestCase):
     def test_free_joint_batches_match_ik_across_worlds(self):
         for parented in (False, True):

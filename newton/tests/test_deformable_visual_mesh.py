@@ -4,7 +4,6 @@
 """Test deformable visual mesh data, evaluation, and viewer rendering."""
 
 import contextlib
-import importlib.util
 import math
 import os
 import tempfile
@@ -20,7 +19,7 @@ import newton
 from newton import NewtonWarning
 from newton._src.viewer.viewer_file import HAS_CBOR2, transfer_to_model
 from newton.tests.test_viewer_get_frame import _make_headless_viewer_gl_or_skip
-from newton.tests.unittest_utils import assert_np_equal, get_test_devices
+from newton.tests.unittest_utils import assert_np_equal, get_test_devices, requires
 from newton.viewer import ViewerFile, ViewerNull, ViewerUSD
 
 
@@ -1050,6 +1049,7 @@ class TestDeformableVisualGLTextures(unittest.TestCase):
             after = viewer.get_frame().numpy()
             self.assertFalse(np.array_equal(before, after), "The rendered mesh must follow its moved particle")
 
+    @requires("PIL")
     def test_gl_reuses_skinned_textures_but_updates_regular_meshes(self):
         """Reuse visual textures untinted by default; preserve explicit colors and ordinary uploads."""
         from newton._src.utils.texture import load_texture  # noqa: PLC0415
@@ -1189,7 +1189,7 @@ class TestDeformableVisualGLTextures(unittest.TestCase):
                         self.assertGreater(pixel[2], pixel[0] + 30)
 
 
-@unittest.skipUnless(importlib.util.find_spec("pxr"), "USD is not installed")
+@requires("pxr.Usd")
 class TestDeformableVisualUSD(unittest.TestCase):
     def test_shared_body_affine_visuals_reach_viewer(self):
         """Keep caller-evaluated affine geometry instead of recomputing rigid poses."""
@@ -1222,6 +1222,7 @@ class TestDeformableVisualUSD(unittest.TestCase):
             np.testing.assert_array_equal(visuals.points.numpy(), expected)
             viewer.close()
 
+    @requires("PIL")
     def test_viewer_usd_exports_skinned_mesh_and_textures(self):
         """Export deformed geometry and replacement textures, skipping hidden updates."""
         from PIL import Image

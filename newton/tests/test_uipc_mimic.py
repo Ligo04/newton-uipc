@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import tempfile
 import unittest
 
@@ -14,9 +13,9 @@ import warp as wp
 
 import newton
 from newton import JointTargetMode
-from newton.tests.unittest_utils import get_selected_cuda_test_devices
+from newton.tests.unittest_utils import get_selected_cuda_test_devices, has_module, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
+_HAS_UIPC = has_module("uipc")
 _CUDA_TEST_DEVICES = get_selected_cuda_test_devices(mode="basic")
 
 if _HAS_UIPC:
@@ -75,7 +74,7 @@ def _add_joint_pair(builder: newton.ModelBuilder, y: float, *, prismatic=False, 
     return j_leader, j_follower
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCMimicResolution(unittest.TestCase):
     """Mimic resolution — runs with ``backend="none"`` (no GPU required)."""
 
@@ -127,7 +126,7 @@ class TestUIPCMimicResolution(unittest.TestCase):
         self.assertEqual(len(solver._articulation_builder._mimic_constraints), 0)
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCMimicTracking(unittest.TestCase):
     """Follower physically tracks ``coef0 + coef1 * leader`` after stepping."""
 
@@ -315,7 +314,8 @@ class TestUIPCMimicTracking(unittest.TestCase):
                 np.testing.assert_allclose(q[q_start[followers]], [-0.2, 0.3], atol=0.01)
 
 
-@unittest.skipUnless(_HAS_UIPC and _CUDA_TEST_DEVICES, "uipc and CUDA are required")
+@requires("uipc")
+@unittest.skipUnless(_CUDA_TEST_DEVICES, "a selected CUDA device is required")
 class TestUIPCMimicShapelessMotor(unittest.TestCase):
     def test_shapeless_motor_stays_rigid_during_repeated_open_close(self):
         """A geometry-free motor must remain rigid under torque and mixed-joint mimic loads."""

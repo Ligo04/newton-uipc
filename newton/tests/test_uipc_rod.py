@@ -5,33 +5,31 @@
 
 from __future__ import annotations
 
-import importlib.util
 import unittest
-from contextlib import nullcontext
 
 import numpy as np
 import warp as wp
 
 import newton
-from newton._src.exceptions import NewtonDeprecationWarning, NewtonWarning
+from newton._src.exceptions import NewtonWarning
 from newton.sensors import SensorContact
 from newton.tests._usd_deformable_test_utils import _add_cable_curve, _deformable_stage
-from newton.tests.unittest_utils import USD_AVAILABLE, get_selected_cuda_test_devices
+from newton.tests.unittest_utils import get_selected_cuda_test_devices, has_module, requires
 
-_HAS_UIPC = importlib.util.find_spec("uipc") is not None
+_HAS_UIPC = has_module("uipc")
 _CUDA_TEST_DEVICES = get_selected_cuda_test_devices(mode="basic")
 
 if _HAS_UIPC:
     from uipc import view
 
-if _HAS_UIPC and USD_AVAILABLE:
+if _HAS_UIPC and has_module("pxr.Usd"):
     import newton_usd_schemas  # noqa: F401
     from pxr import Sdf
 
 
-@unittest.skipUnless(_HAS_UIPC, "uipc is not installed")
+@requires("uipc")
 class TestUIPCRod(unittest.TestCase):
-    def _model(self, device="cpu", *, origin="start", fixed=False, colliders=False, ground_plane=False):
+    def _model(self, device="cpu", *, fixed=False, colliders=False, ground_plane=False):
         builder = newton.ModelBuilder(gravity=wp.vec3(0.0, 0.0, 0.0))
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
         if colliders:
@@ -42,20 +40,14 @@ class TestUIPCRod(unittest.TestCase):
             body = builder.add_link(xform=wp.transform(wp.vec3(2.0, 0.0, 1.0)))
             builder.add_shape_box(body=body, hx=0.1, hy=0.1, hz=0.1)
             builder.add_articulation([builder.add_joint_free(child=body)])
-        with (
-            self.assertWarnsRegex(NewtonDeprecationWarning, 'body_frame_origin="start"')
-            if origin == "start"
-            else nullcontext()
-        ):
-            bodies, joints = builder.add_rod(
-                rod=newton.Rod(
-                    [(0.0, 0.0, 1.0), (0.2, 0.0, 1.0), (0.4, 0.0, 1.0), (0.6, 0.0, 1.0)],
-                    radius=0.01,
-                    youngs_modulus=1.0e4,
-                    poissons_ratio=0.3,
-                ),
-                body_frame_origin=origin,
-            )
+        bodies, joints = builder.add_rod(
+            rod=newton.Rod(
+                [(0.0, 0.0, 1.0), (0.2, 0.0, 1.0), (0.4, 0.0, 1.0), (0.6, 0.0, 1.0)],
+                radius=0.01,
+                youngs_modulus=1.0e4,
+                poissons_ratio=0.3,
+            ),
+        )
         if fixed:
             builder.body_flags[bodies[0]] = newton.BodyFlags.KINEMATIC
         return builder.finalize(device), bodies, joints
@@ -268,7 +260,7 @@ class TestUIPCRod(unittest.TestCase):
             visuals.get_points(0).numpy()[[0, 1, 3, 4]], nodes.positions.numpy()[[0, 1, 1, 2]], atol=2e-6
         )
 
-    @unittest.skipUnless(USD_AVAILABLE, "usd-core is not installed")
+    @requires("pxr.Usd")
     def test_usd_selector_follows_curve_rows_across_imports(self):
         builder = newton.ModelBuilder()
         newton.solvers.SolverUIPC.register_custom_attributes(builder)
@@ -292,7 +284,7 @@ class TestUIPCRod(unittest.TestCase):
 
     @unittest.skipUnless(_CUDA_TEST_DEVICES, "CUDA device is unavailable")
     def test_cuda_inertial_translation_and_joint_readback(self):
-        model, bodies, _ = self._model(_CUDA_TEST_DEVICES[0], origin="com")
+        model, bodies, _ = self._model(_CUDA_TEST_DEVICES[0])
         state, result = model.state(), model.state()
         velocity = np.zeros((model.body_count, 6), dtype=np.float32)
         velocity[bodies, 1] = 0.2
