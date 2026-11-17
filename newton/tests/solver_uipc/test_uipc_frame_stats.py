@@ -22,12 +22,14 @@ class TestUIPCFrameStats(unittest.TestCase):
         with tempfile.TemporaryDirectory() as workspace:
             solver = newton.solvers.SolverUIPC(model, backend="none", workspace=workspace)
             stats = solver.get_frame_stats()
+            self.assertEqual(stats["frame"], 0)
             self.assertEqual(stats["step_time_ms"], 0.0)
             self.assertEqual(stats["newton_iterations"], 0)
             self.assertEqual(stats["linear_solver_max_iterations"], 0)
             self.assertFalse(solver._initialized)
             solver.initialize()
             self.assertEqual(solver.get_frame_stats(), stats)
+            self.assertEqual(solver.get_frame_stats()["frame"], int(solver.world.frame()))
 
     @unittest.skipUnless(_CUDA_DEVICES, "a selected CUDA device is required")
     def test_live_counters_match_native_frames(self):

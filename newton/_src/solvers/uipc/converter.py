@@ -257,14 +257,20 @@ def _read_from_backend_kernel(
     body_com: wp.array[wp.vec3],
     out_body_q: wp.array[wp.transform],
     out_body_qd: wp.array[wp.spatial_vector],
+    body_affine: wp.array[wp.mat44d],
+    body_valid: wp.array[wp.bool],
+    body_affine_velocities: wp.array[wp.mat44d],
 ):
-    """Gather UIPC affine state into Newton body poses and COM twists."""
+    """Gather UIPC affine state into Newton body poses, COM twists, and affine exports."""
     i = wp.tid()
     backend = backend_offsets[i]
     body = body_indices[i]
     position, velocity = _decode_backend_body(src_transforms[backend], src_velocities[backend], body_com[body])
     out_body_q[body] = position
     out_body_qd[body] = velocity
+    body_affine[body] = wp.transpose(src_transforms[backend])
+    body_valid[body] = True
+    body_affine_velocities[body] = wp.transpose(src_velocities[backend])
 
 
 @wp.kernel(enable_backward=False)
@@ -278,6 +284,7 @@ def _read_body_and_free_joint_state_kernel(
     out_body_qd: wp.array[wp.spatial_vector],
     body_affine: wp.array[wp.mat44d],
     body_valid: wp.array[wp.bool],
+    body_affine_velocities: wp.array[wp.mat44d],
     world_free_joint_for_body: wp.array[wp.int32],
     joint_X_p: wp.array[wp.transform],
     joint_X_c: wp.array[wp.transform],
@@ -296,6 +303,7 @@ def _read_body_and_free_joint_state_kernel(
     out_body_qd[body] = velocity
     body_affine[body] = wp.transpose(matrix)
     body_valid[body] = True
+    body_affine_velocities[body] = wp.transpose(src_velocities[backend])
     joint = world_free_joint_for_body[body]
     if joint >= 0:
         # Use register values; other threads need not have written their bodies yet.
@@ -334,19 +342,19 @@ def _write_fem_particles_to_backend_kernel(
 
 
 @wp.kernel(enable_backward=False)
-def _write_fem_particle_positions_to_backend_kernel(
+def _write_fem_particle_vectors_to_backend_kernel(
     backend_offsets: wp.array[wp.uint32],
     particle_indices: wp.array[wp.int32],
-    src_particle_q: wp.array[wp.vec3],
-    dst_positions: wp.array[wp.vec3d],
+    src_values: wp.array[wp.vec3],
+    dst_values: wp.array[wp.vec3d],
 ):
-    """Scatter Newton particle positions into UIPC FEM buffers."""
+    """Scatter one Newton particle vector channel into a UIPC FEM buffer."""
     tid = wp.tid()
     backend_idx = backend_offsets[tid]
     particle_idx = particle_indices[tid]
 
-    q = src_particle_q[particle_idx]
-    dst_positions[backend_idx] = wp.vec3d(wp.float64(q[0]), wp.float64(q[1]), wp.float64(q[2]))
+    value = src_values[particle_idx]
+    dst_values[backend_idx] = wp.vec3d(wp.float64(value[0]), wp.float64(value[1]), wp.float64(value[2]))
 
 
 @wp.kernel(enable_backward=False)
@@ -424,6 +432,10 @@ class UIpcMappingInfo:
     body_objects: dict[int, Any] = field(default_factory=dict)
     # body_idx -> list of shape indices
     body_shapes: dict[int, list[int]] = field(default_factory=lambda: defaultdict(list))
+
+    # World-space static geometry and its original Newton shape indices.
+    static_geo_slots: list[Any] = field(default_factory=list)
+    static_shape_indices: list[list[int]] = field(default_factory=list)
 
     # Pre-computed warp arrays for batch GPU sync (populated after world.init)
     body_indices_wp: wp.array | None = None  # sorted body indices, int32

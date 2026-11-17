@@ -64,7 +64,7 @@ if TYPE_CHECKING:
         _read_from_backend_kernel,
         _spatial_to_vel_mat44_kernel,
         _transform_to_mat44_kernel,
-        _write_fem_particle_positions_to_backend_kernel,
+        _write_fem_particle_vectors_to_backend_kernel,
         _write_fem_particles_to_backend_kernel,
         populate_backend_offsets,
     )
@@ -335,7 +335,7 @@ class SolverUIPC(SolverBase):
         global _read_fem_particle_positions_from_backend_kernel, _read_fem_particles_from_backend_kernel
         global _read_from_backend_kernel, _spatial_to_vel_mat44_kernel, _transform_to_mat44_kernel
         global _gather_body_affine_kernel, _read_body_and_free_joint_state_kernel
-        global _write_fem_particle_positions_to_backend_kernel, _write_fem_particles_to_backend_kernel
+        global _write_fem_particle_vectors_to_backend_kernel, _write_fem_particles_to_backend_kernel
         global populate_backend_offsets
         try:
             import uipc
@@ -369,7 +369,7 @@ class SolverUIPC(SolverBase):
                 _read_from_backend_kernel,
                 _spatial_to_vel_mat44_kernel,
                 _transform_to_mat44_kernel,
-                _write_fem_particle_positions_to_backend_kernel,
+                _write_fem_particle_vectors_to_backend_kernel,
                 _write_fem_particles_to_backend_kernel,
                 populate_backend_offsets,
             )
@@ -537,6 +537,7 @@ class SolverUIPC(SolverBase):
         self._step_count = 0
         self._step_time_ms = 0.0
         self._initialized = False
+        self._before_world_init_callbacks: list[Callable[[SolverUIPC], None]] = []
 
         # Lazily filled per-mapped-world host caches used by reset().
         self._mapped_body_world = None
@@ -607,6 +608,7 @@ class SolverUIPC(SolverBase):
         # User-registered callbacks (set via configure_* methods)
         self._contact_tabular_fn: Callable | None = None
         self._contact_tabular_include_fem = False
+        self._static_shape_contact_elements: dict[int, ContactElement] = {}
         self._subscene_tabular_fn: Callable | None = None
 
         # Track bodies with Newton-authored inertia overrides.
@@ -629,6 +631,70 @@ class SolverUIPC(SolverBase):
         self._contact_tabular_ref: ContactTabular | None = None
 
     # Pre-initialization configuration
+
+    class _SoftPositionConstraintBindings:
+        """Cache fixed native particle ownership and the last requested selection."""
+
+        def __init__(self, geo_slots: list[Any], particle_index_sets: list[Any]) -> None:
+            self.mapping_lengths = (len(geo_slots), len(particle_index_sets))
+            self.sources = tuple(zip(geo_slots, particle_index_sets, strict=False))
+            self.particle_sizes = tuple(len(particles) for _, particles in self.sources)
+            records = [np.empty((0, 3), dtype=np.int64)]
+            for mesh_index, (_, particles) in enumerate(self.sources):
+                values = np.asarray(particles, dtype=np.int64)
+                unique, reversed_rows = np.unique(values[::-1], return_index=True)
+                # Match the existing per-mesh dictionary's last-occurrence rule.
+                local = len(values) - 1 - reversed_rows
+                records.append(np.column_stack((unique, np.full(len(unique), mesh_index), local)))
+            locations = np.concatenate(records)
+            self.locations = locations[np.argsort(locations[:, 0], kind="stable")]
+            self.indices: np.ndarray | None = None
+            self.bindings: list[tuple[Any, np.ndarray, np.ndarray]] = []
+
+        def is_current(self, geo_slots: list[Any], particle_index_sets: list[Any]) -> bool:
+            # Native ownership is fixed after initialization. Reallocated mapping
+            # lists, geometry slots and particle arrays can replace these sources.
+            return self.mapping_lengths == (len(geo_slots), len(particle_index_sets)) and all(
+                old_slot is slot and old_particles is particles and size == len(particles)
+                for (old_slot, old_particles), size, slot, particles in zip(
+                    self.sources, self.particle_sizes, geo_slots, particle_index_sets, strict=False
+                )
+            )
+
+        def resolve(self, indices: np.ndarray) -> list[tuple[Any, np.ndarray, np.ndarray]]:
+            if self.indices is None or not np.array_equal(self.indices, indices):
+                particles = self.locations[:, 0]
+                starts = np.searchsorted(particles, indices, side="left")
+                stops = np.searchsorted(particles, indices, side="right")
+                groups: dict[int, tuple[list[int], list[int]]] = {}
+                for source_row, (start, stop) in enumerate(zip(starts, stops, strict=True)):
+                    for _, mesh_index, local in self.locations[start:stop]:
+                        local_rows, source_rows = groups.setdefault(int(mesh_index), ([], []))
+                        local_rows.append(int(local))
+                        source_rows.append(source_row)
+                self.bindings = [
+                    (
+                        self.sources[mesh_index][0],
+                        np.asarray(groups[mesh_index][0], dtype=np.int64),
+                        np.asarray(groups[mesh_index][1], dtype=np.int64),
+                    )
+                    for mesh_index in sorted(groups)
+                ]
+                self.indices = indices.copy()
+            return self.bindings
+
+    def add_before_world_init_callback(self, callback: Callable[[SolverUIPC], None]) -> None:
+        """Register an experimental runtime-only SF geometry authoring callback.
+
+        The callback runs after native builders and before ``world.init``. It
+        may assign contact elements or initial constraints, but must not change
+        topology or advance physics. Called once per initialization.
+        """
+        if self._initialized:
+            raise RuntimeError("Register geometry callbacks before initialize")
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        self._before_world_init_callbacks.append(callback)
 
     def configure_scene(self, config: dict[str, Any]) -> None:
         """Update UIPC scene configuration before initialization.
@@ -800,6 +866,36 @@ class SolverUIPC(SolverBase):
             raise RuntimeError("Cannot configure contact tabular after initialization.")
         self._contact_tabular_fn = fn
         self._contact_tabular_include_fem = include_fem
+
+    def configure_static_contact_elements(self, elements: dict[int, ContactElement]) -> None:
+        """Configure experimental runtime-only contact overrides for finite static shapes.
+
+        Call before initialization, or from the contact-tabular callback once its
+        elements exist. Shapes with different elements are not merged. Omitted
+        shapes retain the environment element; planes retain the ground element.
+        This runtime configuration does not add a USD authoring schema.
+
+        Args:
+            elements: Newton shape indices mapped to elements of this scene's
+                contact tabular. Only world-attached, non-plane shapes are valid.
+
+        Raises:
+            RuntimeError: If the solver is initialized.
+            ValueError: If a shape is out of range, body-attached, or a plane.
+        """
+        if self._initialized:
+            raise RuntimeError("Cannot configure static contact elements after initialization.")
+        bodies = self.model.shape_body.numpy()
+        types = self.model.shape_type.numpy()
+        for shape in elements:
+            if (
+                not isinstance(shape, int)
+                or not 0 <= shape < self.model.shape_count
+                or bodies[shape] != -1
+                or newton.GeoType(types[shape]) == newton.GeoType.PLANE
+            ):
+                raise ValueError(f"Expected a finite world-attached shape, got {shape}.")
+        self._static_shape_contact_elements = dict(elements)
 
     def is_contact_enabled(self, body_a: int, body_b: int) -> bool:
         """Query whether contact is enabled between two bodies.
@@ -1320,7 +1416,9 @@ class SolverUIPC(SolverBase):
                     free_joint_bodies,
                     body_element_overrides,
                 )
-            self._rigid_body_builder.build_static_colliders(env_elems[world_index], se)
+            self._rigid_body_builder.build_static_colliders(
+                env_elems[world_index], se, shape_element_overrides=self._static_shape_contact_elements
+            )
             self._articulation_builder.build_joints(robo_elems[world_index], joint_range, se)
             self._rod_builder.build(actor_elems[world_index], body_range, se)
             for body in self.mapping.fem_rod_bodies.intersection(range(*body_range)):
@@ -1338,6 +1436,8 @@ class SolverUIPC(SolverBase):
         self._external_forces = ExternalForces(model, self.mapping)
 
         # Initialize UIPC world and set up state accessors
+        for callback in self._before_world_init_callbacks:
+            callback(self)
         self.world.init(scene)
         if not self.world.is_valid():
             raise RuntimeError(
@@ -1361,7 +1461,18 @@ class SolverUIPC(SolverBase):
 
         self._body_affine = wp.full(model.body_count, wp.mat44d(np.eye(4)), device=model.device)
         self._body_affine_valid = wp.zeros(model.body_count, dtype=wp.bool, device=model.device)
+        self._body_affine_velocities = wp.zeros(model.body_count, dtype=wp.mat44d, device=model.device)
+        self._abd_body_offsets_host = np.full(model.body_count, -1, dtype=np.int64)
+        self._backend_offsets_host = np.empty(0, dtype=np.int64)
+        if n > 0:
+            self._backend_offsets_host = self.mapping.backend_offsets_wp.numpy().astype(np.int64, copy=False)
+            self._abd_body_offsets_host[self.mapping.body_indices_wp.numpy()] = self._backend_offsets_host
+        self._body_affine_velocity_valid = wp.array(
+            self._abd_body_offsets_host >= 0, dtype=wp.bool, device=model.device
+        )
+        self._abd_affine_write_geometries = {}
         self._update_body_affine_transforms()
+        self._update_body_affine_velocities()
 
         self._fem_accessor: FiniteElementStateAccessorFeature = self.world.features().find(
             FiniteElementStateAccessorFeature
@@ -1486,6 +1597,177 @@ class SolverUIPC(SolverBase):
         if not self._initialized:
             raise RuntimeError("get_body_affine_transforms() requires initialize() first.")
         return self._body_affine, self._body_affine_valid
+
+    def get_body_affine_velocities(self) -> tuple[wp.array[wp.mat44d], wp.array[wp.bool]]:
+        """Return full affine time derivatives and ABD validity in Newton body order.
+
+        This experimental API may change without a deprecation period.
+        The solver-owned arrays have shape ``[model.body_count]`` on
+        ``model.device`` and update in place after initialization, stepping,
+        and body resets. Treat them as read-only and clone to retain a snapshot.
+
+        For collision-rest coordinates ``X``, point velocity is
+        ``v_world = A_dot * X + t_dot``. The upper 3x3 stores ``A_dot``
+        [1/s], the last column stores ``t_dot`` [m/s], and the last row
+        is zero. All twelve affine velocity components are retained.
+
+        Bodies outside the ABD mapping, including centerline rods, have a
+        zero matrix and false validity. Rod node velocities are available
+        through :meth:`get_rod_state`.
+
+        Raises:
+            RuntimeError: If :meth:`initialize` has not completed.
+        """
+        if not self._initialized:
+            raise RuntimeError("get_body_affine_velocities() requires initialize() first.")
+        return self._body_affine_velocities, self._body_affine_velocity_valid
+
+    def set_body_affine_transforms(
+        self,
+        transforms: wp.array[wp.mat44d] | np.ndarray,
+        *,
+        body_indices: wp.array[wp.int32] | np.ndarray | None = None,
+    ) -> None:
+        """Write selected live ABD transforms, preserving full stretch and shear.
+
+        This experimental API may change without a deprecation period.
+        Matrices map collision-rest coordinates to world coordinates as
+        ``x_world = A * X + t``. The upper 3x3 is dimensionless, translation
+        [m] is in the last column, and the last row is ``[0, 0, 0, 1]``.
+        Only the selected transform channel is transferred to UIPC.
+
+        This updates the solver's native state and affine export. Callers
+        synchronize their own :class:`~newton.State` buffers separately.
+        Subsequent :meth:`step` calls export the native state to ``state_out``.
+        This is a runtime state interface.
+
+        Args:
+            transforms: Finite matrices, shape ``[model.body_count, 4, 4]``
+                when ``body_indices=None``, or ``[len(body_indices), 4, 4]``
+                in selection order. NumPy values are converted to float64.
+            body_indices: Unique Newton body indices, shape ``[count]``.
+                Explicit selections must contain mapped ABD bodies. With
+                ``None``, update every mapped ABD entry from full-body input.
+
+        Raises:
+            RuntimeError: If :meth:`initialize` has not completed.
+            ValueError: If matrices or body indices are invalid.
+        """
+        self._set_body_affine_channel(transforms, body_indices, attribute="transform")
+
+    def set_body_affine_velocities(
+        self,
+        velocities: wp.array[wp.mat44d] | np.ndarray,
+        *,
+        body_indices: wp.array[wp.int32] | np.ndarray | None = None,
+    ) -> None:
+        """Write selected live ABD affine time derivatives.
+
+        This experimental API may change without a deprecation period.
+        For collision-rest coordinates ``X``, point velocity is
+        ``A_dot * X + t_dot``. The upper 3x3 stores ``A_dot`` [1/s],
+        the last column stores ``t_dot`` [m/s], and the last row is zero.
+        Only the selected velocity channel is transferred to UIPC.
+
+        This updates the solver's native state and affine velocity export.
+        Callers synchronize their own :class:`~newton.State` buffers separately.
+        This is a runtime state interface.
+
+        Args:
+            velocities: Finite matrices, shape ``[model.body_count, 4, 4]``
+                when ``body_indices=None``, or ``[len(body_indices), 4, 4]``
+                in selection order. NumPy values are converted to float64.
+            body_indices: Unique Newton body indices, shape ``[count]``.
+                Explicit selections must contain mapped ABD bodies. With
+                ``None``, update every mapped ABD entry from full-body input.
+
+        Raises:
+            RuntimeError: If :meth:`initialize` has not completed.
+            ValueError: If matrices or body indices are invalid.
+        """
+        self._set_body_affine_channel(velocities, body_indices, attribute="velocity")
+
+    def _set_body_affine_channel(
+        self,
+        values: wp.array[wp.mat44d] | np.ndarray,
+        body_indices: wp.array[wp.int32] | np.ndarray | None,
+        *,
+        attribute: str,
+    ) -> None:
+        """Validate a complete request before changing live ABD state."""
+        if not self._initialized:
+            raise RuntimeError("Writing body affine state requires initialize() first.")
+        matrices = values.numpy() if isinstance(values, wp.array) else np.asarray(values)
+        if matrices.dtype.kind not in "fiu":
+            raise ValueError("Affine values must be real numeric matrices.")
+        if body_indices is None:
+            if matrices.shape != (self.model.body_count, 4, 4):
+                raise ValueError("Full-body affine values must have shape (model.body_count, 4, 4).")
+            indices = np.flatnonzero(self._abd_body_offsets_host >= 0)
+            matrices = matrices[indices]
+        else:
+            indices = body_indices.numpy() if isinstance(body_indices, wp.array) else np.asarray(body_indices)
+            if indices.ndim != 1 or indices.dtype.kind not in "iu":
+                raise ValueError("body_indices must be a one-dimensional integer array.")
+            if np.any(indices < 0) or np.any(indices >= self.model.body_count):
+                raise ValueError("body_indices contains an out-of-range body.")
+            if np.unique(indices).size != indices.size:
+                raise ValueError("body_indices must contain unique bodies.")
+            if matrices.shape != (indices.size, 4, 4):
+                raise ValueError("Selected affine values must have shape (len(body_indices), 4, 4).")
+        offsets = self._abd_body_offsets_host[indices]
+        if np.any(offsets < 0):
+            raise ValueError("Explicit affine state selections must contain mapped ABD bodies.")
+        with np.errstate(over="ignore"):
+            matrices = matrices.astype(np.float64, copy=False)
+        last_row = np.array([0, 0, 0, 1 if attribute == "transform" else 0])
+        if not np.isfinite(matrices).all() or not np.all(matrices[:, 3, :] == last_row):
+            raise ValueError(f"Invalid affine {attribute} matrices or homogeneous last row.")
+        self._write_body_affine_channel(matrices, offsets, attribute=attribute)
+
+    def _write_body_affine_channel(self, values: np.ndarray, offsets: np.ndarray, *, attribute: str) -> None:
+        """Write contiguous selected native ranges through one channel geometry."""
+        if offsets.size == 0:
+            return
+        order = np.argsort(offsets)
+        boundaries = np.flatnonzero(np.diff(offsets[order]) != 1) + 1
+        try:
+            for rows in np.split(order, boundaries):
+                offset, count = int(offsets[rows[0]]), int(rows.size)
+                cached = self._abd_affine_write_geometries.get(attribute)
+                if cached is None or cached[:2] != (offset, count):
+                    geometry = self._abd_accessor.create_geometry(offset, count)
+                    default = np.eye(4) if attribute == "transform" else np.zeros((4, 4))
+                    geometry.instances().create(attribute, default)
+                    self._abd_affine_write_geometries[attribute] = (offset, count, geometry)
+                else:
+                    geometry = cached[2]
+                geometry.instances().find(attribute).view()[:] = values[rows]
+                self._abd_accessor.copy_from(geometry)
+        finally:
+            # Keep exports consistent with native state even if a later range fails.
+            if attribute == "transform":
+                self._update_body_affine_transforms()
+            else:
+                self._update_body_affine_velocities()
+
+    def _update_body_affine_velocities(self) -> None:
+        """Refresh full affine derivatives through the dedicated GPU channel."""
+        if self._abd_accessor is None or self.mapping.num_mapped_bodies == 0:
+            return
+        self._abd_accessor.copy_velocity_to(self._abd_velocity_buf.buffer_view(), 0, self.mapping.max_backend_count)
+        wp.launch(
+            _gather_body_affine_kernel,
+            dim=self.mapping.num_mapped_bodies,
+            inputs=[
+                self.mapping.backend_offsets_wp,
+                self.mapping.body_indices_wp,
+                self._abd_velocity_buf.warp(),
+                self._body_affine_velocities,
+                self._body_affine_velocity_valid,
+            ],
+            device=self.model.device,
+        )
 
     def _update_body_affine_transforms(self, *, copy_from_backend: bool = True) -> None:
         """Refresh the rendering view without converting the linear part to a quaternion."""
@@ -1624,13 +1906,16 @@ class SolverUIPC(SolverBase):
 
         Returns:
             A new dictionary containing UIPC's backend-dependent frame counters
-            and ``step_time_ms``. Time and iteration counts are zero before the
-            first step. Unsupported backend counters are absent; in particular,
-            older UIPC builds may omit ``linear_solver_max_iterations``.
+            and ``step_time_ms``. ``frame`` is the native world's frame number,
+            or zero before world creation. Time and iteration counts are zero
+            before the first step. Unsupported backend counters are absent; in
+            particular, older UIPC builds may omit ``linear_solver_max_iterations``.
         """
+        world = getattr(self, "world", None)
+        frame = int(world.frame()) if world is not None else 0
         if self._step_count == 0:
-            return {"step_time_ms": 0.0, "newton_iterations": 0, "linear_solver_max_iterations": 0}
-        return {**self.engine.frame_stats(), "step_time_ms": self._step_time_ms}
+            return {"frame": frame, "step_time_ms": 0.0, "newton_iterations": 0, "linear_solver_max_iterations": 0}
+        return {**self.engine.frame_stats(), "frame": frame, "step_time_ms": self._step_time_ms}
 
     def _get_contact_forces(self) -> ContactForceReadback:
         """Retrieve per-body, per-primitive contact forces from UIPC (diagnostic).
@@ -1924,8 +2209,10 @@ class SolverUIPC(SolverBase):
         Args:
             state: Source Newton state.
             world_mask: Optional world selection, as in :meth:`~newton.solvers.SolverBase.reset`.
-            flags: State channels to publish. ``PARTICLE_Q`` and ``PARTICLE_QD``
-                independently select particle position [m] and velocity [m/s].
+            flags: State channels to publish, defaulting to ``StateFlags.ALL``.
+                ``BODY_Q`` and ``BODY_QD`` independently select body pose and spatial
+                velocity. ``PARTICLE_Q`` and ``PARTICLE_QD`` independently select
+                particle position [m] and velocity [m/s].
             particle_indices: Optional one-dimensional integer array of Newton
                 particle indices. Restricts particle writes to this subset,
                 intersected with ``world_mask`` when supplied. Unmapped particles
@@ -2066,11 +2353,9 @@ class SolverUIPC(SolverBase):
         """Push body transforms / velocities into the UIPC backend.
 
         Args default to ``model.body_q`` / ``model.body_qd`` and all mapped
-        rows, preserving the original notify behavior.  ``selected_rows`` is an
-        array of row indices into the mapped-body arrays (``[0, n)``); only
-        those rows are scattered, so non-selected bodies keep their current
-        live UIPC pose (the ``copy_to`` seed).  ``write_transform`` /
-        ``write_velocity`` gate which attribute is overwritten.
+        rows, preserving the original notify behavior. ``selected_rows`` selects
+        rows of the mapped-body arrays (``[0, n)``). Each enabled attribute is
+        written through its own selected native ranges.
         """
         mapping = self.mapping
         if mapping.num_mapped_bodies == 0 or not mapping.body_geo_slots:
@@ -2089,56 +2374,33 @@ class SolverUIPC(SolverBase):
         n = mapping.num_mapped_bodies
         device = model.device
 
-        wp.launch(
-            _transform_to_mat44_kernel,
-            dim=n,
-            inputs=[src_q, mapping.body_indices_wp, self._abd_transform_buf.warp()],
-            device=device,
-        )
-        if write_velocity and src_qd is not None:
+        if write_transform:
             wp.launch(
-                _spatial_to_vel_mat44_kernel,
+                _transform_to_mat44_kernel,
                 dim=n,
-                inputs=[src_qd, src_q, model.body_com, mapping.body_indices_wp, self._abd_velocity_buf.warp()],
+                inputs=[src_q, mapping.body_indices_wp, self._abd_transform_buf.warp()],
                 device=device,
             )
-        else:
-            self._abd_velocity_buf.warp().zero_()
+        if write_velocity:
+            if src_qd is not None:
+                wp.launch(
+                    _spatial_to_vel_mat44_kernel,
+                    dim=n,
+                    inputs=[src_qd, src_q, model.body_com, mapping.body_indices_wp, self._abd_velocity_buf.warp()],
+                    device=device,
+                )
+            else:
+                self._abd_velocity_buf.warp().zero_()
 
-        transforms_host = self._abd_transform_buf.warp().numpy()[:n]
-        velocities_host = self._abd_velocity_buf.warp().numpy()[:n]
-
-        # Allocate one master state geometry for all ABD bodies.
-        state_geo = getattr(self, "_master_state_geo", None)
-        if state_geo is None:
-            state_geo = self._abd_accessor.create_geometry()
-            state_geo.instances().create("transform", np.eye(4, dtype=np.float64))
-            state_geo.instances().create("velocity", np.zeros((4, 4), dtype=np.float64))
-            self._master_state_geo = state_geo
-
-        # Cache the stable UIPC q offset for each mapped body.
-        if getattr(self, "_backend_offsets_host", None) is None:
-            self._backend_offsets_host = mapping.backend_offsets_wp.numpy().astype(np.int64, copy=False)
-        offsets_np = self._backend_offsets_host
-
-        # Seed master geometry from the current UIPC state.
-        self._abd_accessor.copy_to(state_geo)
-
-        transform_attr = state_geo.instances().find("transform")
-        velocity_attr = state_geo.instances().find("velocity")
-        assert transform_attr is not None
-        transform_view = transform_attr.view()
-        velocity_view = velocity_attr.view() if velocity_attr is not None else None
+        transforms_host = self._abd_transform_buf.warp().numpy()[:n] if write_transform else None
+        velocities_host = self._abd_velocity_buf.warp().numpy()[:n] if write_velocity else None
 
         rows = slice(None) if selected_rows is None else selected_rows
-        if write_transform:
-            transform_view[offsets_np[rows]] = transforms_host[rows]
-        if velocity_view is not None and write_velocity:
-            velocity_view[offsets_np[rows]] = velocities_host[rows]
-
-        # Single push into UIPC — triggers one `update_dof_attributes`.
-        self._abd_accessor.copy_from(state_geo)
-        self._update_body_affine_transforms()
+        offsets = self._backend_offsets_host[rows]
+        if transforms_host is not None:
+            self._write_body_affine_channel(transforms_host[rows], offsets, attribute="transform")
+        if velocities_host is not None:
+            self._write_body_affine_channel(velocities_host[rows], offsets, attribute="velocity")
         if check_sanity:
             self.world.retrieve()
             self._raise_if_sanity_check_failed()
@@ -2195,10 +2457,8 @@ class SolverUIPC(SolverBase):
             self._fem_backend_offsets_host if selected_rows is None else self._fem_backend_offsets_host[selected_rows]
         )
 
-        if write_velocity and src_qd is not None and self._fem_velocity_buf is not None:
-            velocity_attr = state_geo.vertices().find("velocity")
-            assert velocity_attr is not None
-            velocity_view = _view_attr(velocity_attr)
+        write_velocity = write_velocity and src_qd is not None and self._fem_velocity_buf is not None
+        if write_position and write_velocity:
             wp.launch(
                 _write_fem_particles_to_backend_kernel,
                 dim=self._fem_mapped_vertex_count,
@@ -2212,26 +2472,28 @@ class SolverUIPC(SolverBase):
                 ],
                 device=model.device,
             )
-            positions_host = self._fem_position_buf.warp().numpy()
-            velocities_host = self._fem_velocity_buf.warp().numpy()
-            if write_position:
-                position_view[rows, :, 0] = positions_host[rows]
-            velocity_view[rows, :, 0] = velocities_host[rows]
-        else:
+        elif write_position or write_velocity:
+            source = src_q if write_position else src_qd
+            buffer = self._fem_position_buf if write_position else self._fem_velocity_buf
             wp.launch(
-                _write_fem_particle_positions_to_backend_kernel,
+                _write_fem_particle_vectors_to_backend_kernel,
                 dim=self._fem_mapped_vertex_count,
                 inputs=[
                     self._fem_backend_offsets_wp,
                     self._fem_particle_indices_wp,
-                    src_q,
-                    self._fem_position_buf.warp(),
+                    source,
+                    buffer.warp(),
                 ],
                 device=model.device,
             )
-            positions_host = self._fem_position_buf.warp().numpy()
-            if write_position:
-                position_view[rows, :, 0] = positions_host[rows]
+
+        if write_position:
+            position_view[rows, :, 0] = self._fem_position_buf.warp().numpy()[rows]
+        if write_velocity:
+            velocity_attr = state_geo.vertices().find("velocity")
+            assert velocity_attr is not None
+            velocity_view = _view_attr(velocity_attr)
+            velocity_view[rows, :, 0] = self._fem_velocity_buf.warp().numpy()[rows]
 
         self._fem_accessor.copy_from(state_geo)
         if check_sanity:
@@ -2386,6 +2648,7 @@ class SolverUIPC(SolverBase):
                         state_out.body_qd,
                         self._body_affine,
                         self._body_affine_valid,
+                        self._body_affine_velocities,
                         world_free,
                         model.joint_X_p,
                         model.joint_X_c,
@@ -2397,8 +2660,6 @@ class SolverUIPC(SolverBase):
                     device=model.device,
                 )
                 return True
-            self._update_body_affine_transforms(copy_from_backend=False)
-
             wp.launch(
                 _read_from_backend_kernel,
                 dim=n,
@@ -2410,6 +2671,9 @@ class SolverUIPC(SolverBase):
                     model.body_com,
                     state_out.body_q,
                     state_out.body_qd,
+                    self._body_affine,
+                    self._body_affine_valid,
+                    self._body_affine_velocities,
                 ],
                 device=model.device,
             )
@@ -2552,21 +2816,19 @@ class SolverUIPC(SolverBase):
         if targets.shape != (indices.size, 3):
             raise ValueError(f"aim_positions must have shape ({indices.size}, 3), got {targets.shape}")
 
-        found_any = False
-        for geo_slot, mesh_particle_indices in zip(geo_slots, particle_index_sets, strict=False):
-            local_by_global = {int(global_idx): local for local, global_idx in enumerate(mesh_particle_indices)}
-            local_indices: list[int] = []
-            local_targets: list[np.ndarray] = []
-            for particle_index, target in zip(indices, targets, strict=True):
-                local = local_by_global.get(int(particle_index))
-                if local is None:
-                    continue
-                local_indices.append(local)
-                local_targets.append(target)
+        caches = getattr(self, "_soft_position_constraint_bindings", None)
+        if caches is None:
+            caches = self._soft_position_constraint_bindings = {}
+        bindings = caches.get(geometry_name)
+        if bindings is None or not bindings.is_current(geo_slots, particle_index_sets):
+            bindings = self._SoftPositionConstraintBindings(geo_slots, particle_index_sets)
+            caches[geometry_name] = bindings
 
-            if not local_indices:
-                continue
+        selected = bindings.resolve(indices)
+        if not selected:
+            raise ValueError(f"None of the requested particle_indices belong to UIPC {geometry_name} geometry.")
 
+        for geo_slot, local_indices_np, source_rows in selected:
             geo = geo_slot.geometry()
             constrained_attr = geo.vertices().find("is_constrained")
             aim_attr = geo.vertices().find("aim_position")
@@ -2576,20 +2838,14 @@ class SolverUIPC(SolverBase):
                     "Recreate SolverUIPC with soft-position constraints enabled."
                 )
 
-            local_indices_np = np.asarray(local_indices, dtype=np.int64)
             _view_attr(constrained_attr)[local_indices_np] = int(enabled)
-            _view_attr(aim_attr)[local_indices_np] = np.asarray(local_targets, dtype=np.float64).reshape(-1, 3, 1)
+            _view_attr(aim_attr)[local_indices_np] = targets[source_rows].reshape(-1, 3, 1)
 
             if strength_ratio is not None:
                 strength_attr = geo.vertices().find("strength_ratio")
                 if strength_attr is None:
                     raise RuntimeError(f"UIPC {geometry_name} soft-position strength_ratio attribute is missing.")
                 _view_attr(strength_attr)[local_indices_np] = float(strength_ratio)
-
-            found_any = True
-
-        if not found_any:
-            raise ValueError(f"None of the requested particle_indices belong to UIPC {geometry_name} geometry.")
 
     def clear_cloth_soft_position_constraints(
         self,

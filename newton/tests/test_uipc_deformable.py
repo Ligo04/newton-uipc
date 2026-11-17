@@ -89,6 +89,68 @@ class TestUIPCDeformableBuilder(unittest.TestCase):
         np.testing.assert_allclose(current, vertices)
         np.testing.assert_allclose(rest, rest_vertices)
 
+    def test_soft_position_updates_reuse_particle_bindings(self):
+        """Cache repeated FEM writes and refresh replaced particle mappings."""
+
+        class CountingIndices(np.ndarray):
+            def __new__(cls, values):
+                result = np.asarray(values).view(cls)
+                result.iterations = 0
+                return result
+
+            def __iter__(self):
+                self.iterations += 1
+                return super().__iter__()
+
+        builder = newton.ModelBuilder()
+        newton.solvers.SolverUIPC.register_custom_attributes(builder)
+        self._add_disconnected_tet_soft_mesh(builder)
+        self._add_disconnected_tet_soft_mesh(builder)
+        model = builder.finalize("cpu")
+        solver = newton.solvers.SolverUIPC(model, backend="none")
+        solver.initialize(model.state())
+        mapping = solver.mapping
+        mapping.deformable_particle_indices = [
+            CountingIndices(indices) for indices in mapping.deformable_particle_indices
+        ]
+        sources = mapping.deformable_particle_indices
+        selected = np.concatenate((sources[0][:2], sources[-1][-2:], sources[0][:1]))
+        targets = np.arange(len(selected) * 3, dtype=np.float64).reshape(-1, 3) * 0.01
+        solver.set_deformable_soft_position_constraints(selected, targets, strength_ratio=7.0)
+        for indices in sources:
+            indices.iterations = 0
+
+        targets += 0.25
+        solver.set_deformable_soft_position_constraints(selected, targets)
+        for slot, indices in zip(mapping.deformable_geo_slots, sources, strict=True):
+            geometry = slot.geometry()
+            actual = np.asarray(view(geometry.vertices().find("aim_position"))).reshape(-1, 3)
+            flags = np.asarray(view(geometry.vertices().find("is_constrained"))).reshape(-1)
+            strength = np.asarray(view(geometry.vertices().find("strength_ratio"))).reshape(-1)
+            for particle in selected:
+                rows = np.flatnonzero(np.asarray(indices) == particle)
+                if len(rows):
+                    final = np.flatnonzero(selected == particle)[-1]
+                    np.testing.assert_array_equal(actual[rows[-1]], targets[final])
+                    self.assertEqual(flags[rows[-1]], 1)
+                    self.assertEqual(strength[rows[-1]], 7.0)
+        self.assertEqual(sum(indices.iterations for indices in sources), 0)
+
+        solver.clear_deformable_soft_position_constraints(selected)
+        solver.set_deformable_soft_position_constraints(selected, targets, enabled=False)
+        for slot in mapping.deformable_geo_slots:
+            self.assertFalse(np.asarray(view(slot.geometry().vertices().find("is_constrained"))).any())
+        with self.assertRaises(ValueError):
+            solver.set_deformable_soft_position_constraints([model.particle_count + 1], [[1.0, 2.0, 3.0]])
+
+        mapping.deformable_particle_indices[0] = np.asarray(sources[0])[::-1].copy()
+        remapped = mapping.deformable_particle_indices[0]
+        solver.set_deformable_soft_position_constraints([remapped[0]], [[8.0, 9.0, 10.0]])
+        aim = np.asarray(view(mapping.deformable_geo_slots[0].geometry().vertices().find("aim_position"))).reshape(
+            -1, 3
+        )
+        np.testing.assert_array_equal(aim[0], [8.0, 9.0, 10.0])
+
     def test_solver_uipc_init_has_no_constitution_model_parameters(self):
         signature = inspect.signature(newton.solvers.SolverUIPC.__init__)
 

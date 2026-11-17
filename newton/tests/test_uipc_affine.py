@@ -49,6 +49,20 @@ class TestUIPCAffine(unittest.TestCase):
                     solver.initialize(state)
                 affine, valid = solver.get_body_affine_transforms()
                 np.testing.assert_array_equal(valid.numpy(), [True, True, True, False])
+                rates, rate_valid = solver.get_body_affine_velocities()
+                np.testing.assert_array_equal(rate_valid.numpy(), [True, False, False, False])
+                np.testing.assert_array_equal(rates.numpy(), np.zeros((model.body_count, 4, 4)))
+                for unsupported in (1, 3):
+                    with self.subTest(unsupported=unsupported):
+                        with self.assertRaises(ValueError):
+                            solver.set_body_affine_transforms(
+                                np.eye(4)[None], body_indices=np.array([unsupported], dtype=np.int32)
+                            )
+                        with self.assertRaises(ValueError):
+                            solver.set_body_affine_velocities(
+                                np.zeros((1, 4, 4)), body_indices=np.array([unsupported], dtype=np.int32)
+                            )
+                solver.set_body_affine_velocities(rates)
 
                 # Set native strain directly; converting it through a quaternion
                 # would hide the stretch/shear this rendering interface preserves.
@@ -140,11 +154,94 @@ class TestUIPCAffine(unittest.TestCase):
                 solver = newton.solvers.SolverUIPC(model, workspace=workspace, auto_sync_inertia=False)
                 with self.assertRaisesRegex(RuntimeError, "initialize"):
                     solver.get_body_affine_transforms()
+                with self.assertRaisesRegex(RuntimeError, "initialize"):
+                    solver.get_body_affine_velocities()
+                with self.assertRaisesRegex(RuntimeError, "initialize"):
+                    solver.set_body_affine_transforms(np.empty((0, 4, 4)))
+                with self.assertRaisesRegex(RuntimeError, "initialize"):
+                    solver.set_body_affine_velocities(np.empty((0, 4, 4)))
                 solver.initialize(state)
                 affine, valid = solver.get_body_affine_transforms()
                 np.testing.assert_array_equal(valid.numpy(), np.ones(model.body_count, dtype=bool))
                 np.testing.assert_allclose(affine.numpy()[:, :3, 3], state.body_q.numpy()[:, :3])
                 self.assertLess(len({id(v) for v in solver.mapping.body_geo_slots.values()}), model.body_count)
+
+                affine_velocity, velocity_valid = solver.get_body_affine_velocities()
+                np.testing.assert_array_equal(velocity_valid.numpy(), np.ones(model.body_count, dtype=bool))
+                indices = np.array([3, 0], dtype=np.int32)
+                targets = affine.numpy()[indices].copy()
+                targets[:, :3, :3] = [[1.02, 0.03, 0], [0, 0.98, 0.02], [0, 0, 1.01]]
+                targets[:, 2, 3] += 0.2
+                rates = np.zeros((2, 4, 4))
+                rates[:, :3, :] = np.arange(24).reshape(2, 3, 4) * 0.001
+                native = solver._abd_accessor.create_geometry()
+                native.instances().create("transform", np.eye(4))
+                native.instances().create("velocity", np.zeros((4, 4)))
+                accessor = solver._abd_accessor
+                spy = Mock(wraps=accessor)
+                solver._abd_accessor = spy
+                try:
+                    before_velocity = affine_velocity.numpy().copy()
+                    expected = affine.numpy().copy()
+                    expected[indices] = targets
+                    solver.set_body_affine_transforms(targets, body_indices=indices)
+                    np.testing.assert_array_equal(affine_velocity.numpy(), before_velocity)
+                    np.testing.assert_array_equal(affine.numpy(), expected)
+                    self.assertEqual(spy.copy_to.call_count, 0)
+                    self.assertEqual(spy.copy_velocity_to.call_count, 0)
+
+                    spy.reset_mock()
+                    solver.set_body_affine_velocities(
+                        wp.array(rates, dtype=wp.mat44d, device=device),
+                        body_indices=wp.array(indices, dtype=wp.int32, device=device),
+                    )
+                    expected_velocity = before_velocity.copy()
+                    expected_velocity[indices] = rates
+                    np.testing.assert_array_equal(affine_velocity.numpy(), expected_velocity)
+                    np.testing.assert_array_equal(affine.numpy(), expected)
+                    self.assertEqual(spy.copy_to.call_count, 0)
+                    self.assertEqual(spy.copy_transform_to.call_count, 0)
+                    native_offsets = solver.mapping.backend_offsets_wp.numpy()
+                    for call in spy.create_geometry.call_args_list:
+                        self.assertEqual(call.args[1], 1)
+                        self.assertIn(call.args[0], native_offsets[indices])
+
+                    # Reject every malformed request before writing live native state.
+                    for values, selected in [
+                        (rates, np.array([0, 0], dtype=np.int32)),
+                        (rates, np.array([0, model.body_count], dtype=np.int32)),
+                        (rates, np.array([0.0, 1.0])),
+                        (rates[:1], indices),
+                        (np.full_like(rates, np.nan), indices),
+                        (np.ones_like(rates), indices),
+                    ]:
+                        with self.subTest(selected=selected, shape=values.shape):
+                            with self.assertRaises(ValueError):
+                                solver.set_body_affine_velocities(values, body_indices=selected)
+                    with self.assertRaises(ValueError):
+                        solver.set_body_affine_transforms(rates, body_indices=indices)
+                    if np.finfo(np.longdouble).max > np.finfo(np.float64).max:
+                        wide_rates = rates.astype(np.longdouble)
+                        wide_rates[0, 0, 0] = np.finfo(np.longdouble).max
+                        with self.assertRaises(ValueError):
+                            solver.set_body_affine_velocities(wide_rates, body_indices=indices)
+                    solver.set_body_affine_velocities(np.empty((0, 4, 4)), body_indices=np.empty(0, dtype=np.int32))
+                    accessor.copy_to(native)
+                    mapped = solver.mapping.body_indices_wp.numpy()
+                    np.testing.assert_array_equal(
+                        view(native.instances().find("transform"))[native_offsets], expected[mapped]
+                    )
+                    np.testing.assert_array_equal(
+                        view(native.instances().find("velocity"))[native_offsets], expected_velocity[mapped]
+                    )
+
+                    # Full-body input follows Newton body order and keeps solver-owned arrays alive.
+                    solver.set_body_affine_transforms(expected)
+                    solver.set_body_affine_velocities(expected_velocity)
+                    self.assertIs(solver.get_body_affine_velocities()[0], affine_velocity)
+                    self.assertIs(solver.get_body_affine_velocities()[1], velocity_valid)
+                finally:
+                    solver._abd_accessor = accessor
 
                 solver.step(state, output, model.control(), dt=1 / 60)
                 self.assertIs(affine, solver.get_body_affine_transforms()[0])
@@ -155,6 +252,13 @@ class TestUIPCAffine(unittest.TestCase):
                 )
                 np.testing.assert_allclose(affine.numpy()[:, :3, 3], output.body_q.numpy()[:, :3], atol=1e-7)
 
+                np.testing.assert_array_equal(
+                    affine_velocity.numpy()[solver.mapping.body_indices_wp.numpy()],
+                    solver._abd_velocity_buf.warp()
+                    .numpy()
+                    .transpose(0, 2, 1)[solver.mapping.backend_offsets_wp.numpy()],
+                )
+                before_velocity = affine_velocity.numpy().copy()
                 before = affine.numpy().copy()
                 body_world = model.body_world.numpy()
                 target = output.body_q.numpy().copy()
@@ -168,6 +272,7 @@ class TestUIPCAffine(unittest.TestCase):
                 after = affine.numpy()
                 np.testing.assert_allclose(after[body_world == 0, :3, 3], target[body_world == 0, :3], atol=1e-7)
                 np.testing.assert_array_equal(after[body_world == 1], before[body_world == 1])
+                np.testing.assert_array_equal(affine_velocity.numpy(), before_velocity)
 
 
 if __name__ == "__main__":

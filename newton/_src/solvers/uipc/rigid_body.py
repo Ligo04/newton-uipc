@@ -213,6 +213,8 @@ class RigidBodyBuilder:
         self,
         contact_elem: Any,
         subscene_elem: Any = None,
+        *,
+        shape_element_overrides: dict[int, ContactElement] | None = None,
     ) -> None:
         """Create UIPC geometries for world-space static colliders (body == -1, non-PLANE).
 
@@ -228,24 +230,34 @@ class RigidBodyBuilder:
         Args:
             contact_elem: Contact element to apply (typically ``env_elem``).
             subscene_elem: Optional UIPC subscene element for multi-world isolation.
+            shape_element_overrides: Per-shape elements; different elements
+                are kept in separate geometries before mesh merging.
         """
         model = self._model
         if not self._ensure_shape_cache():
             return
         assert self._shape_body_np is not None
         assert self._shape_type_np is not None
-        groups: dict[str, list[int]] = {}
+        overrides = shape_element_overrides or {}
+        groups: dict[tuple[str, int], list[int]] = {}
+        flags = model.shape_flags.numpy() if model.shape_flags is not None else None
         for shape in range(model.shape_count):
-            if self._shape_body_np[shape] == -1 and GeoType(self._shape_type_np[shape]) != GeoType.PLANE:
+            if (
+                self._shape_body_np[shape] == -1
+                and GeoType(self._shape_type_np[shape]) != GeoType.PLANE
+                and (flags is None or int(flags[shape]) & int(ShapeFlags.COLLIDE_SHAPES))
+            ):
                 constitution = self._shape_constitutions[shape] or "empty"
-                groups.setdefault(constitution, []).append(shape)
+                element = overrides.get(shape, contact_elem)
+                groups.setdefault((constitution, element.id()), []).append(shape)
 
-        for constitution, shape_indices in groups.items():
+        for (constitution, contact_id), shape_indices in groups.items():
+            element = overrides.get(shape_indices[0], contact_elem)
             result = build_body_mesh(model, -1, shape_indices=shape_indices)
             if result is None:
                 continue
             sc, _ = result
-            contact_elem.apply_to(sc)
+            element.apply_to(sc)
             if subscene_elem is not None:
                 subscene_elem.apply_to(sc)
 
@@ -260,8 +272,12 @@ class RigidBodyBuilder:
             label_surface(sc)
 
             name = "static_colliders_abd" if constitution == "abd" else "static_colliders"
+            if overrides:
+                name += f"_cid_{contact_id}"
             obj = self._scene.objects().create(name)
-            obj.geometries().create(sc)
+            slot, _ = obj.geometries().create(sc)
+            self._mapping.static_geo_slots.append(slot)
+            self._mapping.static_shape_indices.append(list(shape_indices))
 
     def build_body_shape_mapping(
         self,
