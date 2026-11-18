@@ -1893,10 +1893,10 @@ class SolverUIPC(SolverBase):
 
         Counters describe the last :meth:`step`, including when an application
         takes several substeps per rendered frame. ``newton_iterations`` counts
-        nonlinear iterations; ``linear_solver_max_iterations`` is the maximum
-        iteration count among the frame's iterative linear solves, rather than
-        their sum or the configured iteration limit. These counters do not
-        require ``require_profile=True`` or enable UIPC timers.
+        nonlinear iterations. ``linear_solver_iterations`` sums the actual
+        iterations across that step's linear solves, and
+        ``linear_solver_max_iterations`` gives their maximum when available.
+        These counters are available independently of ``require_profile``.
 
         ``step_time_ms`` is host wall time [ms] for the last :meth:`step`,
         excluding deferred initialization. It includes UIPC advance/retrieve
@@ -1912,7 +1912,13 @@ class SolverUIPC(SolverBase):
         world = getattr(self, "world", None)
         frame = int(world.frame()) if world is not None else 0
         if self._step_count == 0:
-            return {"frame": frame, "step_time_ms": 0.0, "newton_iterations": 0, "linear_solver_max_iterations": 0}
+            return {
+                "frame": frame,
+                "step_time_ms": 0.0,
+                "newton_iterations": 0,
+                "linear_solver_iterations": 0,
+                "linear_solver_max_iterations": 0,
+            }
         return {**self.engine.frame_stats(), "frame": frame, "step_time_ms": self._step_time_ms}
 
     def _get_contact_forces(self) -> ContactForceReadback:

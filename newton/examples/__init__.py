@@ -583,7 +583,7 @@ def _render_solver_stats(ui, example):
     ui.text("UIPC")
     ui.text(f"Step time: {stats['step_time_ms']:.2f} ms")
     ui.text(f"Newton iters: {stats.get('newton_iterations', 'N/A')}")
-    ui.text(f"Max PCG: {stats.get('linear_solver_max_iterations', 'N/A')}")
+    ui.text(f"PCG iters: {stats.get('linear_solver_iterations', 'N/A')}")
 
 
 def run(example, args):

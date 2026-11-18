@@ -31,13 +31,13 @@ in the top-right performance overlay of `ViewerGL` and `ViewerRTX`:
   including UIPC advance/retrieve and Newton state transfers. Deferred
   initialization is excluded; the measurement adds no device synchronization.
 - **Newton iters**: actual nonlinear iterations in that UIPC step.
-- **Max PCG**: maximum actual PCG iterations among that step's linear solves.
-  This is neither the total PCG iterations nor the configured iteration limit.
+- **PCG iters** shows the total actual PCG iterations across that step's linear solves,
+  using the native `linear_solver_iterations` counter.
 
 With several substeps per rendered frame, these values describe the last
 substep. Pausing keeps the last result visible; switching examples follows
 the new example's `solver`. Counters do not require `require_profile=True`.
-Older UIPC builds without `linear_solver_max_iterations` show `Max PCG: N/A`.
+The iteration counts start at zero before the first step.
 
 Custom applications can read the same snapshot with
 {meth}`~newton.solvers.SolverUIPC.get_frame_stats` and render it through

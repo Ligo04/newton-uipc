@@ -5,10 +5,13 @@
 
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import warp as wp
 
 import newton
+import newton.examples
 from newton.tests.unittest_utils import get_selected_cuda_test_devices, requires
 
 _CUDA_DEVICES = get_selected_cuda_test_devices(mode="basic")
@@ -25,7 +28,11 @@ class TestUIPCFrameStats(unittest.TestCase):
             self.assertEqual(stats["frame"], 0)
             self.assertEqual(stats["step_time_ms"], 0.0)
             self.assertEqual(stats["newton_iterations"], 0)
+            self.assertEqual(stats["linear_solver_iterations"], 0)
             self.assertEqual(stats["linear_solver_max_iterations"], 0)
+            ui = Mock()
+            newton.examples._render_solver_stats(ui, SimpleNamespace(solver=solver))
+            ui.text.assert_any_call("PCG iters: 0")
             self.assertFalse(solver._initialized)
             solver.initialize()
             self.assertEqual(solver.get_frame_stats(), stats)
@@ -66,6 +73,10 @@ class TestUIPCFrameStats(unittest.TestCase):
                                 self.assertTrue(stats["completed"])
                                 self.assertGreater(stats["newton_iterations"], 0)
                                 self.assertGreater(stats["step_time_ms"], 0.0)
+                                ui = Mock()
+                                newton.examples._render_solver_stats(ui, SimpleNamespace(solver=solver))
+                                ui.text.assert_any_call(f"Newton iters: {stats['newton_iterations']}")
+                                ui.text.assert_any_call(f"PCG iters: {stats['linear_solver_iterations']}")
                                 if "linear_solver_max_iterations" in stats:
                                     maximum = stats["linear_solver_max_iterations"]
                                     total = stats["linear_solver_iterations"]
