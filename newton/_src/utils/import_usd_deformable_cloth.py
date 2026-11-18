@@ -601,10 +601,22 @@ def _deformable_import_cloth(ctx: _DeformableImportContext) -> None:
         if not collision_enabled:
             _warn_collision_not_disableable(path)
 
-        # The cloth gets one color and opacity, so subset materials are ignored, with the visual-mesh importer's message.
+        # Subset materials are not mapped to triangles; ignore them as the visual-mesh importer does.
         if _has_graphics_material_subsets(prim):
             logger.warning("%s: graphics material subsets are not supported; using only the mesh-level material.", path)
-        material_props = usd.resolve_material_properties_for_prim(prim, include_subsets=False)
+        material_props = usd.resolve_material_properties_for_prim(
+            prim, include_subsets=False, face_count=len(face_counts)
+        )
+        color = material_props.get("color")
+        opacity = material_props.get("opacity")
+        # A uniform display primvar holds one value per face; give it to that face's triangles.
+        # Faces whose authored value is non-finite (NaN) keep the builder's default.
+        if color is not None and np.ndim(color) == 2:
+            color = color[tri_source_faces]
+            color[np.isnan(color).any(axis=1)] = builder._DEFAULT_TRI_COLOR
+        if opacity is not None and np.ndim(opacity) == 1:
+            opacity = opacity[tri_source_faces]
+            opacity[np.isnan(opacity)] = 1.0
         p0, t0, e0 = builder.particle_count, builder.tri_count, builder.edge_count
         cloth_row = len(builder.surface_label)
         group_values = usd.get_custom_attribute_values(prim, group_attributes)
@@ -638,8 +650,8 @@ def _deformable_import_cloth(ctx: _DeformableImportContext) -> None:
             tri_ka=tri_ka,
             edge_ke=edge_ke,
             particle_radius=particle_radius,
-            color=material_props.get("color"),
-            opacity=material_props.get("opacity"),
+            color=color,
+            opacity=opacity,
             label=path,
             custom_attributes_triangles=imported_triangle_values,
         )
