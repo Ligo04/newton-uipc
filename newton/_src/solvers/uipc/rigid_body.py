@@ -25,7 +25,7 @@ from .converter import (
     build_body_mesh,
     newton_transform_to_mat4,
 )
-from .utils import _view_attr
+from .utils import _apply_geometry_dhat, _dhat_values, _uniform_dhat, _view_attr
 
 
 @dataclass
@@ -39,6 +39,7 @@ class _BodyInfo:
     contact_elem: Any
     is_kinematic: bool
     kappa: float
+    dhat: float
 
 
 class RigidBodyBuilder:
@@ -62,6 +63,8 @@ class RigidBodyBuilder:
         implicit_pd: bool = False,
     ):
         self._model = model
+        self._body_dhat = _dhat_values(model, "dhat", model.body_count)
+        self._shape_dhat = _dhat_values(model, "shape_dhat", model.shape_count)
         self._scene = scene
         self._mapping = mapping
         self._kappa = kappa
@@ -201,6 +204,10 @@ class RigidBodyBuilder:
 
         for s in range(model.shape_count):
             if self._shape_body_np[s] == -1 and GeoType(self._shape_type_np[s]) == GeoType.PLANE:
+                if self._shape_dhat[s] > 0.0:
+                    raise ValueError(
+                        "UIPC halfplanes use the contacting vertex's dhat; set uipc:dhat on finite geometry"
+                    )
                 tf_np = self._shape_transform_np[s]
                 mat4 = newton_transform_to_mat4(wp.transform(tf_np[:3], tf_np[3:]))
                 normal = mat4[:3, 2].copy()
@@ -228,7 +235,8 @@ class RigidBodyBuilder:
 
         Defaults to :class:`~uipc.constitution.Empty` with fixed vertices.
         Explicit ``abd`` shapes use fixed AffineBody instances instead. Shapes
-        using different constitutions are merged into separate geometries.
+        using different constitutions or contact distances are merged into
+        separate geometries.
 
         Args:
             contact_elem: Contact element to apply (typically ``env_elem``).
@@ -242,7 +250,7 @@ class RigidBodyBuilder:
         assert self._shape_body_np is not None
         assert self._shape_type_np is not None
         overrides = shape_element_overrides or {}
-        groups: dict[tuple[str, int], list[int]] = {}
+        groups: dict[tuple[str, int, float], list[int]] = {}
         flags = model.shape_flags.numpy() if model.shape_flags is not None else None
         for shape in range(model.shape_count):
             if (
@@ -252,14 +260,15 @@ class RigidBodyBuilder:
             ):
                 constitution = self._shape_constitutions[shape] or "empty"
                 element = overrides.get(shape, contact_elem)
-                groups.setdefault((constitution, element.id()), []).append(shape)
+                groups.setdefault((constitution, element.id(), float(self._shape_dhat[shape])), []).append(shape)
 
-        for (constitution, contact_id), shape_indices in groups.items():
+        for (constitution, contact_id, dhat), shape_indices in groups.items():
             element = overrides.get(shape_indices[0], contact_elem)
             result = build_body_mesh(model, -1, shape_indices=shape_indices)
             if result is None:
                 continue
             sc, _ = result
+            _apply_geometry_dhat(sc, dhat)
             element.apply_to(sc)
             if subscene_elem is not None:
                 subscene_elem.apply_to(sc)
@@ -277,6 +286,8 @@ class RigidBodyBuilder:
             name = "static_colliders_abd" if constitution == "abd" else "static_colliders"
             if overrides:
                 name += f"_cid_{contact_id}"
+            if dhat > 0.0:
+                name += f"_dhat_{dhat}"
             obj = self._scene.objects().create(name)
             slot, _ = obj.geometries().create(sc)
             self._mapping.static_geo_slots.append(slot)
@@ -452,18 +463,26 @@ class RigidBodyBuilder:
             kappa = self._kappa
             if body_kappa is not None and float(body_kappa[b]) > 0.0:
                 kappa = float(body_kappa[b])
-            body_infos.append(_BodyInfo(b, sk, tf, 0.0, elem, is_kin, kappa))
+            shapes = self._mapping.body_shapes.get(b, ())
+            shape_distances = [
+                self._shape_dhat[shape]
+                for shape in shapes
+                if GeoType(self._shape_type_np[shape]) != GeoType.PLANE
+                and (self._shape_flags_np is None or self._shape_flags_np[shape] & int(ShapeFlags.COLLIDE_SHAPES))
+            ]
+            dhat = _uniform_dhat(np.array([self._body_dhat[b], *shape_distances]), model.body_label[b])
+            body_infos.append(_BodyInfo(b, sk, tf, 0.0, elem, is_kin, kappa, dhat))
 
-        # Phase B: Group by (shape_key, contact element, kappa)
+        # Phase B: Group by shared mesh and contact parameters.
         from collections import OrderedDict  # noqa: PLC0415
 
         groups: OrderedDict[tuple[Any, ...], list[_BodyInfo]] = OrderedDict()
         for info in body_infos:
             if info.body_idx in no_inst:
                 # Force unique group for excluded bodies
-                key = (info.shape_key, id(info.contact_elem), info.kappa, info.body_idx)
+                key = (info.shape_key, id(info.contact_elem), info.kappa, info.dhat, info.body_idx)
             else:
-                key = (info.shape_key, id(info.contact_elem), info.kappa)
+                key = (info.shape_key, id(info.contact_elem), info.kappa, info.dhat)
             groups.setdefault(key, []).append(info)
 
         # Phase C: Create instanced geometries
@@ -492,6 +511,7 @@ class RigidBodyBuilder:
 
             # Contact element (shared for all instances in this group)
             ref.contact_elem.apply_to(sc)
+            _apply_geometry_dhat(sc, ref.dhat)
             if subscene_elem is not None:
                 subscene_elem.apply_to(sc)
 

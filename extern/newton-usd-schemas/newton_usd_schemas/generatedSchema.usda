@@ -1070,6 +1070,17 @@ class NewtonUIPCRigidBodyAPI "NewtonUIPCRigidBodyAPI" (
     may use fixed ABD instances or fixed Empty vertices."""
 )
 {
+    uniform float uipc:dhat = -1 (
+        doc = """Experimental UIPC geometry contact activation distance in meters.
+
+        Positive finite values override the scene contact/d_hat. Negative finite
+        values inherit the scene default. Zero and non-finite values are invalid.
+        This distance is independent of shell thickness and rod radius.
+        Author on a rigid body, finite static collider, or simulation geometry.
+        All constituents of one compound rigid body or connected rod must agree.
+        Implicit halfplanes use the contacting finite geometry's distance."""
+    )
+
     uniform token uipc:constitution (
         allowedTokens = ["abd", "empty"]
         doc = """UIPC rigid or static constitution selection.
@@ -1088,6 +1099,17 @@ class NewtonUIPCRodAPI "NewtonUIPCRodAPI" (
     positive. Shear, twist, damping, and intrinsic rest curvature are omitted."""
 )
 {
+    uniform float uipc:dhat = -1 (
+        doc = """Experimental UIPC geometry contact activation distance in meters.
+
+        Positive finite values override the scene contact/d_hat. Negative finite
+        values inherit the scene default. Zero and non-finite values are invalid.
+        This distance is independent of shell thickness and rod radius.
+        Author on a rigid body, finite static collider, or simulation geometry.
+        All constituents of one compound rigid body or connected rod must agree.
+        Implicit halfplanes use the contacting finite geometry's distance."""
+    )
+
     uniform token uipc:constitution = "hookean_spring" (
         allowedTokens = ["hookean_spring"]
         doc = """Primary UIPC centerline constitution, imported into `model.uipc.rod_model`.
@@ -1104,6 +1126,17 @@ class NewtonUIPCClothAPI "NewtonUIPCClothAPI" (
     coefficients. Discrete shell bending is applied separately by the solver."""
 )
 {
+    uniform float uipc:dhat = -1 (
+        doc = """Experimental UIPC geometry contact activation distance in meters.
+
+        Positive finite values override the scene contact/d_hat. Negative finite
+        values inherit the scene default. Zero and non-finite values are invalid.
+        This distance is independent of shell thickness and rod radius.
+        Author on a rigid body, finite static collider, or simulation geometry.
+        All constituents of one compound rigid body or connected rod must agree.
+        Implicit halfplanes use the contacting finite geometry's distance."""
+    )
+
     uniform token uipc:constitution = "strain_limiting_baraff_witkin" (
         allowedTokens = ["strain_limiting_baraff_witkin", "neo_hookean"]
         doc = """Primary UIPC cloth membrane constitution.
@@ -1121,6 +1154,17 @@ class NewtonUIPCDeformableAPI "NewtonUIPCDeformableAPI" (
     It does not change deformable-body ownership, topology, or material coefficients."""
 )
 {
+    uniform float uipc:dhat = -1 (
+        doc = """Experimental UIPC geometry contact activation distance in meters.
+
+        Positive finite values override the scene contact/d_hat. Negative finite
+        values inherit the scene default. Zero and non-finite values are invalid.
+        This distance is independent of shell thickness and rod radius.
+        Author on a rigid body, finite static collider, or simulation geometry.
+        All constituents of one compound rigid body or connected rod must agree.
+        Implicit halfplanes use the contacting finite geometry's distance."""
+    )
+
     uniform token uipc:constitution = "stable_neo_hookean" (
         allowedTokens = ["stable_neo_hookean", "arap", "empty"]
         doc = """Primary UIPC tetrahedral constitution.

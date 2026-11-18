@@ -24,7 +24,13 @@ from newton import Model
 
 from .converter import UIpcMappingInfo
 from .deformable_groups import cloth_groups_from_model
-from .utils import _clone_geometry_with_positions, _rest_positions_from_model, _view_attr
+from .utils import (
+    _apply_geometry_dhat,
+    _clone_geometry_with_positions,
+    _dhat_values,
+    _rest_positions_from_model,
+    _view_attr,
+)
 
 
 class ClothBuilder:
@@ -72,6 +78,7 @@ class ClothBuilder:
         soft_position_strength_ratio: float = 100.0,
     ):
         self._model = model
+        self._dhats = _dhat_values(model, "cloth_dhat", model.custom_frequency_counts.get("uipc:cloth", 0))
         self._scene = scene
         self._mapping = mapping
         self._default_thickness = default_thickness
@@ -272,6 +279,8 @@ class ClothBuilder:
         else:
             membrane = StrainLimitingBaraffWitkinShell()
         membrane.apply_to(sc, moduli, mass_density=mass_density, thickness=applied_thickness)
+        if cloth_index is not None:
+            _apply_geometry_dhat(sc, float(self._dhats[cloth_index]))
         if thickness_values is not None:
             self._write_vertex_thickness(sc, thickness_values, applied_thickness)
         self._write_tri_elastic_moduli(sc, model, selected_tri_ids, cloth_model)

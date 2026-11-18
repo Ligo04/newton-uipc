@@ -333,11 +333,62 @@ Currently registered:
 | Attribute | Frequency | Default | Meaning |
 | --- | --- | --- | --- |
 | `model.uipc.abd_kappa` | Body | `-1.0` | Per-body AffineBody stiffness override [Pa]. Negative values inherit the solver-level `kappa`. |
+| `model.uipc.dhat` | Body | `-1.0` | Rigid-body contact activation distance [m], imported from `uipc:dhat`. |
+| `model.uipc.shape_dhat` | Shape | `-1.0` | Finite collider contact activation distance [m], imported from `uipc:dhat`. |
+| `model.uipc.cloth_dhat` | `uipc:cloth` | `-1.0` | Contact activation distance [m] for each authored cloth mesh. |
+| `model.uipc.deformable_dhat` | `uipc:deformable_body` | `-1.0` | Contact activation distance [m] for each authored tet mesh. |
+| `model.uipc.rod_dhat` | Curve | `-1.0` | Contact activation distance [m] for each connected rod geometry. |
 | `model.uipc.rigid_model` | Body | `"abd"` | Rigid-body constitution, imported from body-level `uipc:constitution`. Only ABD preserves rigid-body state and joints; Empty is rejected. |
 | `model.uipc.shape_constitution` | Shape | `""` | Collider-level `uipc:constitution`. World-static colliders support `"abd"` or `"empty"`; an empty string inherits ABD from an owning body or selects Empty for a world-static collider. |
 | `model.uipc.cloth_model` | `uipc:cloth` | `"strain_limiting_baraff_witkin"` | Per-authored-cloth membrane constitution, imported from simulation-mesh `uipc:constitution`. Supported values are `"strain_limiting_baraff_witkin"` and `"neo_hookean"`. |
 | `model.uipc.rod_model` | Curve | `"hookean_spring"` | Primary centerline constitution, imported from simulation-curve `uipc:constitution`. Positive Newton bend stiffness adds `KirchhoffRodBending` separately. |
 | `model.uipc.deformable_model` | `uipc:deformable_body` | `"stable_neo_hookean"` | Per-authored-soft-body tetrahedral constitution. Supported values are `"stable_neo_hookean"`, `"arap"`, and `"empty"`. |
+
+The experimental geometry-level contact distance is authored through the existing
+`NewtonUIPCRigidBodyAPI`, `NewtonUIPCClothAPI`, `NewtonUIPCDeformableAPI`, and
+`NewtonUIPCRodAPI` schemas in the vendored `newton-usd-schemas` package. Apply
+the matching schema on the rigid body or simulation geometry and author
+`uipc:dhat` in SI meters before importing.
+
+```python
+import newton
+import newton_usd_schemas  # Register the vendored USD schemas.
+from newton.solvers import SolverUIPC
+
+prim.ApplyAPI("NewtonUIPCClothAPI")
+prim.GetAttribute("uipc:dhat").Set(20e-6)
+
+builder = newton.ModelBuilder()
+SolverUIPC.register_custom_attributes(builder)
+builder.add_usd(stage)
+```
+
+Positive finite values are copied to the native geometry's `meta()["d_hat"]`
+before solver initialization. Negative finite values inherit the scene's
+`contact/d_hat`. Zero and non-finite values raise `ValueError`. The importer
+reads the legacy `uipc:d_hat` when `uipc:dhat` is unauthored.
+Values are SI meters, independent of the stage's coordinate unit metadata.
+Newton's existing USD geometry unit restrictions still apply.
+
+Procedural builders can pass `custom_attributes={"uipc:dhat": 20e-6}` to
+`add_body`, or `{"uipc:shape_dhat": 20e-6}` to a finite collider's `add_shape_*`.
+For cloth, volumes, and curves, set the corresponding `builder.custom_attributes`
+column's `.values[group_index]` before `finalize`, or assign the corresponding
+`model.uipc.*_dhat` array before initializing the solver. Group indices follow
+`surface_label`, `volume_label`, and `curve_label`, respectively. Native geometry
+parameters are read during initialization.
+
+A compound ABD and a connected rod each produce one native collision geometry.
+All explicit body/collider/curve overrides within that geometry must agree.
+Unset constituents inherit the explicit geometry value. Conflicting values
+raise `ValueError`. Rigid instances and merged static meshes with different
+activation distances use separate native geometries. Implicit halfplanes use
+the contacting finite geometry's activation distance.
+
+For cloth and rods this setting is independent of the one-sided thickness or
+radius `r`. A contact pair uses the sum of thickness radii and the average of
+its two activation distances. Contact activates when the geometric distance
+is below `r_A + r_B + (dhat_A + dhat_B)/2`, with a barrier at `r_A + r_B`.
 
 The same custom-frequency rows carry group labels, owning worlds, inclusive
 `first`/`last` indices for the particle/topology domains, and authored density:

@@ -19,7 +19,13 @@ from newton import Model
 
 from .converter import UIpcMappingInfo
 from .deformable_groups import deformable_body_groups_from_model
-from .utils import _clone_geometry_with_positions, _rest_positions_from_model, _view_attr
+from .utils import (
+    _apply_geometry_dhat,
+    _clone_geometry_with_positions,
+    _dhat_values,
+    _rest_positions_from_model,
+    _view_attr,
+)
 
 
 @lru_cache(maxsize=1)
@@ -52,6 +58,9 @@ class DeformableBodyBuilder:
         enable_soft_position_constraint: bool = True,
     ):
         self._model = model
+        self._dhats = _dhat_values(
+            model, "deformable_dhat", model.custom_frequency_counts.get("uipc:deformable_body", 0)
+        )
         self._scene = scene
         self._mapping = mapping
         self._default_mass_density = default_mass_density
@@ -158,6 +167,8 @@ class DeformableBodyBuilder:
         label_surface(sc)
         label_triangle_orient(sc)
         sc = flip_inward_triangles(sc)
+        if soft_index is not None:
+            _apply_geometry_dhat(sc, float(self._dhats[soft_index]))
         mass_density = self._estimate_mass_density(
             model, selected_particle_indices, local_tets, deformable_verts, authored_density
         )

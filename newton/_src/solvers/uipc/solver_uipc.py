@@ -228,6 +228,11 @@ class SolverUIPC(SolverBase):
         coefficient, with the native default of ``100.0``.
         ``uipc:rod_model`` reads it from simulation curves and selects the
         HookeanSpring centerline approximation; bending is applied separately.
+        ``uipc:dhat`` reads a geometry contact activation distance in meters.
+        The corresponding body, shape, curve, cloth, and volume columns are
+        ``dhat``, ``shape_dhat``, ``rod_dhat``, ``cloth_dhat``, and
+        ``deformable_dhat`` in ``model.uipc``. Negative values inherit the scene
+        default. The older USD spelling ``uipc:d_hat`` is also accepted.
         """
         cls.import_uipc()
         builder.add_custom_attribute(
@@ -274,6 +279,27 @@ class SolverUIPC(SolverBase):
             )
         )
         register_deformable_group_attributes(builder)
+        from .utils import _dhat_from_usd
+
+        for name, frequency in (
+            ("dhat", Model.AttributeFrequency.BODY),
+            ("shape_dhat", Model.AttributeFrequency.SHAPE),
+            ("rod_dhat", Model.AttributeFrequency.CURVE),
+            ("cloth_dhat", "uipc:cloth"),
+            ("deformable_dhat", "uipc:deformable_body"),
+        ):
+            builder.add_custom_attribute(
+                ModelBuilder.CustomAttribute(
+                    name=name,
+                    frequency=frequency,
+                    assignment=Model.AttributeAssignment.MODEL,
+                    dtype=wp.float32,
+                    default=-1.0,
+                    namespace="uipc",
+                    usd_attribute_name="*",
+                    usd_value_transformer=_dhat_from_usd,
+                )
+            )
         builder.add_custom_attribute(
             ModelBuilder.CustomAttribute(
                 name="rod_model",

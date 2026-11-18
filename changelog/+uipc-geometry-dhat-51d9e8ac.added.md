@@ -1,0 +1,1 @@
+Add geometry-level UIPC contact activation distances through the `uipc:dhat` USD schema attribute for rigid bodies, finite static colliders, cloth, tetrahedral FEM, and rods, with scene-default inheritance and legacy `uipc:d_hat` import compatibility.

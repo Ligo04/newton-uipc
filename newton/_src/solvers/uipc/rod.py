@@ -22,7 +22,7 @@ from ...math import quat_between_vectors_robust
 from ...sim import BodyFlags, JointType, Model, State
 from ...sim.articulation import eval_articulation_ik
 from .converter import UIpcMappingInfo
-from .utils import _view_attr
+from .utils import _apply_geometry_dhat, _dhat_values, _uniform_dhat, _view_attr
 
 
 @wp.kernel(enable_backward=False)
@@ -202,6 +202,7 @@ class _RodGroup:
     stretch: np.ndarray
     bending: np.ndarray
     collision_enabled: bool
+    dhat: float
 
 
 class RodBuilder:
@@ -242,6 +243,9 @@ class RodBuilder:
         self._body_q = model.body_q.numpy()
         self._body_mass = model.body_mass.numpy()
         self._body_flags = model.body_flags.numpy()
+        self._body_dhat = _dhat_values(model, "dhat", model.body_count)
+        self._shape_dhat = _dhat_values(model, "shape_dhat", model.shape_count)
+        curve_dhats = _dhat_values(model, "rod_dhat", model.curve_count)
         self._bodies: set[int] = set()
 
         selectors = getattr(getattr(model, "uipc", None), "rod_model", None)
@@ -256,7 +260,7 @@ class RodBuilder:
             start = int(starts[index])
             end = int(ends[index])
             if start < end:
-                self._add_group(label, list(range(start, end)))
+                self._add_group(label, list(range(start, end)), float(curve_dhats[index]))
 
         # Also accept directly authored ROD joints without curve metadata.
         remaining: dict[int, set[int]] = {}
@@ -298,17 +302,19 @@ class RodBuilder:
     def has_rods(self) -> bool:
         return bool(self._groups)
 
-    def _add_group(self, label: str, bodies: list[int]) -> None:
+    def _add_group(self, label: str, bodies: list[int], curve_dhat: float = -1.0) -> None:
         if self._bodies.intersection(bodies):
             raise ValueError("UIPC rod body ranges must not overlap")
         body_set = set(bodies)
         local = {body: row for row, body in enumerate(bodies)}
         midpoints, axes, lengths, radii, colliding = [], [], [], [], []
+        shape_ids = []
         for body in bodies:
             shapes = np.flatnonzero(self._shape_body == body)
             if len(shapes) != 1 or self._shape_type[shapes[0]] != int(GeoType.CAPSULE):
                 raise ValueError(f"UIPC rod {label!r}: body {body} requires exactly one capsule shape")
             shape = int(shapes[0])
+            shape_ids.append(shape)
             transform = wp.transform(*self._shape_transform[shape])
             midpoints.append(np.asarray(wp.transform_get_translation(transform)))
             axes.append(np.asarray(wp.quat_rotate(wp.transform_get_rotation(transform), wp.vec3(0.0, 0.0, 1.0))))
@@ -436,6 +442,7 @@ class RodBuilder:
                 cosine = np.dot(first, second) / (np.linalg.norm(first) * np.linalg.norm(second))
                 if cosine >= 1.0 - 1.0e-10:
                     raise ValueError(f"UIPC rod {label!r} has a backtracking bending hinge at node {node}")
+        dhat = _uniform_dhat(np.r_[curve_dhat, self._body_dhat[bodies], self._shape_dhat[shape_ids]], label)
         self._groups.append(
             _RodGroup(
                 label,
@@ -455,6 +462,7 @@ class RodBuilder:
                 stretch,
                 bending,
                 all(colliding),
+                dhat,
             )
         )
         self._bodies.update(bodies)
@@ -476,6 +484,7 @@ class RodBuilder:
             sc = linemesh(
                 np.ascontiguousarray(group.points, dtype=np.float64), np.ascontiguousarray(group.edges, dtype=np.int32)
             )
+            _apply_geometry_dhat(sc, group.dhat)
             HookeanSpring().apply_to(sc, 1.0, mass_density=1000.0, thickness=group.radius)
             _view_attr(sc.edges().find("kappa")).reshape(-1)[:] = group.stretch
             if np.any(group.bending > 0.0):
